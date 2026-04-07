@@ -15,7 +15,7 @@ Current baseline includes:
 - Social gateway foundations with owner-aware trust boundaries and inbound webhook handling
 - Self-improvement primitives for reading config, writing skills, and maintaining a self-evolution backlog
 - Audit logging for high-impact actions such as self-modification, task promotion, scheduling, and social sending
-- Session persistence plus automatic context compression through a summarizer model
+- Session persistence plus automatic context compression
 - Cron manager for recurring background runs
 
 ## Project Layout
@@ -108,8 +108,8 @@ To use Telegram:
 
 1. Set `social.telegram_bot_token`, `social.public_base_url`, and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
 You may still use `telegram_bot_token_env` if you prefer, but it is optional.
-3. Start Qorvexus with `./qorvexus start`.
-4. Register the webhook with Telegram:
+2. Start Qorvexus with `./qorvexus start`.
+3. Register the webhook with Telegram:
 
 ```bash
 curl -X POST "https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook" \

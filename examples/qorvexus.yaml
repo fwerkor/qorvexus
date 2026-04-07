@@ -6,30 +6,18 @@ models:
   primary:
     provider: openai-compatible
     base_url: https://api.openai.com/v1
-    api_key_env: OPENAI_API_KEY
+    api_key: ""
     model: gpt-4.1
     max_tokens: 2000
     temperature: 0.2
-  summarizer:
-    provider: openai-compatible
-    base_url: https://api.openai.com/v1
-    api_key_env: OPENAI_API_KEY
-    model: gpt-4.1-mini
-    max_tokens: 800
-    temperature: 0.1
 agent:
   default_model: primary
-  summarizer_model: summarizer
   vision_fallback_model: primary
   max_turns: 12
   context_window_chars: 24000
   compression_threshold: 0.75
-  system_prompt: |
-    You are Qorvexus, an autonomous generalist agent.
-    Decide when to reason, when to act, when to use tools, when to delegate, and when to ask follow-up questions.
-    Prefer concrete action, verifiable outputs, and maintain long-horizon context.
   discussion:
-    default_panel: [primary, summarizer]
+    default_panel: [primary]
     synthesis_model: primary
     max_parallel_models: 4
 tools:
@@ -73,6 +61,9 @@ social:
   inbox_file: ./.qorvexus/social_inbox.jsonl
   commitment_file: ./.qorvexus/social_commitments.jsonl
   commitment_scan_interval_seconds: 3600
+  public_base_url: https://your-public-domain.example
+  telegram_bot_token: ""
+  telegram_webhook_path: /webhooks/telegram
   webhook_secret: change-me
 self:
   enabled: true

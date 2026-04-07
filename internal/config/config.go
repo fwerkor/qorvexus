@@ -147,7 +147,7 @@ func (c *Config) setDefaults(path string) error {
 		c.Models["primary"] = ModelConfig{
 			Provider:    "openai-compatible",
 			BaseURL:     "https://api.openai.com/v1",
-			APIKeyEnv:   "OPENAI_API_KEY",
+			APIKey:      "",
 			Model:       "gpt-4.1",
 			MaxTokens:   2000,
 			Temperature: 0.2,
@@ -157,7 +157,7 @@ func (c *Config) setDefaults(path string) error {
 		c.Models["primary"] = ModelConfig{
 			Provider:    "openai-compatible",
 			BaseURL:     "https://api.openai.com/v1",
-			APIKeyEnv:   "OPENAI_API_KEY",
+			APIKey:      "",
 			Model:       "gpt-4.1",
 			MaxTokens:   2000,
 			Temperature: 0.2,
@@ -237,9 +237,6 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
-	}
-	if c.Social.TelegramBotTokenEnv == "" {
-		c.Social.TelegramBotTokenEnv = "TELEGRAM_BOT_TOKEN"
 	}
 	if c.Social.TelegramWebhookPath == "" {
 		c.Social.TelegramWebhookPath = "/webhooks/telegram"
