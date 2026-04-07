@@ -23,8 +23,12 @@ func Run(ctx context.Context, args []string) error {
 		return runCommand(ctx, args[1:])
 	case "daemon":
 		return daemonCommand(ctx, args[1:])
+	case "web":
+		return webCommand(ctx, args[1:])
 	case "skills":
 		return skillsCommand(args[1:])
+	case "queue":
+		return queueCommand(args[1:])
 	case "init":
 		return initCommand(args[1:])
 	default:
@@ -49,7 +53,7 @@ func runCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	app, err := newRuntime(cfg)
+	app, err := newRuntime(cfg, *configPath)
 	if err != nil {
 		return err
 	}
@@ -80,7 +84,7 @@ func daemonCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	app, err := newRuntime(cfg)
+	app, err := newRuntime(cfg, *configPath)
 	if err != nil {
 		return err
 	}
@@ -89,9 +93,47 @@ func daemonCommand(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+	if cfg.Queue.Enabled && cfg.Queue.WorkerEnabled {
+		go func() {
+			_ = app.worker.Run(ctx)
+		}()
+	}
+	if cfg.Web.Enabled && app.webServer != nil {
+		go func() {
+			_ = app.webServer.ListenAndServe()
+		}()
+		fmt.Printf("web panel listening on http://%s\n", cfg.Web.Address)
+	}
 	fmt.Println("qorvexus daemon is running")
 	<-ctx.Done()
 	return nil
+}
+
+func webCommand(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("web", flag.ContinueOnError)
+	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	cfg.Web.Enabled = true
+	app, err := newRuntime(cfg, *configPath)
+	if err != nil {
+		return err
+	}
+	if app.webServer == nil {
+		return errors.New("web server is not configured")
+	}
+	if cfg.Queue.Enabled && cfg.Queue.WorkerEnabled {
+		go func() {
+			_ = app.worker.Run(ctx)
+		}()
+	}
+	fmt.Printf("qorvexus web panel listening on http://%s\n", cfg.Web.Address)
+	return app.webServer.ListenAndServe()
 }
 
 func skillsCommand(args []string) error {
@@ -114,6 +156,26 @@ func skillsCommand(args []string) error {
 	return nil
 }
 
+func queueCommand(args []string) error {
+	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
+	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	app, err := newRuntime(cfg, *configPath)
+	if err != nil {
+		return err
+	}
+	for _, task := range app.queue.List() {
+		fmt.Printf("%s\t%s\t%s\t%s\n", task.ID, task.Status, task.Name, task.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+	return nil
+}
+
 func initCommand(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	path := fs.String("path", "examples/qorvexus.yaml", "write config to path")
@@ -123,12 +185,11 @@ func initCommand(args []string) error {
 	if _, err := os.Stat(*path); err == nil {
 		return fmt.Errorf("%s already exists", *path)
 	}
-	content := sampleConfig()
-	return os.WriteFile(*path, []byte(content), 0o644)
+	return os.WriteFile(*path, []byte(sampleConfig()), 0o644)
 }
 
 func usage() error {
-	return errors.New("usage: qorvexus <run|daemon|skills|init> [flags]")
+	return errors.New("usage: qorvexus <run|daemon|web|skills|queue|init> [flags]")
 }
 
 func sampleConfig() string {
@@ -170,9 +231,24 @@ tools:
   playwright_command: node ./scripts/playwright.js
   max_command_bytes: 65536
   http_user_agent: qorvexus/0.1
+  blocked_commands:
+    - rm -rf /
+    - git reset --hard
+    - shutdown
 scheduler:
   enabled: true
   task_file: ./.qorvexus/tasks.json
+memory:
+  enabled: true
+  file: ./.qorvexus/memory.jsonl
+queue:
+  enabled: true
+  file: ./.qorvexus/queue.json
+  worker_enabled: true
+  poll_interval_seconds: 5
+web:
+  enabled: true
+  address: 127.0.0.1:7788
 `
 }
 

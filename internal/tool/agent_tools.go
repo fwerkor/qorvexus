@@ -11,6 +11,15 @@ import (
 
 type ThinkTool struct{}
 
+type Runtime interface {
+	RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error)
+	ConsultModels(ctx context.Context, prompt string, panel []string) (string, error)
+	AddScheduledTask(ctx context.Context, name string, schedule string, prompt string, model string) (string, error)
+	Remember(ctx context.Context, content string, tags []string, source string) (string, error)
+	Recall(ctx context.Context, query string, limit int) (string, error)
+	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
+}
+
 func (t *ThinkTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "think",
@@ -141,4 +150,109 @@ func (t *ScheduleTool) Invoke(ctx context.Context, raw json.RawMessage) (string,
 		return "", err
 	}
 	return t.rt.AddScheduledTask(ctx, input.Name, input.Schedule, input.Prompt, input.Model)
+}
+
+type RememberTool struct {
+	rt Runtime
+}
+
+func NewRememberTool(rt Runtime) *RememberTool { return &RememberTool{rt: rt} }
+
+func (t *RememberTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "remember",
+		Description: "Store a durable memory for later retrieval.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"content": map[string]any{"type": "string"},
+				"source":  map[string]any{"type": "string"},
+				"tags": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"content"},
+		},
+	}
+}
+
+func (t *RememberTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Content string   `json:"content"`
+		Source  string   `json:"source"`
+		Tags    []string `json:"tags"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.Remember(ctx, input.Content, input.Tags, input.Source)
+}
+
+type RecallTool struct {
+	rt Runtime
+}
+
+func NewRecallTool(rt Runtime) *RecallTool { return &RecallTool{rt: rt} }
+
+func (t *RecallTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "recall",
+		Description: "Search durable memory for facts, preferences, and prior work.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string"},
+				"limit": map[string]any{"type": "integer"},
+			},
+			"required": []string{"query"},
+		},
+	}
+}
+
+func (t *RecallTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.Recall(ctx, input.Query, input.Limit)
+}
+
+type EnqueueTaskTool struct {
+	rt Runtime
+}
+
+func NewEnqueueTaskTool(rt Runtime) *EnqueueTaskTool { return &EnqueueTaskTool{rt: rt} }
+
+func (t *EnqueueTaskTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "enqueue_task",
+		Description: "Queue a background task for asynchronous execution.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":       map[string]any{"type": "string"},
+				"prompt":     map[string]any{"type": "string"},
+				"model":      map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+			},
+			"required": []string{"name", "prompt"},
+		},
+	}
+}
+
+func (t *EnqueueTaskTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Name      string `json:"name"`
+		Prompt    string `json:"prompt"`
+		Model     string `json:"model"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.EnqueueTask(ctx, input.Name, input.Prompt, input.Model, input.SessionID)
 }

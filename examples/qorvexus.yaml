@@ -38,6 +38,21 @@ tools:
   playwright_command: node ./scripts/playwright.js
   max_command_bytes: 65536
   http_user_agent: qorvexus/0.1
+  blocked_commands:
+    - rm -rf /
+    - git reset --hard
+    - shutdown
 scheduler:
   enabled: true
   task_file: ./.qorvexus/tasks.json
+memory:
+  enabled: true
+  file: ./.qorvexus/memory.jsonl
+queue:
+  enabled: true
+  file: ./.qorvexus/queue.json
+  worker_enabled: true
+  poll_interval_seconds: 5
+web:
+  enabled: true
+  address: 127.0.0.1:7788

@@ -11,14 +11,18 @@ import (
 	"time"
 
 	"qorvexus/internal/config"
+	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
 )
 
 type CommandTool struct {
-	cfg config.ToolsConfig
+	cfg    config.ToolsConfig
+	policy *policy.Engine
 }
 
-func NewCommandTool(cfg config.ToolsConfig) *CommandTool { return &CommandTool{cfg: cfg} }
+func NewCommandTool(cfg config.ToolsConfig, engine *policy.Engine) *CommandTool {
+	return &CommandTool{cfg: cfg, policy: engine}
+}
 
 func (t *CommandTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
@@ -49,6 +53,12 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 	if input.TimeoutSeconds <= 0 {
 		input.TimeoutSeconds = 60
 	}
+	if t.policy != nil {
+		result := t.policy.EvaluateCommand(input.Command)
+		if result.Verdict != policy.VerdictAllow {
+			return "", fmt.Errorf("command denied by policy: %s (risk=%s)", result.Reason, result.Risk)
+		}
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -69,6 +79,13 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 	}
 	if err != nil {
 		return out, fmt.Errorf("command failed: %w", err)
+	}
+	if t.policy != nil {
+		result := t.policy.EvaluateCommand(input.Command)
+		if out != "" {
+			out += "\n"
+		}
+		out += fmt.Sprintf("[policy]\nrisk=%s\nreason=%s", result.Risk, result.Reason)
 	}
 	return out, nil
 }

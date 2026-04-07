@@ -17,6 +17,9 @@ type Config struct {
 	Agent     AgentConfig            `yaml:"agent"`
 	Tools     ToolsConfig            `yaml:"tools"`
 	Scheduler SchedulerConfig        `yaml:"scheduler"`
+	Memory    MemoryConfig           `yaml:"memory"`
+	Queue     QueueConfig            `yaml:"queue"`
+	Web       WebConfig              `yaml:"web"`
 }
 
 type SkillsConfig struct {
@@ -52,16 +55,34 @@ type DiscussionConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowCommandExecution bool   `yaml:"allow_command_execution"`
-	CommandShell          string `yaml:"command_shell"`
-	PlaywrightCommand     string `yaml:"playwright_command"`
-	MaxCommandBytes       int    `yaml:"max_command_bytes"`
-	HTTPUserAgent         string `yaml:"http_user_agent"`
+	AllowCommandExecution bool     `yaml:"allow_command_execution"`
+	CommandShell          string   `yaml:"command_shell"`
+	PlaywrightCommand     string   `yaml:"playwright_command"`
+	MaxCommandBytes       int      `yaml:"max_command_bytes"`
+	HTTPUserAgent         string   `yaml:"http_user_agent"`
+	BlockedCommands       []string `yaml:"blocked_commands"`
 }
 
 type SchedulerConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	TaskFile string `yaml:"task_file"`
+}
+
+type MemoryConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	File    string `yaml:"file"`
+}
+
+type QueueConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	File          string `yaml:"file"`
+	WorkerEnabled bool   `yaml:"worker_enabled"`
+	PollInterval  int    `yaml:"poll_interval_seconds"`
+}
+
+type WebConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
 }
 
 func Load(path string) (*Config, error) {
@@ -115,6 +136,18 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Scheduler.TaskFile == "" {
 		c.Scheduler.TaskFile = filepath.Join(c.DataDir, "tasks.json")
+	}
+	if c.Memory.File == "" {
+		c.Memory.File = filepath.Join(c.DataDir, "memory.jsonl")
+	}
+	if c.Queue.File == "" {
+		c.Queue.File = filepath.Join(c.DataDir, "queue.json")
+	}
+	if c.Queue.PollInterval <= 0 {
+		c.Queue.PollInterval = 5
+	}
+	if c.Web.Address == "" {
+		c.Web.Address = "127.0.0.1:7788"
 	}
 	if c.Agent.DefaultModel == "" {
 		return errors.New("agent.default_model is required")

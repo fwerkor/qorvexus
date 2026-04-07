@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -74,4 +75,35 @@ func (s *Store) Save(state *State) error {
 	cp := *state
 	s.cache[state.ID] = &cp
 	return nil
+}
+
+func (s *Store) List() ([]State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, err
+	}
+	var out []State
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.root, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var state State
+		if err := json.Unmarshal(raw, &state); err != nil {
+			continue
+		}
+		out = append(out, state)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out, nil
 }

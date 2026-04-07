@@ -9,6 +9,9 @@ Current baseline includes:
 - Multimodal message parts plus automatic vision-model fallback
 - OpenClaw-style `SKILL.md` loading with YAML frontmatter and basic gating
 - Local command execution, HTTP fetch, Playwright command bridge, sub-agent delegation, multi-model consultation, scheduled tasks
+- Built-in web control panel for config editing, runtime inspection, queue/session visibility, and ad-hoc execution
+- Command policy engine with dangerous-command blocking
+- Durable memory store and persistent async task queue
 - Session persistence plus automatic context compression through a summarizer model
 - Cron manager for recurring background runs
 
@@ -21,12 +24,16 @@ internal/cli           app bootstrap and commands
 internal/config        yaml config model and defaults
 internal/contextx      context compression
 internal/model         provider abstraction and adapters
+internal/memory        durable note storage and retrieval
 internal/orchestrator  multi-model discussion
+internal/policy        command execution safety rules
 internal/scheduler     cron-backed task manager
 internal/session       persistent session store
 internal/skill         skill discovery and prompt injection
+internal/taskqueue     async work queue and worker
 internal/tool          tool registry and built-in tools
 internal/types         shared protocol types
+internal/webui         built-in control panel and HTTP APIs
 skills/                workspace skills
 examples/              sample configuration
 ```
@@ -69,6 +76,18 @@ go build ./cmd/qorvexus
 
 ```bash
 ./qorvexus daemon --config examples/qorvexus.yaml
+```
+
+7. Start the web panel:
+
+```bash
+./qorvexus web --config examples/qorvexus.yaml
+```
+
+8. Inspect the queue:
+
+```bash
+./qorvexus queue --config examples/qorvexus.yaml
 ```
 
 ## Next Expansion Paths

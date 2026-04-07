@@ -8,12 +8,6 @@ import (
 	"qorvexus/internal/types"
 )
 
-type Runtime interface {
-	RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error)
-	ConsultModels(ctx context.Context, prompt string, panel []string) (string, error)
-	AddScheduledTask(ctx context.Context, name string, schedule string, prompt string, model string) (string, error)
-}
-
 type Tool interface {
 	Definition() types.ToolDefinition
 	Invoke(ctx context.Context, raw json.RawMessage) (string, error)
