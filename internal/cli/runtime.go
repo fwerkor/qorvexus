@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"qorvexus/internal/memory"
 	"qorvexus/internal/model"
 	"qorvexus/internal/orchestrator"
+	"qorvexus/internal/plan"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/scheduler"
 	"qorvexus/internal/self"
@@ -42,6 +42,7 @@ type appRuntime struct {
 	scheduler   *scheduler.Manager
 	sessions    *session.Store
 	memory      *memory.Store
+	plans       *plan.Store
 	queue       *taskqueue.Queue
 	worker      *taskqueue.Worker
 	webServer   *http.Server
@@ -58,6 +59,20 @@ type appRuntime struct {
 const (
 	ownerOnboardingSessionID = "owner-onboarding"
 )
+
+type planStepExecutionItem struct {
+	PlanID     string    `json:"plan_id"`
+	StepID     string    `json:"step_id"`
+	Title      string    `json:"title"`
+	Mode       string    `json:"mode"`
+	Status     string    `json:"status"`
+	TaskID     string    `json:"task_id,omitempty"`
+	SessionID  string    `json:"session_id,omitempty"`
+	Result     string    `json:"result,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	ExecutedAt time.Time `json:"executed_at"`
+	Plan       plan.Plan `json:"plan"`
+}
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	registry := model.NewRegistry()
@@ -87,6 +102,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		discussion:  discussion,
 		sessions:    store,
 		memory:      memory.NewStore(cfg.Memory.File),
+		plans:       plan.NewStore(filepath.Join(cfg.DataDir, "plans.json")),
 		startedAt:   time.Now().UTC(),
 		connectors:  social.NewRegistry(),
 		insights:    socialinsight.NewAnalyzer(),
@@ -103,6 +119,12 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewSubAgentTool(app))
 	toolRegistry.Register(tool.NewDiscussTool(app))
 	toolRegistry.Register(tool.NewScheduleTool(app))
+	toolRegistry.Register(tool.NewCreatePlanTool(app))
+	toolRegistry.Register(tool.NewGetPlanTool(app))
+	toolRegistry.Register(tool.NewListPlansTool(app))
+	toolRegistry.Register(tool.NewUpdatePlanStepTool(app))
+	toolRegistry.Register(tool.NewExecutePlanStepTool(app))
+	toolRegistry.Register(tool.NewAdvancePlanTool(app))
 	toolRegistry.Register(tool.NewRememberTool(app))
 	toolRegistry.Register(tool.NewRecallTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
@@ -124,6 +146,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		Tools:    toolRegistry,
 		Skills:   skills,
 		Memory:   app.memory,
+		Plans:    app.plans,
 		Compressor: &contextx.Compressor{
 			Registry:  registry,
 			MaxChars:  cfg.Agent.ContextWindowChars,
@@ -134,6 +157,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	app.scheduler = scheduler.NewManager(cfg.Scheduler.TaskFile, app)
 	_ = app.scheduler.Load()
 
+	_ = app.plans.Load()
 	app.queue = taskqueue.New(cfg.Queue.File, app)
 	_ = app.queue.Load()
 	app.worker = &taskqueue.Worker{
@@ -175,12 +199,7 @@ func (a *appRuntime) RunSocialBackground(ctx context.Context) error {
 }
 
 func (a *appRuntime) RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error) {
-	_, out, err := a.runner.Run(ctx, agent.Request{
-		SessionID: fmt.Sprintf("subagent-%s-%d", sanitize(name), os.Getpid()),
-		Model:     model,
-		Prompt:    prompt,
-	})
-	return out, err
+	return a.runSubAgentWithSession(ctx, subAgentSessionID(name), model, prompt)
 }
 
 func (a *appRuntime) ConsultModels(ctx context.Context, prompt string, panel []string) (string, error) {
@@ -199,6 +218,200 @@ func (a *appRuntime) AddScheduledTask(_ context.Context, name string, scheduleEx
 	}
 	a.logAudit(context.Background(), "schedule_task", "ok", name, map[string]any{"schedule": scheduleExpr, "model": model})
 	return fmt.Sprintf("scheduled task %q with cron %q", name, scheduleExpr), nil
+}
+
+func (a *appRuntime) CreatePlan(ctx context.Context, item plan.Plan) (string, error) {
+	if strings.TrimSpace(item.Goal) == "" {
+		return "", fmt.Errorf("plan goal is required")
+	}
+	if len(item.Steps) == 0 {
+		return "", fmt.Errorf("plan requires at least one step")
+	}
+	stepIDs := map[string]struct{}{}
+	for i, step := range item.Steps {
+		if strings.TrimSpace(step.Title) == "" {
+			return "", fmt.Errorf("step %d title is required", i+1)
+		}
+		if step.ID == "" {
+			continue
+		}
+		if _, exists := stepIDs[step.ID]; exists {
+			return "", fmt.Errorf("duplicate step id %q", step.ID)
+		}
+		stepIDs[step.ID] = struct{}{}
+	}
+	for _, step := range item.Steps {
+		for _, dep := range step.DependsOn {
+			if _, ok := stepIDs[dep]; !ok {
+				return "", fmt.Errorf("dependency %q must reference an existing explicit step id", dep)
+			}
+		}
+	}
+	if item.SessionID == "" {
+		if sessionID, ok := tool.SessionIDFrom(ctx); ok {
+			item.SessionID = sessionID
+		}
+	}
+	created, err := a.plans.Create(item)
+	if err != nil {
+		return "", err
+	}
+	a.logAudit(ctx, "create_plan", "ok", created.ID, map[string]any{
+		"goal":  created.Goal,
+		"steps": len(created.Steps),
+	})
+	return agent.ToolResultJSON(created), nil
+}
+
+func (a *appRuntime) GetPlan(_ context.Context, planID string) (string, error) {
+	item, err := a.plans.Get(planID)
+	if err != nil {
+		return "", err
+	}
+	return agent.ToolResultJSON(item), nil
+}
+
+func (a *appRuntime) ListPlans(_ context.Context, limit int, status string) (string, error) {
+	items := a.plans.List()
+	status = strings.TrimSpace(strings.ToLower(status))
+	if limit <= 0 {
+		limit = 20
+	}
+	filtered := make([]plan.Plan, 0, len(items))
+	for _, item := range items {
+		if status != "" && string(item.Status) != status {
+			continue
+		}
+		filtered = append(filtered, item)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	return agent.ToolResultJSON(filtered), nil
+}
+
+func (a *appRuntime) UpdatePlanStep(ctx context.Context, input tool.PlanStepUpdateInput) (string, error) {
+	if strings.TrimSpace(input.PlanID) == "" || strings.TrimSpace(input.StepID) == "" {
+		return "", fmt.Errorf("plan_id and step_id are required")
+	}
+	var (
+		stepStatus    plan.StepStatus
+		executionMode plan.ExecutionMode
+		err           error
+	)
+	if strings.TrimSpace(input.Status) != "" {
+		stepStatus, err = parsePlanStepStatus(input.Status)
+		if err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(input.ExecutionMode) != "" {
+		executionMode, err = parseExecutionMode(input.ExecutionMode)
+		if err != nil {
+			return "", err
+		}
+	}
+	updated, err := a.plans.UpdateStep(input.PlanID, input.StepID, func(item *plan.Plan, step *plan.Step) error {
+		if input.Title != "" {
+			step.Title = input.Title
+		}
+		if input.Details != "" {
+			step.Details = input.Details
+		}
+		if input.Prompt != "" {
+			step.Prompt = input.Prompt
+		}
+		if input.Model != "" {
+			step.Model = input.Model
+		}
+		if input.ExecutionMode != "" {
+			step.ExecutionMode = executionMode
+		}
+		if input.DependsOn != nil {
+			step.DependsOn = append([]string(nil), input.DependsOn...)
+		}
+		if input.Status != "" {
+			step.Status = stepStatus
+			if stepStatus == plan.StepStatusPlanned {
+				step.Error = ""
+				step.Result = ""
+				step.TaskID = ""
+				step.FinishedAt = time.Time{}
+			}
+		}
+		if strings.TrimSpace(input.Note) != "" {
+			step.Notes = append(step.Notes, strings.TrimSpace(input.Note))
+		}
+		if input.Result != "" {
+			step.Result = input.Result
+		}
+		if input.Error != "" {
+			step.Error = input.Error
+		}
+		if strings.TrimSpace(input.Note) != "" {
+			item.Notes = append(item.Notes, fmt.Sprintf("%s: %s", step.ID, strings.TrimSpace(input.Note)))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	a.logAudit(ctx, "update_plan_step", "ok", input.PlanID+":"+input.StepID, map[string]any{
+		"status": input.Status,
+	})
+	return agent.ToolResultJSON(updated), nil
+}
+
+func (a *appRuntime) ExecutePlanStep(ctx context.Context, planID string, stepID string, mode string) (string, error) {
+	report, err := a.executePlanStep(ctx, planID, stepID, mode)
+	if err != nil {
+		return "", err
+	}
+	return agent.ToolResultJSON(report), nil
+}
+
+func (a *appRuntime) AdvancePlan(ctx context.Context, planID string, limit int) (string, error) {
+	if strings.TrimSpace(planID) == "" {
+		return "", fmt.Errorf("plan_id is required")
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	type advanceReport struct {
+		PlanID  string                  `json:"plan_id"`
+		Actions []planStepExecutionItem `json:"actions"`
+		Plan    plan.Plan               `json:"plan"`
+		Message string                  `json:"message,omitempty"`
+	}
+	report := advanceReport{PlanID: planID}
+	for len(report.Actions) < limit {
+		item, err := a.plans.Get(planID)
+		if err != nil {
+			return "", err
+		}
+		runnable := plan.RunnableSteps(item)
+		if len(runnable) == 0 {
+			report.Plan = item
+			if len(report.Actions) == 0 {
+				report.Message = "no runnable steps"
+			}
+			break
+		}
+		action, err := a.executePlanStep(ctx, planID, runnable[0].ID, "")
+		if err != nil {
+			return "", err
+		}
+		report.Actions = append(report.Actions, action)
+		report.Plan = action.Plan
+	}
+	if report.Plan.ID == "" {
+		item, err := a.plans.Get(planID)
+		if err != nil {
+			return "", err
+		}
+		report.Plan = item
+	}
+	return agent.ToolResultJSON(report), nil
 }
 
 func (a *appRuntime) RunScheduled(_ context.Context, task scheduler.Task) error {
@@ -261,12 +474,340 @@ func (a *appRuntime) RunQueuedTask(ctx context.Context, task taskqueue.Task) (st
 	if sessionID == "" {
 		sessionID = "queue-" + task.ID
 	}
-	_, out, err := a.runner.Run(ctx, agent.Request{
+	if task.PlanID != "" && task.StepID != "" {
+		if _, err := a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
+			step.Status = plan.StepStatusRunning
+			step.SessionID = sessionID
+			step.Attempts++
+			step.StartedAt = time.Now().UTC()
+			step.TaskID = task.ID
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	}
+	_, out, err := a.runner.Run(a.toolExecutionContext(ctx, sessionID), agent.Request{
 		SessionID: sessionID,
 		Model:     task.Model,
 		Prompt:    task.Prompt,
+		Context:   a.conversationContextForSubagent(ctx),
+	})
+	if task.PlanID != "" && task.StepID != "" {
+		now := time.Now().UTC()
+		if err != nil {
+			_, _ = a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
+				step.Status = plan.StepStatusFailed
+				step.Error = err.Error()
+				step.FinishedAt = now
+				return nil
+			})
+		} else {
+			_, _ = a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
+				step.Status = plan.StepStatusSucceeded
+				step.Result = out
+				step.Error = ""
+				step.FinishedAt = now
+				return nil
+			})
+		}
+	}
+	return out, err
+}
+
+func (a *appRuntime) runSubAgentWithSession(ctx context.Context, sessionID string, modelName string, prompt string) (string, error) {
+	_, out, err := a.runner.Run(a.toolExecutionContext(ctx, sessionID), agent.Request{
+		SessionID: sessionID,
+		Model:     modelName,
+		Prompt:    prompt,
+		Context:   a.conversationContextForSubagent(ctx),
 	})
 	return out, err
+}
+
+func (a *appRuntime) executePlanStep(ctx context.Context, planID string, stepID string, mode string) (planStepExecutionItem, error) {
+	item, err := a.plans.Get(planID)
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	step, ok := plan.FindStep(item, stepID)
+	if !ok {
+		return planStepExecutionItem{}, fmt.Errorf("step %q not found in plan %q", stepID, planID)
+	}
+	if step.Status != plan.StepStatusPlanned {
+		return planStepExecutionItem{}, fmt.Errorf("step %q is %s, expected planned", stepID, step.Status)
+	}
+	runnable := false
+	for _, candidate := range plan.RunnableSteps(item) {
+		if candidate.ID == stepID {
+			runnable = true
+			break
+		}
+	}
+	if !runnable {
+		return planStepExecutionItem{}, fmt.Errorf("step %q has unmet dependencies", stepID)
+	}
+	executionMode := step.ExecutionMode
+	if strings.TrimSpace(mode) != "" {
+		executionMode, err = parseExecutionMode(mode)
+		if err != nil {
+			return planStepExecutionItem{}, err
+		}
+	}
+	if executionMode == "" {
+		executionMode = plan.ExecutionSubAgent
+	}
+	switch executionMode {
+	case plan.ExecutionQueued:
+		return a.queuePlanStep(ctx, item, step)
+	case plan.ExecutionSubAgent:
+		return a.runPlanStepWithSubAgent(ctx, item, step)
+	default:
+		return planStepExecutionItem{}, fmt.Errorf("unsupported execution mode %q", executionMode)
+	}
+}
+
+func (a *appRuntime) queuePlanStep(ctx context.Context, item plan.Plan, step plan.Step) (planStepExecutionItem, error) {
+	if !a.cfg.Queue.Enabled {
+		return planStepExecutionItem{}, fmt.Errorf("queue is disabled")
+	}
+	sessionID := planStepSessionID(item.ID, step.ID)
+	task, err := a.queue.Add(taskqueue.Task{
+		Name:      "plan-step: " + step.Title,
+		Prompt:    buildPlanStepPrompt(item, step),
+		Model:     resolvePlanStepModel(a.cfg, step),
+		SessionID: sessionID,
+		PlanID:    item.ID,
+		StepID:    step.ID,
+	})
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = plan.StepStatusQueued
+		currentStep.TaskID = task.ID
+		currentStep.SessionID = sessionID
+		currentStep.Error = ""
+		currentStep.Result = ""
+		return nil
+	})
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	a.logAudit(ctx, "queue_plan_step", "ok", item.ID+":"+step.ID, map[string]any{
+		"task_id": task.ID,
+		"mode":    "queued",
+	})
+	return planStepExecutionItem{
+		PlanID:     item.ID,
+		StepID:     step.ID,
+		Title:      step.Title,
+		Mode:       string(plan.ExecutionQueued),
+		Status:     string(plan.StepStatusQueued),
+		TaskID:     task.ID,
+		SessionID:  sessionID,
+		ExecutedAt: time.Now().UTC(),
+		Plan:       updated,
+	}, nil
+}
+
+func (a *appRuntime) runPlanStepWithSubAgent(ctx context.Context, item plan.Plan, step plan.Step) (planStepExecutionItem, error) {
+	sessionID := planStepSessionID(item.ID, step.ID)
+	_, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = plan.StepStatusRunning
+		currentStep.SessionID = sessionID
+		currentStep.TaskID = ""
+		currentStep.Error = ""
+		currentStep.Result = ""
+		currentStep.Attempts++
+		currentStep.StartedAt = time.Now().UTC()
+		return nil
+	})
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	out, runErr := a.runSubAgentWithSession(ctx, sessionID, resolvePlanStepModel(a.cfg, step), buildPlanStepPrompt(item, step))
+	now := time.Now().UTC()
+	if runErr != nil {
+		updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+			currentStep.Status = plan.StepStatusFailed
+			currentStep.Error = runErr.Error()
+			currentStep.FinishedAt = now
+			return nil
+		})
+		if err != nil {
+			return planStepExecutionItem{}, err
+		}
+		a.logAudit(ctx, "execute_plan_step", "error", item.ID+":"+step.ID, map[string]any{
+			"mode":  "subagent",
+			"error": runErr.Error(),
+		})
+		return planStepExecutionItem{
+			PlanID:     item.ID,
+			StepID:     step.ID,
+			Title:      step.Title,
+			Mode:       string(plan.ExecutionSubAgent),
+			Status:     string(plan.StepStatusFailed),
+			SessionID:  sessionID,
+			Error:      runErr.Error(),
+			ExecutedAt: now,
+			Plan:       updated,
+		}, nil
+	}
+	updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = plan.StepStatusSucceeded
+		currentStep.Result = out
+		currentStep.Error = ""
+		currentStep.FinishedAt = now
+		return nil
+	})
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	a.logAudit(ctx, "execute_plan_step", "ok", item.ID+":"+step.ID, map[string]any{
+		"mode": "subagent",
+	})
+	return planStepExecutionItem{
+		PlanID:     item.ID,
+		StepID:     step.ID,
+		Title:      step.Title,
+		Mode:       string(plan.ExecutionSubAgent),
+		Status:     string(plan.StepStatusSucceeded),
+		SessionID:  sessionID,
+		Result:     out,
+		ExecutedAt: now,
+		Plan:       updated,
+	}, nil
+}
+
+func buildPlanStepPrompt(item plan.Plan, step plan.Step) string {
+	var b strings.Builder
+	b.WriteString("You are executing a focused step inside a larger durable plan for Qorvexus.\n")
+	b.WriteString("Plan goal: ")
+	b.WriteString(strings.TrimSpace(item.Goal))
+	b.WriteString("\n")
+	if summary := strings.TrimSpace(item.Summary); summary != "" {
+		b.WriteString("Plan summary: ")
+		b.WriteString(summary)
+		b.WriteString("\n")
+	}
+	if len(item.Notes) > 0 {
+		b.WriteString("Plan notes:\n")
+		for _, note := range item.Notes {
+			if trimmed := strings.TrimSpace(note); trimmed != "" {
+				b.WriteString("- ")
+				b.WriteString(trimmed)
+				b.WriteString("\n")
+			}
+		}
+	}
+	b.WriteString("Current step: ")
+	b.WriteString(strings.TrimSpace(step.Title))
+	b.WriteString("\n")
+	if details := strings.TrimSpace(step.Details); details != "" {
+		b.WriteString("Step details: ")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	if len(step.DependsOn) > 0 {
+		b.WriteString("Completed dependencies:\n")
+		for _, depID := range step.DependsOn {
+			dep, ok := plan.FindStep(item, depID)
+			if !ok {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(dep.ID)
+			b.WriteString(": ")
+			b.WriteString(strings.TrimSpace(dep.Title))
+			if result := truncateText(dep.Result, 240); result != "" {
+				b.WriteString(" | result: ")
+				b.WriteString(result)
+			}
+			b.WriteString("\n")
+		}
+	}
+	if prompt := strings.TrimSpace(step.Prompt); prompt != "" {
+		b.WriteString("Specific instruction: ")
+		b.WriteString(prompt)
+		b.WriteString("\n")
+	}
+	b.WriteString("Complete this step directly. Use tools if needed. Return a concise but concrete step result, including any blocker that still remains.\n")
+	return strings.TrimSpace(b.String())
+}
+
+func resolvePlanStepModel(cfg *config.Config, step plan.Step) string {
+	if strings.TrimSpace(step.Model) != "" {
+		return step.Model
+	}
+	return cfg.Agent.DefaultModel
+}
+
+func planStepSessionID(planID string, stepID string) string {
+	return fmt.Sprintf("plan-%s-%s", sanitize(planID), sanitize(stepID))
+}
+
+func subAgentSessionID(name string) string {
+	return fmt.Sprintf("subagent-%s-%d", sanitize(name), time.Now().UTC().UnixNano())
+}
+
+func truncateText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
+}
+
+func parsePlanStepStatus(value string) (plan.StepStatus, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case string(plan.StepStatusPlanned):
+		return plan.StepStatusPlanned, nil
+	case string(plan.StepStatusQueued):
+		return plan.StepStatusQueued, nil
+	case string(plan.StepStatusRunning):
+		return plan.StepStatusRunning, nil
+	case string(plan.StepStatusSucceeded):
+		return plan.StepStatusSucceeded, nil
+	case string(plan.StepStatusFailed):
+		return plan.StepStatusFailed, nil
+	case string(plan.StepStatusBlocked):
+		return plan.StepStatusBlocked, nil
+	case string(plan.StepStatusCancelled):
+		return plan.StepStatusCancelled, nil
+	default:
+		return "", fmt.Errorf("unsupported step status %q", value)
+	}
+}
+
+func parseExecutionMode(value string) (plan.ExecutionMode, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", string(plan.ExecutionSubAgent):
+		return plan.ExecutionSubAgent, nil
+	case string(plan.ExecutionQueued):
+		return plan.ExecutionQueued, nil
+	default:
+		return "", fmt.Errorf("unsupported execution mode %q", value)
+	}
+}
+
+func (a *appRuntime) conversationContextForSubagent(ctx context.Context) *types.ConversationContext {
+	convo, ok := tool.ConversationContextFrom(ctx)
+	if !ok {
+		return nil
+	}
+	return &convo
+}
+
+func (a *appRuntime) toolExecutionContext(ctx context.Context, sessionID string) context.Context {
+	next := tool.WithSessionID(ctx, sessionID)
+	if convo, ok := tool.ConversationContextFrom(ctx); ok {
+		next = tool.WithConversationContext(next, convo)
+	}
+	return next
 }
 
 func (a *appRuntime) Status() webui.Status {

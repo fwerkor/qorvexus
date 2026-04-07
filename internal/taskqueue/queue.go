@@ -25,6 +25,8 @@ type Task struct {
 	Prompt     string    `json:"prompt"`
 	Model      string    `json:"model,omitempty"`
 	SessionID  string    `json:"session_id,omitempty"`
+	PlanID     string    `json:"plan_id,omitempty"`
+	StepID     string    `json:"step_id,omitempty"`
 	Status     Status    `json:"status"`
 	Result     string    `json:"result,omitempty"`
 	Error      string    `json:"error,omitempty"`

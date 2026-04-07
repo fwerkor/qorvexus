@@ -10,6 +10,7 @@ import (
 	"qorvexus/internal/contextx"
 	"qorvexus/internal/memory"
 	"qorvexus/internal/model"
+	"qorvexus/internal/plan"
 	"qorvexus/internal/session"
 	"qorvexus/internal/tool"
 	"qorvexus/internal/types"
@@ -147,5 +148,61 @@ func TestRunnerCapturesOwnerMemoriesAutomatically(t *testing.T) {
 	}
 	if len(results) < 4 {
 		t.Fatalf("expected captured owner memories, got %d", len(results))
+	}
+}
+
+func TestRunnerInjectsActivePlanIntoPrompt(t *testing.T) {
+	tempDir := t.TempDir()
+	plans := plan.NewStore(filepath.Join(tempDir, "plans.json"))
+	_, err := plans.Create(plan.Plan{
+		Goal:      "Ship planner support",
+		SessionID: "sess-plan",
+		Steps: []plan.Step{
+			{ID: "inspect", Title: "Inspect code", Status: plan.StepStatusSucceeded, Result: "Mapped the current runtime and queue integration points."},
+			{ID: "implement", Title: "Implement planner store"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "On it."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+		Plans:      plans,
+	}
+
+	_, _, err = runner.Run(context.Background(), Request{
+		SessionID: "sess-plan",
+		Prompt:    "Keep going",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, msg := range client.lastRequest.Messages {
+		if msg.Role == types.RoleSystem && strings.Contains(msg.Content, "Active execution plans:") && strings.Contains(msg.Content, "Implement planner store") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected active plan prompt injection, got %#v", client.lastRequest.Messages)
 	}
 }

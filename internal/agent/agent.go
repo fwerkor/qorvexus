@@ -12,6 +12,7 @@ import (
 	"qorvexus/internal/contextx"
 	"qorvexus/internal/memory"
 	"qorvexus/internal/model"
+	"qorvexus/internal/plan"
 	"qorvexus/internal/session"
 	"qorvexus/internal/skill"
 	"qorvexus/internal/tool"
@@ -26,6 +27,7 @@ type Runner struct {
 	Skills     []skill.Skill
 	Compressor *contextx.Compressor
 	Memory     *memory.Store
+	Plans      *plan.Store
 }
 
 type Request struct {
@@ -61,6 +63,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, req.Prompt, st.Context); prompt != "" {
 		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
 	}
+	if prompt := r.buildActivePlanPrompt(st.ID); prompt != "" {
+		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
+	}
 
 	for turn := 0; turn < r.Config.Agent.MaxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
@@ -94,6 +99,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			if !isZeroContext(st.Context) {
 				toolCtx = tool.WithConversationContext(ctx, st.Context)
 			}
+			toolCtx = tool.WithSessionID(toolCtx, st.ID)
 			result := r.Tools.Execute(toolCtx, call)
 			content := result.Content
 			if result.Error {
@@ -276,6 +282,54 @@ func (r *Runner) buildRelevantMemoryPrompt(sessionID string, query string, ctx t
 	return strings.TrimSpace(b.String())
 }
 
+func (r *Runner) buildActivePlanPrompt(sessionID string) string {
+	if r.Plans == nil || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	plans := r.Plans.ActiveForSession(sessionID, 3)
+	if len(plans) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Active execution plans:\n")
+	for _, item := range plans {
+		b.WriteString("- ")
+		b.WriteString(item.ID)
+		b.WriteString(" [")
+		b.WriteString(string(item.Status))
+		b.WriteString("]: ")
+		b.WriteString(strings.TrimSpace(item.Goal))
+		b.WriteString("\n")
+		if summary := strings.TrimSpace(item.Summary); summary != "" {
+			b.WriteString("  summary: ")
+			b.WriteString(summary)
+			b.WriteString("\n")
+		}
+		for _, step := range item.Steps {
+			b.WriteString("  * ")
+			b.WriteString(step.ID)
+			b.WriteString(" [")
+			b.WriteString(string(step.Status))
+			b.WriteString("]: ")
+			b.WriteString(strings.TrimSpace(step.Title))
+			if details := strings.TrimSpace(step.Details); details != "" {
+				b.WriteString(" - ")
+				b.WriteString(details)
+			}
+			if result := truncateForPrompt(step.Result, 180); result != "" && step.Status == plan.StepStatusSucceeded {
+				b.WriteString(" | result: ")
+				b.WriteString(result)
+			}
+			if errText := truncateForPrompt(step.Error, 120); errText != "" && step.Status == plan.StepStatusFailed {
+				b.WriteString(" | error: ")
+				b.WriteString(errText)
+			}
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx types.ConversationContext) []memory.Entry {
 	selected := map[string]memory.Entry{}
 	add := func(items []memory.Entry) {
@@ -340,4 +394,16 @@ func (r *Runner) captureConversationMemories(sessionID string, userInput string,
 func ToolResultJSON(result any) string {
 	raw, _ := json.MarshalIndent(result, "", "  ")
 	return string(raw)
+}
+
+func truncateForPrompt(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
 }

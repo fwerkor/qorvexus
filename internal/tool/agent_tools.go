@@ -7,15 +7,37 @@ import (
 	"strings"
 
 	"qorvexus/internal/memory"
+	"qorvexus/internal/plan"
 	"qorvexus/internal/types"
 )
 
 type ThinkTool struct{}
 
+type PlanStepUpdateInput struct {
+	PlanID        string
+	StepID        string
+	Status        string
+	Title         string
+	Details       string
+	Prompt        string
+	Model         string
+	ExecutionMode string
+	DependsOn     []string
+	Note          string
+	Result        string
+	Error         string
+}
+
 type Runtime interface {
 	RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error)
 	ConsultModels(ctx context.Context, prompt string, panel []string) (string, error)
 	AddScheduledTask(ctx context.Context, name string, schedule string, prompt string, model string) (string, error)
+	CreatePlan(ctx context.Context, plan plan.Plan) (string, error)
+	GetPlan(ctx context.Context, planID string) (string, error)
+	ListPlans(ctx context.Context, limit int, status string) (string, error)
+	UpdatePlanStep(ctx context.Context, input PlanStepUpdateInput) (string, error)
+	ExecutePlanStep(ctx context.Context, planID string, stepID string, mode string) (string, error)
+	AdvancePlan(ctx context.Context, planID string, limit int) (string, error)
 	Remember(ctx context.Context, entry memory.Entry) (string, error)
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
@@ -161,6 +183,274 @@ func (t *ScheduleTool) Invoke(ctx context.Context, raw json.RawMessage) (string,
 		return "", err
 	}
 	return t.rt.AddScheduledTask(ctx, input.Name, input.Schedule, input.Prompt, input.Model)
+}
+
+type CreatePlanTool struct {
+	rt Runtime
+}
+
+func NewCreatePlanTool(rt Runtime) *CreatePlanTool { return &CreatePlanTool{rt: rt} }
+
+func (t *CreatePlanTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "create_plan",
+		Description: "Create a durable multi-step execution plan with dependencies that can be resumed and advanced later.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"goal":       map[string]any{"type": "string"},
+				"summary":    map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+				"steps": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":             map[string]any{"type": "string"},
+							"title":          map[string]any{"type": "string"},
+							"details":        map[string]any{"type": "string"},
+							"prompt":         map[string]any{"type": "string"},
+							"model":          map[string]any{"type": "string"},
+							"depends_on":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"execution_mode": map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+						},
+						"required": []string{"title"},
+					},
+				},
+			},
+			"required": []string{"goal", "steps"},
+		},
+	}
+}
+
+func (t *CreatePlanTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Goal      string `json:"goal"`
+		Summary   string `json:"summary"`
+		SessionID string `json:"session_id"`
+		Steps     []struct {
+			ID            string   `json:"id"`
+			Title         string   `json:"title"`
+			Details       string   `json:"details"`
+			Prompt        string   `json:"prompt"`
+			Model         string   `json:"model"`
+			DependsOn     []string `json:"depends_on"`
+			ExecutionMode string   `json:"execution_mode"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	steps := make([]plan.Step, 0, len(input.Steps))
+	for _, item := range input.Steps {
+		steps = append(steps, plan.Step{
+			ID:            item.ID,
+			Title:         item.Title,
+			Details:       item.Details,
+			Prompt:        item.Prompt,
+			Model:         item.Model,
+			DependsOn:     item.DependsOn,
+			ExecutionMode: plan.ExecutionMode(item.ExecutionMode),
+		})
+	}
+	return t.rt.CreatePlan(ctx, plan.Plan{
+		Goal:      input.Goal,
+		Summary:   input.Summary,
+		SessionID: input.SessionID,
+		Steps:     steps,
+	})
+}
+
+type GetPlanTool struct {
+	rt Runtime
+}
+
+func NewGetPlanTool(rt Runtime) *GetPlanTool { return &GetPlanTool{rt: rt} }
+
+func (t *GetPlanTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "get_plan",
+		Description: "Inspect a saved execution plan and its current step state.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan_id": map[string]any{"type": "string"},
+			},
+			"required": []string{"plan_id"},
+		},
+	}
+}
+
+func (t *GetPlanTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.GetPlan(ctx, input.PlanID)
+}
+
+type ListPlansTool struct {
+	rt Runtime
+}
+
+func NewListPlansTool(rt Runtime) *ListPlansTool { return &ListPlansTool{rt: rt} }
+
+func (t *ListPlansTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_plans",
+		Description: "List durable execution plans, optionally filtered by overall plan status.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit":  map[string]any{"type": "integer"},
+				"status": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *ListPlansTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit  int    `json:"limit"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.ListPlans(ctx, input.Limit, input.Status)
+}
+
+type UpdatePlanStepTool struct {
+	rt Runtime
+}
+
+func NewUpdatePlanStepTool(rt Runtime) *UpdatePlanStepTool { return &UpdatePlanStepTool{rt: rt} }
+
+func (t *UpdatePlanStepTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "update_plan_step",
+		Description: "Revise a plan step, record a note, or update its status and result.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan_id":        map[string]any{"type": "string"},
+				"step_id":        map[string]any{"type": "string"},
+				"status":         map[string]any{"type": "string"},
+				"title":          map[string]any{"type": "string"},
+				"details":        map[string]any{"type": "string"},
+				"prompt":         map[string]any{"type": "string"},
+				"model":          map[string]any{"type": "string"},
+				"execution_mode": map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+				"depends_on":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"note":           map[string]any{"type": "string"},
+				"result":         map[string]any{"type": "string"},
+				"error":          map[string]any{"type": "string"},
+			},
+			"required": []string{"plan_id", "step_id"},
+		},
+	}
+}
+
+func (t *UpdatePlanStepTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		PlanID        string   `json:"plan_id"`
+		StepID        string   `json:"step_id"`
+		Status        string   `json:"status"`
+		Title         string   `json:"title"`
+		Details       string   `json:"details"`
+		Prompt        string   `json:"prompt"`
+		Model         string   `json:"model"`
+		ExecutionMode string   `json:"execution_mode"`
+		DependsOn     []string `json:"depends_on"`
+		Note          string   `json:"note"`
+		Result        string   `json:"result"`
+		Error         string   `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.UpdatePlanStep(ctx, PlanStepUpdateInput{
+		PlanID:        input.PlanID,
+		StepID:        input.StepID,
+		Status:        input.Status,
+		Title:         input.Title,
+		Details:       input.Details,
+		Prompt:        input.Prompt,
+		Model:         input.Model,
+		ExecutionMode: input.ExecutionMode,
+		DependsOn:     input.DependsOn,
+		Note:          input.Note,
+		Result:        input.Result,
+		Error:         input.Error,
+	})
+}
+
+type ExecutePlanStepTool struct {
+	rt Runtime
+}
+
+func NewExecutePlanStepTool(rt Runtime) *ExecutePlanStepTool { return &ExecutePlanStepTool{rt: rt} }
+
+func (t *ExecutePlanStepTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "execute_plan_step",
+		Description: "Execute one specific step from a saved plan via a subagent or background queue.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan_id": map[string]any{"type": "string"},
+				"step_id": map[string]any{"type": "string"},
+				"mode":    map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+			},
+			"required": []string{"plan_id", "step_id"},
+		},
+	}
+}
+
+func (t *ExecutePlanStepTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		PlanID string `json:"plan_id"`
+		StepID string `json:"step_id"`
+		Mode   string `json:"mode"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.ExecutePlanStep(ctx, input.PlanID, input.StepID, input.Mode)
+}
+
+type AdvancePlanTool struct {
+	rt Runtime
+}
+
+func NewAdvancePlanTool(rt Runtime) *AdvancePlanTool { return &AdvancePlanTool{rt: rt} }
+
+func (t *AdvancePlanTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "advance_plan",
+		Description: "Advance a saved plan by executing or queueing runnable steps in dependency order.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan_id": map[string]any{"type": "string"},
+				"limit":   map[string]any{"type": "integer"},
+			},
+			"required": []string{"plan_id"},
+		},
+	}
+}
+
+func (t *AdvancePlanTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		PlanID string `json:"plan_id"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.AdvancePlan(ctx, input.PlanID, input.Limit)
 }
 
 type RememberTool struct {
