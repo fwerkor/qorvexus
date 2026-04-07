@@ -58,56 +58,68 @@ The goal is not a single hard-coded assistant, but an agent platform:
 
 ## Quick Start
 
-1. Put your API credentials into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-You can still use environment variables as a fallback, but the config file is the primary place now.
-2. Optionally edit [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-If the file does not exist yet, Qorvexus will auto-create a default one on first start.
-3. Build:
+1. Build Qorvexus:
 
 ```bash
 go build ./cmd/qorvexus
 ```
 
-4. Start everything with one command:
+2. Start everything with one command:
 
 ```bash
 ./qorvexus start
 ```
 
-This starts the web UI, queue worker, scheduler, social watchdogs, and other enabled runtime services.
-It also auto-creates a default config file if needed, including a built-in system prompt and default model wiring.
-Context compression uses the active conversation model by default, so you do not need to configure a separate summarizer model unless you explicitly want to override that behavior.
+If [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml) does not exist yet, Qorvexus will auto-create it with sane defaults.
 
-5. Run an ad-hoc prompt:
+3. Put your API credentials into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+The config file is the primary place for credentials and runtime settings.
+
+4. Open the web UI:
+
+```bash
+http://127.0.0.1:7788
+```
+
+From there you can edit config, inspect status, view sessions, queue, memory, commitments, and other runtime state.
+
+## Common Commands
+
+Start the full service:
+
+```bash
+./qorvexus start
+```
+
+Run a one-off prompt:
 
 ```bash
 ./qorvexus run "Plan my day and execute any necessary research"
+```
 
+Run a one-off multimodal prompt:
+
+```bash
 ./qorvexus run --image https://example.com/screen.png "Describe this screen and tell me what to do next"
 ```
 
-6. List loaded skills:
+List skills:
 
 ```bash
 ./qorvexus skills
 ```
 
-7. Inspect the queue:
+Inspect the queue:
 
 ```bash
 ./qorvexus queue
 ```
 
-8. Telegram webhook endpoint:
+## Telegram
 
-```bash
-https://your-public-domain.example/webhooks/telegram
-```
-
-To use Telegram:
+To use Telegram in webhook mode:
 
 1. Set `social.telegram_bot_token`, `social.public_base_url`, and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-You may still use `telegram_bot_token_env` if you prefer, but it is optional.
 2. Start Qorvexus with `./qorvexus start`.
 3. Register the webhook with Telegram:
 
@@ -122,7 +134,7 @@ curl -X POST "https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook" 
 
 When Telegram sends updates to that webhook, Qorvexus will ingest them through the social adapter layer and automatically send the agent reply back through the Telegram Bot API.
 
-9. Manual social-style inbound test:
+Manual social-style inbound test:
 
 ```bash
 curl -X POST http://127.0.0.1:7788/api/social/inbound \
