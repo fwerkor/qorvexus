@@ -50,3 +50,36 @@ func TestScanSeparatesOverdueAndStale(t *testing.T) {
 		t.Fatalf("unexpected stale result: %+v", result.Stale)
 	}
 }
+
+func TestShouldQueueReviewUsesCooldownByStatus(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+
+	overdue := Entry{
+		Status:       StatusOverdue,
+		LastReviewAt: now.Add(-23 * time.Hour),
+	}
+	if ShouldQueueReview(overdue, now) {
+		t.Fatalf("expected overdue commitment to respect 24h cooldown")
+	}
+
+	stale := Entry{
+		Status:       StatusOpen,
+		DueHint:      "next week",
+		LastReviewAt: now.Add(-49 * time.Hour),
+	}
+	if !ShouldQueueReview(stale, now) {
+		t.Fatalf("expected due-hint commitment to allow requeue after cooldown")
+	}
+}
+
+func TestNextEscalationLevelIncreasesForLongOverdue(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	entry := Entry{
+		Status:          StatusOverdue,
+		EscalationLevel: 1,
+		LastReviewAt:    now.Add(-80 * time.Hour),
+	}
+	if got := NextEscalationLevel(entry, now); got != 2 {
+		t.Fatalf("expected escalation level 2, got %d", got)
+	}
+}

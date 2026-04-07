@@ -3,6 +3,7 @@ package commitment
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStoreAppendAndUpdateStatus(t *testing.T) {
@@ -57,5 +58,30 @@ func TestStoreSummary(t *testing.T) {
 	}
 	if summary.WithDueHint != 1 || summary.ByChannel["telegram"] != 2 || summary.ByTrust["external"] != 2 {
 		t.Fatalf("unexpected summary breakdown: %+v", summary)
+	}
+}
+
+func TestStoreNoteReviewQueued(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "commitments.jsonl"))
+	entry, err := store.Append(Entry{
+		Channel: "telegram",
+		Summary: "Send update",
+	})
+	if err != nil {
+		t.Fatalf("append commitment: %v", err)
+	}
+	at := time.Now().UTC()
+	if err := store.NoteReviewQueued(entry.ID, "queue-2", 2, at); err != nil {
+		t.Fatalf("note review queued: %v", err)
+	}
+	got, err := store.Get(entry.ID)
+	if err != nil {
+		t.Fatalf("get commitment: %v", err)
+	}
+	if got.LastReviewTaskID != "queue-2" || got.RelatedTaskID != "queue-2" || got.EscalationLevel != 2 {
+		t.Fatalf("unexpected queued review state: %+v", got)
+	}
+	if got.LastReviewAt.IsZero() {
+		t.Fatalf("expected last review timestamp to be set")
 	}
 }

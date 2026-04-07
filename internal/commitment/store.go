@@ -20,18 +20,21 @@ const (
 )
 
 type Entry struct {
-	ID            string    `json:"id"`
-	Channel       string    `json:"channel,omitempty"`
-	ThreadID      string    `json:"thread_id,omitempty"`
-	Counterparty  string    `json:"counterparty,omitempty"`
-	Summary       string    `json:"summary"`
-	DueHint       string    `json:"due_hint,omitempty"`
-	Trust         string    `json:"trust,omitempty"`
-	Status        Status    `json:"status"`
-	Source        string    `json:"source,omitempty"`
-	RelatedTaskID string    `json:"related_task_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	Channel          string    `json:"channel,omitempty"`
+	ThreadID         string    `json:"thread_id,omitempty"`
+	Counterparty     string    `json:"counterparty,omitempty"`
+	Summary          string    `json:"summary"`
+	DueHint          string    `json:"due_hint,omitempty"`
+	Trust            string    `json:"trust,omitempty"`
+	Status           Status    `json:"status"`
+	Source           string    `json:"source,omitempty"`
+	RelatedTaskID    string    `json:"related_task_id,omitempty"`
+	LastReviewTaskID string    `json:"last_review_task_id,omitempty"`
+	LastReviewAt     time.Time `json:"last_review_at,omitempty"`
+	EscalationLevel  int       `json:"escalation_level,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Store struct {
@@ -40,15 +43,17 @@ type Store struct {
 }
 
 type Summary struct {
-	Total         int            `json:"total"`
-	Open          int            `json:"open"`
-	Completed     int            `json:"completed"`
-	Canceled      int            `json:"canceled"`
-	Overdue       int            `json:"overdue"`
-	WithDueHint   int            `json:"with_due_hint"`
-	ByChannel     map[string]int `json:"by_channel"`
-	ByTrust       map[string]int `json:"by_trust"`
-	LastUpdatedAt time.Time      `json:"last_updated_at,omitempty"`
+	Total              int            `json:"total"`
+	Open               int            `json:"open"`
+	Completed          int            `json:"completed"`
+	Canceled           int            `json:"canceled"`
+	Overdue            int            `json:"overdue"`
+	WithDueHint        int            `json:"with_due_hint"`
+	WithReviewHistory  int            `json:"with_review_history"`
+	MaxEscalationLevel int            `json:"max_escalation_level"`
+	ByChannel          map[string]int `json:"by_channel"`
+	ByTrust            map[string]int `json:"by_trust"`
+	LastUpdatedAt      time.Time      `json:"last_updated_at,omitempty"`
 }
 
 func NewStore(path string) *Store {
@@ -148,6 +153,12 @@ func (s *Store) Summary() (Summary, error) {
 		if item.DueHint != "" {
 			out.WithDueHint++
 		}
+		if !item.LastReviewAt.IsZero() {
+			out.WithReviewHistory++
+		}
+		if item.EscalationLevel > out.MaxEscalationLevel {
+			out.MaxEscalationLevel = item.EscalationLevel
+		}
 		if item.Channel != "" {
 			out.ByChannel[item.Channel]++
 		}
@@ -172,6 +183,28 @@ func (s *Store) AttachTask(id string, taskID string) error {
 		if items[i].ID == id {
 			items[i].RelatedTaskID = taskID
 			items[i].UpdatedAt = time.Now().UTC()
+			return s.saveLocked(items)
+		}
+	}
+	return fmt.Errorf("commitment %q not found", id)
+}
+
+func (s *Store) NoteReviewQueued(id string, taskID string, escalationLevel int, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].ID == id {
+			items[i].RelatedTaskID = taskID
+			items[i].LastReviewTaskID = taskID
+			items[i].LastReviewAt = at
+			if escalationLevel > items[i].EscalationLevel {
+				items[i].EscalationLevel = escalationLevel
+			}
+			items[i].UpdatedAt = at
 			return s.saveLocked(items)
 		}
 	}

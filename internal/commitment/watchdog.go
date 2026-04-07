@@ -63,3 +63,37 @@ func IsStale(entry Entry, now time.Time) bool {
 	}
 	return now.Sub(entry.UpdatedAt) >= 7*24*time.Hour
 }
+
+func ShouldQueueReview(entry Entry, now time.Time) bool {
+	if entry.Status != StatusOpen && entry.Status != StatusOverdue {
+		return false
+	}
+	if entry.LastReviewAt.IsZero() {
+		return true
+	}
+	cooldown := 7 * 24 * time.Hour
+	if entry.DueHint != "" {
+		cooldown = 48 * time.Hour
+	}
+	if entry.Status == StatusOverdue {
+		cooldown = 24 * time.Hour
+	}
+	return now.Sub(entry.LastReviewAt) >= cooldown
+}
+
+func NextEscalationLevel(entry Entry, now time.Time) int {
+	level := entry.EscalationLevel
+	if ShouldMarkOverdue(entry, now) || entry.Status == StatusOverdue {
+		if level < 1 {
+			level = 1
+		}
+		if !entry.LastReviewAt.IsZero() && now.Sub(entry.LastReviewAt) >= 72*time.Hour {
+			level++
+		}
+		return level
+	}
+	if IsStale(entry, now) && level < 1 {
+		return 1
+	}
+	return level
+}

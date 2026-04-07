@@ -540,9 +540,10 @@ func (a *appRuntime) ScanCommitments(ctx context.Context) (string, error) {
 	now := time.Now().UTC()
 	scan := commitment.Scan(items, now)
 	type scanSummary struct {
-		Checked       int      `json:"checked"`
-		MarkedOverdue []string `json:"marked_overdue"`
-		QueuedReview  []string `json:"queued_review"`
+		Checked         int      `json:"checked"`
+		MarkedOverdue   []string `json:"marked_overdue"`
+		QueuedReview    []string `json:"queued_review"`
+		EscalatedReview []string `json:"escalated_review"`
 	}
 	out := scanSummary{Checked: len(items)}
 	for _, entry := range scan.Overdue {
@@ -553,20 +554,35 @@ func (a *appRuntime) ScanCommitments(ctx context.Context) (string, error) {
 				"channel":  entry.Channel,
 			})
 		}
-		taskID, err := a.enqueueCommitmentReview(ctx, entry, "This commitment appears overdue. Review what was promised, decide whether to follow up externally, escalate to the owner, or queue concrete delivery work.")
+		updated, getErr := a.commitments.Get(entry.ID)
+		if getErr == nil {
+			entry = updated
+		}
+		if !commitment.ShouldQueueReview(entry, now) {
+			continue
+		}
+		level := commitment.NextEscalationLevel(entry, now)
+		taskID, err := a.enqueueCommitmentReview(ctx, entry, level, "This commitment appears overdue. Review what was promised, decide whether to follow up externally, escalate to the owner, or queue concrete delivery work.")
 		if err == nil && taskID != "" {
 			out.QueuedReview = append(out.QueuedReview, taskID)
-			_ = a.commitments.AttachTask(entry.ID, taskID)
+			if level > entry.EscalationLevel {
+				out.EscalatedReview = append(out.EscalatedReview, entry.ID)
+			}
+			_ = a.commitments.NoteReviewQueued(entry.ID, taskID, level, now)
 		}
 	}
 	for _, entry := range scan.Stale {
-		if entry.RelatedTaskID != "" {
+		if !commitment.ShouldQueueReview(entry, now) {
 			continue
 		}
-		taskID, err := a.enqueueCommitmentReview(ctx, entry, "This commitment is getting stale. Review whether it needs a reminder, owner escalation, or a concrete next-step task before it becomes overdue.")
+		level := commitment.NextEscalationLevel(entry, now)
+		taskID, err := a.enqueueCommitmentReview(ctx, entry, level, "This commitment is getting stale. Review whether it needs a reminder, owner escalation, or a concrete next-step task before it becomes overdue.")
 		if err == nil && taskID != "" {
 			out.QueuedReview = append(out.QueuedReview, taskID)
-			_ = a.commitments.AttachTask(entry.ID, taskID)
+			if level > entry.EscalationLevel {
+				out.EscalatedReview = append(out.EscalatedReview, entry.ID)
+			}
+			_ = a.commitments.NoteReviewQueued(entry.ID, taskID, level, now)
 		}
 	}
 	raw, err := json.MarshalIndent(out, "", "  ")
@@ -759,7 +775,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 				DueHint:      suggestion.DueHint,
 				Trust:        string(env.Context.Trust),
 				Source:       "social:" + env.Channel,
-			}, "Review and advance this commitment for Qorvexus based on the recent social exchange.")
+			}, 1, "Review and advance this commitment for Qorvexus based on the recent social exchange.")
 			if err == nil && taskID != "" {
 				relatedTaskID = taskID
 			}
@@ -784,7 +800,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 	}
 }
 
-func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitment.Entry, instruction string) (string, error) {
+func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitment.Entry, escalationLevel int, instruction string) (string, error) {
 	if !a.cfg.Queue.Enabled {
 		return "", nil
 	}
@@ -792,7 +808,7 @@ func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitme
 		Name: "commitment-review: " + entry.Summary,
 		Prompt: strings.TrimSpace(fmt.Sprintf(
 			"%s\n"+
-				"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\nSource: %s\n"+
+				"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\nEscalation level: %d\nSource: %s\n"+
 				"Decide whether to prepare a deliverable, send a follow-up, ask the owner for approval, or queue further work. Respect authority boundaries and keep the commitment moving.",
 			instruction,
 			entry.Channel,
@@ -801,6 +817,7 @@ func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitme
 			entry.Trust,
 			entry.Summary,
 			entry.DueHint,
+			escalationLevel,
 			entry.Source,
 		)),
 		Model:     a.cfg.Agent.DefaultModel,
@@ -810,9 +827,10 @@ func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitme
 		return "", err
 	}
 	a.logAudit(ctx, "enqueue_commitment_review", "ok", task.ID, map[string]any{
-		"summary":      entry.Summary,
-		"counterparty": entry.Counterparty,
-		"due_hint":     entry.DueHint,
+		"summary":          entry.Summary,
+		"counterparty":     entry.Counterparty,
+		"due_hint":         entry.DueHint,
+		"escalation_level": escalationLevel,
 	})
 	return task.ID, nil
 }
