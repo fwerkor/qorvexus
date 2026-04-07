@@ -96,6 +96,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewUpsertSkillTool(app))
 	toolRegistry.Register(tool.NewSelfBacklogAddTool(app))
 	toolRegistry.Register(tool.NewSelfBacklogListTool(app))
+	toolRegistry.Register(tool.NewPromoteSelfImprovementTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -236,6 +237,8 @@ func (a *appRuntime) Status() webui.Status {
 		SchedulerEnabled: a.cfg.Scheduler.Enabled,
 		QueueEnabled:     a.cfg.Queue.Enabled,
 		MemoryEnabled:    a.cfg.Memory.Enabled,
+		SelfEnabled:      a.cfg.Self.Enabled,
+		SocialEnabled:    a.cfg.Social.Enabled,
 		WebAddress:       a.cfg.Web.Address,
 	}
 }
@@ -335,6 +338,32 @@ func (a *appRuntime) ListSelfImprovements(_ context.Context, limit int) (string,
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func (a *appRuntime) ListRecentSocial(_ context.Context, limit int) (string, error) {
+	if a.social == nil {
+		return "[]", nil
+	}
+	items, err := a.social.Recent(limit)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) PromoteSelfImprovement(ctx context.Context, title string, description string, modelName string) (string, error) {
+	if !a.cfg.Self.Enabled {
+		return "", fmt.Errorf("self improvement is disabled")
+	}
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("promoting self improvement requires owner context")
+	}
+	prompt := "Work on this self-improvement task for Qorvexus.\nTitle: " + title + "\nDescription: " + description + "\nMake concrete progress and use tools if needed."
+	return a.EnqueueTask(ctx, "self-improvement: "+title, prompt, modelName, "")
 }
 
 func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {

@@ -25,6 +25,7 @@ type Runtime interface {
 	UpsertSkill(ctx context.Context, name string, description string, body string) (string, error)
 	AddSelfImprovement(ctx context.Context, title string, description string, kind string) (string, error)
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
+	PromoteSelfImprovement(ctx context.Context, title string, description string, model string) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -457,4 +458,38 @@ func (t *SelfBacklogListTool) Invoke(ctx context.Context, raw json.RawMessage) (
 		}
 	}
 	return t.rt.ListSelfImprovements(ctx, input.Limit)
+}
+
+type PromoteSelfImprovementTool struct{ rt Runtime }
+
+func NewPromoteSelfImprovementTool(rt Runtime) *PromoteSelfImprovementTool {
+	return &PromoteSelfImprovementTool{rt: rt}
+}
+
+func (t *PromoteSelfImprovementTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "promote_self_improvement",
+		Description: "Turn a self-improvement idea into an asynchronous execution task so the agent can work on it later.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"model":       map[string]any{"type": "string"},
+			},
+			"required": []string{"title", "description"},
+		},
+	}
+}
+
+func (t *PromoteSelfImprovementTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Model       string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.PromoteSelfImprovement(ctx, input.Title, input.Description, input.Model)
 }

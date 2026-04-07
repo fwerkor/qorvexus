@@ -20,6 +20,8 @@ type App interface {
 	ListSessions() ([]session.State, error)
 	ListQueue() []taskqueue.Task
 	SearchMemory(query string, limit int) (string, error)
+	ListSelfImprovements(ctx context.Context, limit int) (string, error)
+	ListRecentSocial(ctx context.Context, limit int) (string, error)
 	LoadConfigText() (string, error)
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
@@ -31,6 +33,8 @@ type Status struct {
 	SchedulerEnabled bool      `json:"scheduler_enabled"`
 	QueueEnabled     bool      `json:"queue_enabled"`
 	MemoryEnabled    bool      `json:"memory_enabled"`
+	SelfEnabled      bool      `json:"self_enabled"`
+	SocialEnabled    bool      `json:"social_enabled"`
 	WebAddress       string    `json:"web_address"`
 }
 
@@ -55,6 +59,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/queue", s.handleQueue)
 	mux.HandleFunc("/api/memory", s.handleMemory)
+	mux.HandleFunc("/api/self", s.handleSelf)
+	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
 	return mux
@@ -106,6 +112,26 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	raw, err := s.app.SearchMemory(query, 25)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.ListSelfImprovements(r.Context(), 50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.ListRecentSocial(r.Context(), 50)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -205,6 +231,8 @@ const dashboardHTML = `<!doctype html>
           <span class="chip">Scheduler: {{.SchedulerEnabled}}</span>
           <span class="chip">Queue: {{.QueueEnabled}}</span>
           <span class="chip">Memory: {{.MemoryEnabled}}</span>
+          <span class="chip">Self: {{.SelfEnabled}}</span>
+          <span class="chip">Social: {{.SocialEnabled}}</span>
         </div>
       </div>
       <div class="hero-card">
@@ -254,6 +282,16 @@ const dashboardHTML = `<!doctype html>
         <pre id="memory-output"></pre>
       </section>
       <section class="card">
+        <h2>Self Evolution</h2>
+        <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
+        <pre id="self-output"></pre>
+      </section>
+      <section class="card">
+        <h2>Social Inbox</h2>
+        <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
+        <pre id="social-output"></pre>
+      </section>
+      <section class="card">
         <h2>Status</h2>
         <button class="secondary" onclick="loadStatus()">Refresh Status</button>
         <pre id="status-output"></pre>
@@ -301,6 +339,14 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/memory?q=" + q);
       document.getElementById("memory-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function loadSelf() {
+      const data = await api("/api/self");
+      document.getElementById("self-output").textContent = JSON.stringify(data, null, 2);
+    }
+    async function loadSocial() {
+      const data = await api("/api/social/recent");
+      document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
+    }
     function renderTable(rows, cols) {
       if (!rows.length) return "<p class='muted'>No data yet.</p>";
       let html = "<table><thead><tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
@@ -310,7 +356,7 @@ const dashboardHTML = `<!doctype html>
       html += "</tbody></table>";
       return html;
     }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue();
+    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial();
   </script>
 </body>
 </html>`
