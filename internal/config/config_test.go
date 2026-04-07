@@ -37,7 +37,7 @@ agent:
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
 	}
-	if cfg.Agent.SummarizerModel != "summarizer" {
-		t.Fatalf("expected default summarizer model, got %q", cfg.Agent.SummarizerModel)
+	if cfg.Agent.SummarizerModel != "" {
+		t.Fatalf("expected summarizer model to remain optional by default, got %q", cfg.Agent.SummarizerModel)
 	}
 }

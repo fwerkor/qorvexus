@@ -75,6 +75,7 @@ go build ./cmd/qorvexus
 
 This starts the web UI, queue worker, scheduler, social watchdogs, and other enabled runtime services.
 It also auto-creates a default config file if needed, including a built-in system prompt and default model wiring.
+Context compression uses the active conversation model by default, so you do not need to configure a separate summarizer model unless you explicitly want to override that behavior.
 
 5. Run an ad-hoc prompt:
 

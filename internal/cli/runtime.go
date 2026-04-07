@@ -116,10 +116,9 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		Tools:    toolRegistry,
 		Skills:   skills,
 		Compressor: &contextx.Compressor{
-			Registry:        registry,
-			SummarizerModel: cfg.Agent.SummarizerModel,
-			MaxChars:        cfg.Agent.ContextWindowChars,
-			Threshold:       cfg.Agent.CompressionThreshold,
+			Registry:  registry,
+			MaxChars:  cfg.Agent.ContextWindowChars,
+			Threshold: cfg.Agent.CompressionThreshold,
 		},
 	}
 

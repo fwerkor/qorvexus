@@ -150,14 +150,6 @@ func (c *Config) setDefaults(path string) error {
 			MaxTokens:   2000,
 			Temperature: 0.2,
 		}
-		c.Models["summarizer"] = ModelConfig{
-			Provider:    "openai-compatible",
-			BaseURL:     "https://api.openai.com/v1",
-			APIKeyEnv:   "OPENAI_API_KEY",
-			Model:       "gpt-4.1-mini",
-			MaxTokens:   800,
-			Temperature: 0.1,
-		}
 	}
 	if _, ok := c.Models["primary"]; !ok {
 		c.Models["primary"] = ModelConfig{
@@ -167,16 +159,6 @@ func (c *Config) setDefaults(path string) error {
 			Model:       "gpt-4.1",
 			MaxTokens:   2000,
 			Temperature: 0.2,
-		}
-	}
-	if _, ok := c.Models["summarizer"]; !ok {
-		c.Models["summarizer"] = ModelConfig{
-			Provider:    "openai-compatible",
-			BaseURL:     "https://api.openai.com/v1",
-			APIKeyEnv:   "OPENAI_API_KEY",
-			Model:       "gpt-4.1-mini",
-			MaxTokens:   800,
-			Temperature: 0.1,
 		}
 	}
 	if c.DataDir == "" {
@@ -194,9 +176,6 @@ func (c *Config) setDefaults(path string) error {
 	if c.Agent.DefaultModel == "" {
 		c.Agent.DefaultModel = "primary"
 	}
-	if c.Agent.SummarizerModel == "" {
-		c.Agent.SummarizerModel = "summarizer"
-	}
 	if c.Agent.VisionFallbackModel == "" {
 		c.Agent.VisionFallbackModel = c.Agent.DefaultModel
 	}
@@ -213,7 +192,10 @@ func (c *Config) setDefaults(path string) error {
 		c.Agent.SystemPrompt = defaultSystemPrompt()
 	}
 	if len(c.Agent.Discussion.DefaultPanel) == 0 {
-		c.Agent.Discussion.DefaultPanel = []string{c.Agent.DefaultModel, c.Agent.SummarizerModel}
+		c.Agent.Discussion.DefaultPanel = []string{c.Agent.DefaultModel}
+		if c.Agent.SummarizerModel != "" && c.Agent.SummarizerModel != c.Agent.DefaultModel {
+			c.Agent.Discussion.DefaultPanel = append(c.Agent.Discussion.DefaultPanel, c.Agent.SummarizerModel)
+		}
 	}
 	if c.Agent.Discussion.SynthesisModel == "" {
 		c.Agent.Discussion.SynthesisModel = c.Agent.DefaultModel

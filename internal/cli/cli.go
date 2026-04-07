@@ -279,7 +279,6 @@ models:
     temperature: 0.1
 agent:
   default_model: primary
-  summarizer_model: summarizer
   vision_fallback_model: primary
   max_turns: 12
   context_window_chars: 24000
