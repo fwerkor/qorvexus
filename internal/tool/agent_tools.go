@@ -19,6 +19,11 @@ type Runtime interface {
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
+	ReadRuntimeConfig(ctx context.Context) (string, error)
+	WriteRuntimeConfig(ctx context.Context, raw string) (string, error)
+	UpsertSkill(ctx context.Context, name string, description string, body string) (string, error)
+	AddSelfImprovement(ctx context.Context, title string, description string, kind string) (string, error)
+	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -292,4 +297,144 @@ func (t *SocialSendTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 		return "", err
 	}
 	return t.rt.SendSocialMessage(ctx, input.Channel, input.ThreadID, input.Recipient, input.Text)
+}
+
+type ReadConfigTool struct{ rt Runtime }
+
+func NewReadConfigTool(rt Runtime) *ReadConfigTool { return &ReadConfigTool{rt: rt} }
+
+func (t *ReadConfigTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "read_runtime_config",
+		Description: "Read the current runtime configuration file for self-inspection and planning.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}
+}
+
+func (t *ReadConfigTool) Invoke(ctx context.Context, _ json.RawMessage) (string, error) {
+	return t.rt.ReadRuntimeConfig(ctx)
+}
+
+type WriteConfigTool struct{ rt Runtime }
+
+func NewWriteConfigTool(rt Runtime) *WriteConfigTool { return &WriteConfigTool{rt: rt} }
+
+func (t *WriteConfigTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "write_runtime_config",
+		Description: "Write a full updated runtime configuration. Use carefully and only after deliberate reasoning.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"config": map[string]any{"type": "string"},
+			},
+			"required": []string{"config"},
+		},
+	}
+}
+
+func (t *WriteConfigTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Config string `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.WriteRuntimeConfig(ctx, input.Config)
+}
+
+type UpsertSkillTool struct{ rt Runtime }
+
+func NewUpsertSkillTool(rt Runtime) *UpsertSkillTool { return &UpsertSkillTool{rt: rt} }
+
+func (t *UpsertSkillTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "upsert_skill",
+		Description: "Create or update a SKILL.md file so the agent can extend its own behavior.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":        map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"body":        map[string]any{"type": "string"},
+			},
+			"required": []string{"name", "description", "body"},
+		},
+	}
+}
+
+func (t *UpsertSkillTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Body        string `json:"body"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.UpsertSkill(ctx, input.Name, input.Description, input.Body)
+}
+
+type SelfBacklogAddTool struct{ rt Runtime }
+
+func NewSelfBacklogAddTool(rt Runtime) *SelfBacklogAddTool { return &SelfBacklogAddTool{rt: rt} }
+
+func (t *SelfBacklogAddTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "add_self_improvement",
+		Description: "Record a self-improvement item for the agent to work on later.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"kind":        map[string]any{"type": "string"},
+			},
+			"required": []string{"title", "description"},
+		},
+	}
+}
+
+func (t *SelfBacklogAddTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.AddSelfImprovement(ctx, input.Title, input.Description, input.Kind)
+}
+
+type SelfBacklogListTool struct{ rt Runtime }
+
+func NewSelfBacklogListTool(rt Runtime) *SelfBacklogListTool { return &SelfBacklogListTool{rt: rt} }
+
+func (t *SelfBacklogListTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_self_improvements",
+		Description: "List queued self-improvement items and recent ideas for evolving the agent.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer"},
+			},
+		},
+	}
+}
+
+func (t *SelfBacklogListTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit int `json:"limit"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.ListSelfImprovements(ctx, input.Limit)
 }

@@ -13,6 +13,7 @@ Current baseline includes:
 - Command policy engine with dangerous-command blocking
 - Durable memory store and persistent async task queue
 - Social gateway foundations with owner-aware trust boundaries and inbound webhook handling
+- Self-improvement primitives for reading config, writing skills, and maintaining a self-evolution backlog
 - Session persistence plus automatic context compression through a summarizer model
 - Cron manager for recurring background runs
 
@@ -29,6 +30,7 @@ internal/memory        durable note storage and retrieval
 internal/orchestrator  multi-model discussion
 internal/policy        command execution safety rules
 internal/scheduler     cron-backed task manager
+internal/self          self-improvement backlog and skill management
 internal/session       persistent session store
 internal/skill         skill discovery and prompt injection
 internal/social        social-channel envelopes and owner/trust routing
@@ -50,6 +52,7 @@ The goal is not a single hard-coded assistant, but an agent platform:
 - Sessions, compression, and scheduling are explicit subsystems instead of scattered logic.
 - Multi-model discussion and child agents are built as orchestration services, not prompt hacks.
 - Conversation context can encode channel, sender identity, and trust boundaries so the agent knows when it is talking to the owner versus external parties.
+- High-impact self-modification flows can be exposed as tools, while owner-aware context still gates who may trigger them.
 
 ## Quick Start
 

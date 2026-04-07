@@ -22,6 +22,7 @@ type Config struct {
 	Queue     QueueConfig            `yaml:"queue"`
 	Web       WebConfig              `yaml:"web"`
 	Social    SocialConfig           `yaml:"social"`
+	Self      SelfConfig             `yaml:"self"`
 }
 
 type SkillsConfig struct {
@@ -100,6 +101,14 @@ type SocialConfig struct {
 	WebhookSecret   string   `yaml:"webhook_secret"`
 }
 
+type SelfConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	SkillsDir        string `yaml:"skills_dir"`
+	BacklogFile      string `yaml:"backlog_file"`
+	AllowConfigEdits bool   `yaml:"allow_config_edits"`
+	AllowSkillWrites bool   `yaml:"allow_skill_writes"`
+}
+
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -167,6 +176,13 @@ func (c *Config) setDefaults(path string) error {
 	if c.Social.InboxFile == "" {
 		c.Social.InboxFile = filepath.Join(c.DataDir, "social_inbox.jsonl")
 	}
+	if c.Self.SkillsDir == "" {
+		c.Self.SkillsDir = filepath.Join(base, "skills")
+	}
+	if c.Self.BacklogFile == "" {
+		c.Self.BacklogFile = filepath.Join(c.DataDir, "self_backlog.jsonl")
+	}
+	c.Self.SkillsDir = expandPath(base, c.Self.SkillsDir)
 	if c.Agent.DefaultModel == "" {
 		return errors.New("agent.default_model is required")
 	}

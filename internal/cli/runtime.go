@@ -18,6 +18,7 @@ import (
 	"qorvexus/internal/orchestrator"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/scheduler"
+	"qorvexus/internal/self"
 	"qorvexus/internal/session"
 	"qorvexus/internal/skill"
 	"qorvexus/internal/social"
@@ -41,6 +42,7 @@ type appRuntime struct {
 	startedAt  time.Time
 	social     *social.Gateway
 	connectors *social.Registry
+	self       *self.Manager
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -73,6 +75,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		memory:     memory.NewStore(cfg.Memory.File),
 		startedAt:  time.Now().UTC(),
 		connectors: social.NewRegistry(),
+		self:       self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -87,6 +90,11 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewRecallTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
 	toolRegistry.Register(tool.NewSocialSendTool(app))
+	toolRegistry.Register(tool.NewReadConfigTool(app))
+	toolRegistry.Register(tool.NewWriteConfigTool(app))
+	toolRegistry.Register(tool.NewUpsertSkillTool(app))
+	toolRegistry.Register(tool.NewSelfBacklogAddTool(app))
+	toolRegistry.Register(tool.NewSelfBacklogListTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -269,6 +277,65 @@ func (a *appRuntime) SaveConfigText(raw string) error {
 	return webui.SaveConfigText(a.configPath, raw)
 }
 
+func (a *appRuntime) ReadRuntimeConfig(_ context.Context) (string, error) {
+	return webui.LoadConfigText(a.configPath)
+}
+
+func (a *appRuntime) WriteRuntimeConfig(ctx context.Context, raw string) (string, error) {
+	if !a.cfg.Self.Enabled || !a.cfg.Self.AllowConfigEdits {
+		return "", fmt.Errorf("self config edits are disabled")
+	}
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("config edits require owner context")
+	}
+	if err := webui.SaveConfigText(a.configPath, raw); err != nil {
+		return "", err
+	}
+	return "runtime config updated", nil
+}
+
+func (a *appRuntime) UpsertSkill(ctx context.Context, name string, description string, body string) (string, error) {
+	if !a.cfg.Self.Enabled || !a.cfg.Self.AllowSkillWrites {
+		return "", fmt.Errorf("self skill writes are disabled")
+	}
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("skill writes require owner context")
+	}
+	return a.self.UpsertSkill(name, description, body)
+}
+
+func (a *appRuntime) AddSelfImprovement(ctx context.Context, title string, description string, kind string) (string, error) {
+	if !a.cfg.Self.Enabled {
+		return "", fmt.Errorf("self improvement is disabled")
+	}
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("self improvement backlog writes require owner context")
+	}
+	if kind == "" {
+		kind = "general"
+	}
+	if err := a.self.AppendBacklog(self.BacklogEntry{
+		Title:       title,
+		Description: description,
+		Kind:        kind,
+	}); err != nil {
+		return "", err
+	}
+	return "self-improvement item recorded", nil
+}
+
+func (a *appRuntime) ListSelfImprovements(_ context.Context, limit int) (string, error) {
+	items, err := a.self.ListBacklog(limit)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {
 	if a.social == nil {
 		return a.HandleEnvelope(ctx, env)
@@ -277,6 +344,9 @@ func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelo
 }
 
 func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("outbound social messages require owner context")
+	}
 	return a.connectors.Send(ctx, channel, social.OutboundMessage{
 		Channel:   channel,
 		ThreadID:  threadID,
@@ -313,4 +383,12 @@ func sanitize(value string) string {
 	value = strings.ToLower(value)
 	value = strings.ReplaceAll(value, " ", "-")
 	return value
+}
+
+func ownerAllowedFromContext(ctx context.Context) bool {
+	convo, ok := tool.ConversationContextFrom(ctx)
+	if !ok {
+		return false
+	}
+	return convo.IsOwner || convo.Trust == types.TrustOwner
 }

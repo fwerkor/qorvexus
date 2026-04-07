@@ -265,6 +265,12 @@ social:
     - email
   inbox_file: ./.qorvexus/social_inbox.jsonl
   webhook_secret: change-me
+self:
+  enabled: true
+  skills_dir: ./skills
+  backlog_file: ./.qorvexus/self_backlog.jsonl
+  allow_config_edits: true
+  allow_skill_writes: true
 `
 }
 

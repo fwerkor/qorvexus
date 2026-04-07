@@ -83,7 +83,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			ToolCalls: msg.ToolCalls,
 		})
 		for _, call := range msg.ToolCalls {
-			result := r.Tools.Execute(ctx, call)
+			toolCtx := ctx
+			if !isZeroContext(st.Context) {
+				toolCtx = tool.WithConversationContext(ctx, st.Context)
+			}
+			result := r.Tools.Execute(toolCtx, call)
 			content := result.Content
 			if result.Error {
 				content = "ERROR: " + content
@@ -97,6 +101,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		}
 	}
 	return nil, "", fmt.Errorf("max turns exceeded")
+}
+
+func isZeroContext(ctx types.ConversationContext) bool {
+	return ctx.Channel == "" && ctx.ThreadID == "" && ctx.SenderID == "" && ctx.SenderName == "" && ctx.Trust == ""
 }
 
 func (r *Runner) pickModel(req Request) string {
