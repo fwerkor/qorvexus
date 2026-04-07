@@ -64,7 +64,15 @@ The goal is not a single hard-coded assistant, but an agent platform:
 go build ./cmd/qorvexus
 ```
 
-2. Start everything with one command:
+2. Put your model key into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml):
+
+```yaml
+models:
+  primary:
+    api_key: "your-key"
+```
+
+3. Start everything with one command:
 
 ```bash
 ./qorvexus start
@@ -72,16 +80,13 @@ go build ./cmd/qorvexus
 
 If [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml) does not exist yet, Qorvexus will auto-create it with sane defaults.
 
-3. Put your API credentials into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-Qorvexus reads runtime credentials from the config file.
-
 4. Open the web UI:
 
 ```bash
 http://127.0.0.1:7788
 ```
 
-From there you can edit config, inspect status, view sessions, queue, memory, commitments, and other runtime state.
+From there you can edit config and inspect runtime state. Most advanced settings are optional because Qorvexus fills the rest with internal defaults.
 
 ## Common Commands
 

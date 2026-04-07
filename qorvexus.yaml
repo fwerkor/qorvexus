@@ -1,83 +1,35 @@
 data_dir: ./.qorvexus
-skills:
-  dirs:
-    - ./skills
 models:
   primary:
     provider: openai-compatible
     base_url: https://api.openai.com/v1
     api_key: ""
     model: gpt-4.1
-    max_tokens: 2000
-    temperature: 0.2
-  summarizer:
-    provider: openai-compatible
-    base_url: https://api.openai.com/v1
-    api_key: ""
-    model: gpt-4.1-mini
-    max_tokens: 800
-    temperature: 0.1
 agent:
   default_model: primary
-  vision_fallback_model: primary
-  max_turns: 12
-  context_window_chars: 24000
-  compression_threshold: 0.75
-  discussion:
-    default_panel: [primary, summarizer]
-    synthesis_model: primary
-    max_parallel_models: 4
 tools:
   allow_command_execution: true
-  command_shell: bash
-  playwright_command: node ./scripts/playwright.js
-  max_command_bytes: 65536
-  http_user_agent: qorvexus/0.1
-  blocked_commands:
-    - rm -rf /
-    - git reset --hard
-    - shutdown
 scheduler:
   enabled: true
-  task_file: ./.qorvexus/tasks.json
 memory:
   enabled: true
-  file: ./.qorvexus/memory.jsonl
 queue:
   enabled: true
-  file: ./.qorvexus/queue.json
   worker_enabled: true
-  poll_interval_seconds: 5
 web:
   enabled: true
   address: 127.0.0.1:7788
 identity:
-  owner_ids:
-    - owner
   owner_aliases:
-    - fwerkor
-  trusted_ids: []
+    - owner
 social:
   enabled: true
   allowed_channels:
     - telegram
-    - discord
-    - slack
-    - x
-    - email
-  inbox_file: ./.qorvexus/social_inbox.jsonl
-  commitment_file: ./.qorvexus/social_commitments.jsonl
-  commitment_scan_interval_seconds: 3600
-  public_base_url: https://your-public-domain.example
   telegram_bot_token: ""
-  telegram_webhook_path: /webhooks/telegram
-  webhook_secret: change-me
 self:
   enabled: true
-  skills_dir: ./skills
-  backlog_file: ./.qorvexus/self_backlog.jsonl
   allow_config_edits: true
   allow_skill_writes: true
 audit:
   enabled: true
-  file: ./.qorvexus/audit.jsonl
