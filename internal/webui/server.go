@@ -502,6 +502,20 @@ const dashboardHTML = `<!doctype html>
       flex-wrap:wrap;
       gap:10px;
     }
+    .lang-switch {
+      display:flex;
+      gap:8px;
+      margin-top:16px;
+    }
+    .lang-switch button {
+      padding:8px 12px;
+      border-radius:999px;
+      font-size:13px;
+    }
+    .lang-switch button.active {
+      background:var(--accent-strong);
+      color:#fff;
+    }
     .chip {
       display:inline-flex;
       align-items:center;
@@ -757,44 +771,48 @@ const dashboardHTML = `<!doctype html>
   <div class="shell">
     <section class="hero">
       <div class="panel hero-main">
-        <span class="eyebrow">Qorvexus Console</span>
-        <h1>Operate the agent without fighting the interface.</h1>
-        <p class="lede">The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.</p>
+        <span class="eyebrow" data-i18n="eyebrow">Qorvexus Console</span>
+        <h1 data-i18n="hero_title">Operate the agent without fighting the interface.</h1>
+        <p class="lede" data-i18n="hero_lede">The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.</p>
+        <div class="lang-switch">
+          <button id="lang-zh-CN" class="secondary" onclick="setLanguage('zh-CN')">中文</button>
+          <button id="lang-en" class="secondary" onclick="setLanguage('en')">English</button>
+        </div>
         <div class="chip-row">
-          <span class="chip"><strong>Default model</strong> {{.DefaultModel}}</span>
-          <span class="chip"><strong>Memory</strong> {{.MemoryEnabled}}</span>
-          <span class="chip"><strong>Queue</strong> {{.QueueEnabled}}</span>
-          <span class="chip"><strong>Scheduler</strong> {{.SchedulerEnabled}}</span>
-          <span class="chip"><strong>Self</strong> {{.SelfEnabled}}</span>
-          <span class="chip"><strong>Social</strong> {{.SocialEnabled}}</span>
+          <span class="chip"><strong data-i18n="chip_default_model">Default model</strong> {{.DefaultModel}}</span>
+          <span class="chip"><strong data-i18n="chip_memory">Memory</strong> {{.MemoryEnabled}}</span>
+          <span class="chip"><strong data-i18n="chip_queue">Queue</strong> {{.QueueEnabled}}</span>
+          <span class="chip"><strong data-i18n="chip_scheduler">Scheduler</strong> {{.SchedulerEnabled}}</span>
+          <span class="chip"><strong data-i18n="chip_self">Self</strong> {{.SelfEnabled}}</span>
+          <span class="chip"><strong data-i18n="chip_social">Social</strong> {{.SocialEnabled}}</span>
         </div>
       </div>
       <div class="panel hero-side">
         <div class="status-card">
-          <div class="metric-label">Runtime</div>
+          <div class="metric-label" data-i18n="runtime">Runtime</div>
           <div class="metric-value mono">{{.WebAddress}}</div>
-          <p class="muted" style="margin-top:8px;">Started at {{.StartedAt}}</p>
+          <p class="muted" style="margin-top:8px;"><span data-i18n="started_at">Started at</span> {{.StartedAt}}</p>
         </div>
         <div class="metric-row">
           <div class="metric">
-            <div class="metric-label">Default Session</div>
+            <div class="metric-label" data-i18n="default_session">Default Session</div>
             <div class="metric-value mono" id="hero-session">{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingSessionID}}{{else}}ad-hoc{{end}}</div>
           </div>
           <div class="metric">
-            <div class="metric-label">Primary Focus</div>
-            <div class="metric-value" id="hero-focus">{{if .OwnerOnboardingRequired}}Onboarding{{else}}Operations{{end}}</div>
+            <div class="metric-label" data-i18n="primary_focus">Primary Focus</div>
+            <div class="metric-value" id="hero-focus" data-i18n-dynamic="{{if .OwnerOnboardingRequired}}focus_onboarding{{else}}focus_operations{{end}}">{{if .OwnerOnboardingRequired}}Onboarding{{else}}Operations{{end}}</div>
           </div>
         </div>
         {{if .OwnerOnboardingRequired}}
         <div class="alert">
-          <strong>Owner onboarding still needs a reply.</strong>
-          <p class="muted">Continue in session <span class="mono">{{.OwnerOnboardingSessionID}}</span>.</p>
+          <strong data-i18n="owner_onboarding_needed">Owner onboarding still needs a reply.</strong>
+          <p class="muted"><span data-i18n="continue_in_session">Continue in session</span> <span class="mono">{{.OwnerOnboardingSessionID}}</span>.</p>
           <pre>{{.OwnerOnboardingPrompt}}</pre>
         </div>
         {{else}}
         <div class="status-card">
-          <div class="metric-label">Status</div>
-          <p class="muted">Owner profile is already present, so new sessions can start with remembered identity, rules, and preferences.</p>
+          <div class="metric-label" data-i18n="status">Status</div>
+          <p class="muted" data-i18n="owner_profile_present">Owner profile is already present, so new sessions can start with remembered identity, rules, and preferences.</p>
         </div>
         {{end}}
       </div>
@@ -802,14 +820,14 @@ const dashboardHTML = `<!doctype html>
 
     <section class="layout">
       <aside class="panel sidebar">
-        <h3>Workspace</h3>
-        <p class="muted" style="margin-bottom:12px;">Keep one surface visible at a time.</p>
+        <h3 data-i18n="workspace">Workspace</h3>
+        <p class="muted" style="margin-bottom:12px;" data-i18n="workspace_hint">Keep one surface visible at a time.</p>
         <div class="nav">
-          <button id="tab-button-overview" class="active" onclick="showTab('overview')">Overview</button>
-          <button id="tab-button-operations" onclick="showTab('operations')">Operations</button>
-          <button id="tab-button-memory" onclick="showTab('memory')">Memory</button>
-          <button id="tab-button-social" onclick="showTab('social')">Social</button>
-          <button id="tab-button-config" onclick="showTab('config')">Config</button>
+          <button id="tab-button-overview" class="active" onclick="showTab('overview')" data-i18n="tab_overview">Overview</button>
+          <button id="tab-button-operations" onclick="showTab('operations')" data-i18n="tab_operations">Operations</button>
+          <button id="tab-button-memory" onclick="showTab('memory')" data-i18n="tab_memory">Memory</button>
+          <button id="tab-button-social" onclick="showTab('social')" data-i18n="tab_social">Social</button>
+          <button id="tab-button-config" onclick="showTab('config')" data-i18n="tab_config">Config</button>
         </div>
       </aside>
 
@@ -819,82 +837,82 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-7">
               <div class="card-head">
                 <div>
-                  <h2>Quick Run</h2>
-                  <p>Run a prompt immediately without hunting through the rest of the dashboard.</p>
+                  <h2 data-i18n="quick_run">Quick Run</h2>
+                  <p data-i18n="quick_run_desc">Run a prompt immediately without hunting through the rest of the dashboard.</p>
                 </div>
               </div>
               <div class="split-row">
                 <div>
-                  <label for="run-model">Model Override</label>
-                  <input id="run-model" placeholder="Optional">
+                  <label for="run-model" data-i18n="model_override">Model Override</label>
+                  <input id="run-model" placeholder="Optional" data-i18n-placeholder="optional">
                 </div>
                 <div>
-                  <label for="run-session">Session ID</label>
-                  <input id="run-session" placeholder="Optional">
+                  <label for="run-session" data-i18n="session_id">Session ID</label>
+                  <input id="run-session" placeholder="Optional" data-i18n-placeholder="optional">
                 </div>
               </div>
               <div style="margin-top:14px;">
-                <label for="run-prompt">Prompt</label>
-                <textarea id="run-prompt" class="prompt-box" placeholder="Ask Qorvexus to do something concrete..."></textarea>
+                <label for="run-prompt" data-i18n="prompt">Prompt</label>
+                <textarea id="run-prompt" class="prompt-box" placeholder="Ask Qorvexus to do something concrete..." data-i18n-placeholder="run_prompt_placeholder"></textarea>
               </div>
               <div class="button-row">
-                <button onclick="runPrompt()">Run Prompt</button>
-                <button class="secondary" onclick="prefillOnboarding()">Use Onboarding Session</button>
-                <button class="ghost" onclick="showTab('memory')">Search Memory Instead</button>
+                <button onclick="runPrompt()" data-i18n="run_prompt">Run Prompt</button>
+                <button class="secondary" onclick="prefillOnboarding()" data-i18n="use_onboarding_session">Use Onboarding Session</button>
+                <button class="ghost" onclick="showTab('memory')" data-i18n="search_memory_instead">Search Memory Instead</button>
               </div>
             </article>
 
             <article class="panel card span-5">
               <div class="card-head">
                 <div>
-                  <h2>Immediate Context</h2>
-                  <p>What the runtime thinks is important right now.</p>
+                  <h2 data-i18n="immediate_context">Immediate Context</h2>
+                  <p data-i18n="immediate_context_desc">What the runtime thinks is important right now.</p>
                 </div>
               </div>
               <div class="mini-grid">
                 <div class="metric">
-                  <div class="metric-label">Current Tab</div>
-                  <div class="metric-value" id="current-tab-label">Overview</div>
+                  <div class="metric-label" data-i18n="current_tab">Current Tab</div>
+                  <div class="metric-value" id="current-tab-label" data-i18n-dynamic="tab_overview">Overview</div>
                 </div>
                 <div class="metric">
-                  <div class="metric-label">Web Address</div>
+                  <div class="metric-label" data-i18n="web_address">Web Address</div>
                   <div class="metric-value mono">{{.WebAddress}}</div>
                 </div>
               </div>
               <div style="margin-top:14px;">
-                <label>Run Output</label>
-                <pre id="run-output" class="result">{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingPrompt}}{{else}}Ready. Run a prompt or open another workspace tab.{{end}}</pre>
+                <label data-i18n="run_output">Run Output</label>
+                <pre id="run-output" class="result" {{if not .OwnerOnboardingRequired}}data-i18n="run_output_ready"{{end}}>{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingPrompt}}{{else}}Ready. Run a prompt or open another workspace tab.{{end}}</pre>
               </div>
             </article>
 
             <article class="panel card span-12">
               <div class="card-head">
                 <div>
-                  <h2>System Snapshot</h2>
-                  <p>High-signal runtime state without dropping you straight into raw JSON.</p>
+                  <h2 data-i18n="system_snapshot">System Snapshot</h2>
+                  <p data-i18n="system_snapshot_desc">High-signal runtime state without dropping you straight into raw JSON.</p>
                 </div>
                 <div class="button-row" style="margin-top:0;">
-                  <button class="secondary" onclick="loadStatus()">Refresh Status</button>
-                  <button class="secondary" onclick="loadSessions()">Refresh Sessions</button>
-                  <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
+                  <button class="secondary" onclick="loadStatus()" data-i18n="refresh_status">Refresh Status</button>
+                  <button class="secondary" onclick="loadSessions()" data-i18n="refresh_sessions">Refresh Sessions</button>
+                  <button class="secondary" onclick="loadQueue()" data-i18n="refresh_queue">Refresh Queue</button>
                 </div>
               </div>
               <div class="overview-grid">
                 <div class="span-4 stack">
                   <div>
-                    <label>Sessions</label>
+                    <label data-i18n="sessions">Sessions</label>
                     <div id="sessions"></div>
                   </div>
                 </div>
                 <div class="span-4 stack">
                   <div>
-                    <label>Queue</label>
+                    <label data-i18n="queue">Queue</label>
                     <div id="queue"></div>
                   </div>
                 </div>
                 <div class="span-4 stack">
                   <div>
-                    <label>Raw Status</label>
+                    <label data-i18n="raw_status">Raw Status</label>
                     <pre id="status-output" class="compact"></pre>
                   </div>
                 </div>
@@ -908,63 +926,63 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-6">
               <div class="card-head">
                 <div>
-                  <h2>Queue Recovery</h2>
-                  <p>Retry a failed task without digging through raw queue output first.</p>
+                  <h2 data-i18n="queue_recovery">Queue Recovery</h2>
+                  <p data-i18n="queue_recovery_desc">Retry a failed task without digging through raw queue output first.</p>
                 </div>
               </div>
-              <label for="queue-retry-id">Queue Task ID</label>
-              <input id="queue-retry-id" placeholder="task-...">
+              <label for="queue-retry-id" data-i18n="queue_task_id">Queue Task ID</label>
+              <input id="queue-retry-id" placeholder="task-..." data-i18n-placeholder="queue_task_id_placeholder">
               <div class="button-row">
-                <button onclick="retryQueue()">Retry Task</button>
-                <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
+                <button onclick="retryQueue()" data-i18n="retry_task">Retry Task</button>
+                <button class="secondary" onclick="loadQueue()" data-i18n="refresh_queue">Refresh Queue</button>
               </div>
-              <pre id="queue-action-output" class="compact">Retry results will appear here.</pre>
+              <pre id="queue-action-output" class="compact" data-i18n="retry_results_here">Retry results will appear here.</pre>
             </article>
 
             <article class="panel card span-6">
               <div class="card-head">
                 <div>
-                  <h2>Commitments</h2>
-                  <p>Review due work, run a scan, and update commitment status from one place.</p>
+                  <h2 data-i18n="commitments">Commitments</h2>
+                  <p data-i18n="commitments_desc">Review due work, run a scan, and update commitment status from one place.</p>
                 </div>
               </div>
               <div class="button-row">
-                <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
-                <button class="secondary" onclick="loadCommitmentSummary()">Refresh Summary</button>
-                <button onclick="scanCommitments()">Run Scan</button>
+                <button class="secondary" onclick="loadCommitments()" data-i18n="refresh_commitments">Refresh Commitments</button>
+                <button class="secondary" onclick="loadCommitmentSummary()" data-i18n="refresh_summary">Refresh Summary</button>
+                <button onclick="scanCommitments()" data-i18n="run_scan">Run Scan</button>
               </div>
               <div style="margin-top:14px;" class="split-row">
                 <div>
-                  <label for="commitment-id">Commitment ID</label>
-                  <input id="commitment-id" placeholder="commitment-...">
+                  <label for="commitment-id" data-i18n="commitment_id">Commitment ID</label>
+                  <input id="commitment-id" placeholder="commitment-..." data-i18n-placeholder="commitment_id_placeholder">
                 </div>
                 <div>
-                  <label for="commitment-status">New Status</label>
-                  <input id="commitment-status" placeholder="open / done / blocked">
+                  <label for="commitment-status" data-i18n="new_status">New Status</label>
+                  <input id="commitment-status" placeholder="open / done / blocked" data-i18n-placeholder="new_status_placeholder">
                 </div>
               </div>
               <div class="button-row">
-                <button onclick="updateCommitmentStatus()">Update Commitment</button>
+                <button onclick="updateCommitmentStatus()" data-i18n="update_commitment">Update Commitment</button>
               </div>
             </article>
 
             <article class="panel card span-6">
-              <label>Commitment Summary</label>
+              <label data-i18n="commitment_summary">Commitment Summary</label>
               <pre id="commitments-summary-output" class="compact"></pre>
             </article>
 
             <article class="panel card span-6">
-              <label>Commitment Feed</label>
+              <label data-i18n="commitment_feed">Commitment Feed</label>
               <pre id="commitments-output" class="compact"></pre>
             </article>
 
             <article class="panel card span-12">
               <div class="card-head">
                 <div>
-                  <h2>Audit Trail</h2>
-                  <p>See the effects of retries, scans, and status updates without mixing them into every other card.</p>
+                  <h2 data-i18n="audit_trail">Audit Trail</h2>
+                  <p data-i18n="audit_trail_desc">See the effects of retries, scans, and status updates without mixing them into every other card.</p>
                 </div>
-                <button class="secondary" onclick="loadAudit()">Refresh Audit</button>
+                <button class="secondary" onclick="loadAudit()" data-i18n="refresh_audit">Refresh Audit</button>
               </div>
               <pre id="audit-output" class="compact"></pre>
             </article>
@@ -976,84 +994,84 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-5">
               <div class="card-head">
                 <div>
-                  <h2>Memory Explorer</h2>
-                  <p>Search long-term memory directly instead of scrolling through unrelated widgets.</p>
+                  <h2 data-i18n="memory_explorer">Memory Explorer</h2>
+                  <p data-i18n="memory_explorer_desc">Search long-term memory directly instead of scrolling through unrelated widgets.</p>
                 </div>
               </div>
-              <label for="memory-query">Search Query</label>
-              <input id="memory-query" placeholder="owner, timezone, project, preferences...">
+              <label for="memory-query" data-i18n="search_query">Search Query</label>
+              <input id="memory-query" placeholder="owner, timezone, project, preferences..." data-i18n-placeholder="memory_query_placeholder">
               <div class="button-row">
-                <button onclick="loadMemory()">Search Memory</button>
-                <button class="secondary" onclick="document.getElementById('memory-query').value='owner'; loadMemory();">Owner Profile</button>
-                <button class="secondary" onclick="document.getElementById('memory-query').value='project'; loadMemory();">Projects</button>
+                <button onclick="loadMemory()" data-i18n="search_memory">Search Memory</button>
+                <button class="secondary" onclick="document.getElementById('memory-query').value='owner'; loadMemory();" data-i18n="owner_profile">Owner Profile</button>
+                <button class="secondary" onclick="document.getElementById('memory-query').value='project'; loadMemory();" data-i18n="projects">Projects</button>
               </div>
-              <pre id="memory-output" class="result">Run a memory search to inspect what the agent remembers.</pre>
+              <pre id="memory-output" class="result" data-i18n="memory_output_ready">Run a memory search to inspect what the agent remembers.</pre>
             </article>
 
             <article class="panel card span-7">
               <div class="card-head">
                 <div>
-                  <h2>Self Evolution</h2>
-                  <p>Keep backlog review and new idea capture together, without crowding the main workflow.</p>
+                  <h2 data-i18n="self_evolution">Self Evolution</h2>
+                  <p data-i18n="self_evolution_desc">Keep backlog review and new idea capture together, without crowding the main workflow.</p>
                 </div>
               </div>
               <div class="button-row">
-                <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
-                <button class="secondary" onclick="mineSelf()">Mine Ideas</button>
+                <button class="secondary" onclick="loadSelf()" data-i18n="refresh_backlog">Refresh Backlog</button>
+                <button class="secondary" onclick="mineSelf()" data-i18n="mine_ideas">Mine Ideas</button>
               </div>
               <div class="split-row" style="margin-top:14px;">
                 <div>
-                  <label>Backlog</label>
+                  <label data-i18n="backlog">Backlog</label>
                   <pre id="self-output" class="compact"></pre>
                 </div>
                 <div>
-                  <label>Mined Ideas</label>
+                  <label data-i18n="mined_ideas">Mined Ideas</label>
                   <pre id="self-mine-output" class="compact"></pre>
                 </div>
               </div>
               <div class="split-row" style="margin-top:14px;">
                 <div>
-                  <label for="self-id">Backlog ID</label>
-                  <input id="self-id" placeholder="backlog item id">
+                  <label for="self-id" data-i18n="backlog_id">Backlog ID</label>
+                  <input id="self-id" placeholder="backlog item id" data-i18n-placeholder="backlog_id_placeholder">
                 </div>
                 <div>
-                  <label for="self-status">New Status</label>
-                  <input id="self-status" placeholder="planned / active / done">
+                  <label for="self-status" data-i18n="new_status">New Status</label>
+                  <input id="self-status" placeholder="planned / active / done" data-i18n-placeholder="self_status_placeholder">
                 </div>
               </div>
               <div class="button-row">
-                <button onclick="updateSelfStatus()">Update Self Status</button>
+                <button onclick="updateSelfStatus()" data-i18n="update_self_status">Update Self Status</button>
               </div>
             </article>
 
             <article class="panel card span-12">
               <div class="card-head">
                 <div>
-                  <h2>Capture Improvement</h2>
-                  <p>Turn a good idea into backlog state, and optionally promote it into queued execution.</p>
+                  <h2 data-i18n="capture_improvement">Capture Improvement</h2>
+                  <p data-i18n="capture_improvement_desc">Turn a good idea into backlog state, and optionally promote it into queued execution.</p>
                 </div>
               </div>
               <div class="split-row">
                 <div>
-                  <label for="capture-title">Title</label>
-                  <input id="capture-title" placeholder="Captured idea title">
+                  <label for="capture-title" data-i18n="title">Title</label>
+                  <input id="capture-title" placeholder="Captured idea title" data-i18n-placeholder="capture_title_placeholder">
                 </div>
                 <div>
-                  <label for="capture-kind">Kind</label>
-                  <input id="capture-kind" placeholder="reliability / automation / safety">
+                  <label for="capture-kind" data-i18n="kind">Kind</label>
+                  <input id="capture-kind" placeholder="reliability / automation / safety" data-i18n-placeholder="capture_kind_placeholder">
                 </div>
                 <div>
-                  <label for="capture-model">Promotion Model</label>
-                  <input id="capture-model" placeholder="optional">
+                  <label for="capture-model" data-i18n="promotion_model">Promotion Model</label>
+                  <input id="capture-model" placeholder="optional" data-i18n-placeholder="optional">
                 </div>
               </div>
               <div style="margin-top:14px;">
-                <label for="capture-description">Description</label>
-                <textarea id="capture-description" placeholder="Describe the improvement you want Qorvexus to remember or work on."></textarea>
+                <label for="capture-description" data-i18n="description">Description</label>
+                <textarea id="capture-description" placeholder="Describe the improvement you want Qorvexus to remember or work on." data-i18n-placeholder="capture_description_placeholder"></textarea>
               </div>
               <div class="button-row">
-                <button onclick="captureSelf(false)">Capture Idea</button>
-                <button class="secondary" onclick="captureSelf(true)">Capture And Promote</button>
+                <button onclick="captureSelf(false)" data-i18n="capture_idea">Capture Idea</button>
+                <button class="secondary" onclick="captureSelf(true)" data-i18n="capture_and_promote">Capture And Promote</button>
               </div>
             </article>
           </div>
@@ -1064,10 +1082,10 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-5">
               <div class="card-head">
                 <div>
-                  <h2>Connectors</h2>
-                  <p>Quick visibility into available social channels.</p>
+                  <h2 data-i18n="connectors">Connectors</h2>
+                  <p data-i18n="connectors_desc">Quick visibility into available social channels.</p>
                 </div>
-                <button class="secondary" onclick="loadConnectors()">Refresh Connectors</button>
+                <button class="secondary" onclick="loadConnectors()" data-i18n="refresh_connectors">Refresh Connectors</button>
               </div>
               <pre id="social-connectors-output" class="compact"></pre>
             </article>
@@ -1075,10 +1093,10 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-7">
               <div class="card-head">
                 <div>
-                  <h2>Recent Social Activity</h2>
-                  <p>Inspect inbound and outbound history without mixing it with config or memory tools.</p>
+                  <h2 data-i18n="recent_social_activity">Recent Social Activity</h2>
+                  <p data-i18n="recent_social_activity_desc">Inspect inbound and outbound history without mixing it with config or memory tools.</p>
                 </div>
-                <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
+                <button class="secondary" onclick="loadSocial()" data-i18n="refresh_social_log">Refresh Social Log</button>
               </div>
               <pre id="social-output" class="compact"></pre>
             </article>
@@ -1086,34 +1104,34 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-12">
               <div class="card-head">
                 <div>
-                  <h2>Simulate Inbound Message</h2>
-                  <p>Test a connector flow from one compact form.</p>
+                  <h2 data-i18n="simulate_inbound_message">Simulate Inbound Message</h2>
+                  <p data-i18n="simulate_inbound_message_desc">Test a connector flow from one compact form.</p>
                 </div>
               </div>
               <div class="split-row">
                 <div>
-                  <label for="social-channel">Channel</label>
+                  <label for="social-channel" data-i18n="channel">Channel</label>
                   <input id="social-channel" placeholder="telegram">
                 </div>
                 <div>
-                  <label for="social-thread">Thread ID</label>
+                  <label for="social-thread" data-i18n="thread_id">Thread ID</label>
                   <input id="social-thread" placeholder="chat-1">
                 </div>
                 <div>
-                  <label for="social-sender-id">Sender ID</label>
+                  <label for="social-sender-id" data-i18n="sender_id">Sender ID</label>
                   <input id="social-sender-id" placeholder="user-1">
                 </div>
                 <div>
-                  <label for="social-sender-name">Sender Name</label>
+                  <label for="social-sender-name" data-i18n="sender_name">Sender Name</label>
                   <input id="social-sender-name" placeholder="Alice">
                 </div>
               </div>
               <div style="margin-top:14px;">
-                <label for="social-text">Inbound Text</label>
-                <textarea id="social-text" placeholder="Paste the incoming message here."></textarea>
+                <label for="social-text" data-i18n="inbound_text">Inbound Text</label>
+                <textarea id="social-text" placeholder="Paste the incoming message here." data-i18n-placeholder="social_text_placeholder"></textarea>
               </div>
               <div class="button-row">
-                <button onclick="simulateSocial()">Simulate Inbound Social</button>
+                <button onclick="simulateSocial()" data-i18n="simulate_inbound_social">Simulate Inbound Social</button>
               </div>
             </article>
           </div>
@@ -1124,15 +1142,15 @@ const dashboardHTML = `<!doctype html>
             <article class="panel card span-12">
               <div class="card-head">
                 <div>
-                  <h2>Runtime Config</h2>
-                  <p>Raw configuration is available, but it now lives in its own dedicated workspace instead of crowding the main flow.</p>
+                  <h2 data-i18n="runtime_config">Runtime Config</h2>
+                  <p data-i18n="runtime_config_desc">Raw configuration is available, but it now lives in its own dedicated workspace instead of crowding the main flow.</p>
                 </div>
                 <div class="button-row" style="margin-top:0;">
-                  <button class="secondary" onclick="loadConfig()">Reload</button>
-                  <button onclick="saveConfig()">Save Config</button>
+                  <button class="secondary" onclick="loadConfig()" data-i18n="reload">Reload</button>
+                  <button onclick="saveConfig()" data-i18n="save_config">Save Config</button>
                 </div>
               </div>
-              <textarea id="config-text" style="min-height:520px;"></textarea>
+              <textarea id="config-text" style="min-height:520px;" placeholder="Loading runtime config..." data-i18n-placeholder="loading_runtime_config"></textarea>
             </article>
           </div>
         </section>
@@ -1140,6 +1158,263 @@ const dashboardHTML = `<!doctype html>
     </section>
   </div>
   <script>
+    const translations = {
+      "en": {
+        title: "Qorvexus Console",
+        eyebrow: "Qorvexus Console",
+        hero_title: "Operate the agent without fighting the interface.",
+        hero_lede: "The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.",
+        chip_default_model: "Default model",
+        chip_memory: "Memory",
+        chip_queue: "Queue",
+        chip_scheduler: "Scheduler",
+        chip_self: "Self",
+        chip_social: "Social",
+        runtime: "Runtime",
+        started_at: "Started at",
+        default_session: "Default Session",
+        primary_focus: "Primary Focus",
+        focus_onboarding: "Onboarding",
+        focus_operations: "Operations",
+        owner_onboarding_needed: "Owner onboarding still needs a reply.",
+        continue_in_session: "Continue in session",
+        status: "Status",
+        owner_profile_present: "Owner profile is already present, so new sessions can start with remembered identity, rules, and preferences.",
+        workspace: "Workspace",
+        workspace_hint: "Keep one surface visible at a time.",
+        tab_overview: "Overview",
+        tab_operations: "Operations",
+        tab_memory: "Memory",
+        tab_social: "Social",
+        tab_config: "Config",
+        quick_run: "Quick Run",
+        quick_run_desc: "Run a prompt immediately without hunting through the rest of the dashboard.",
+        model_override: "Model Override",
+        session_id: "Session ID",
+        prompt: "Prompt",
+        optional: "Optional",
+        run_prompt_placeholder: "Ask Qorvexus to do something concrete...",
+        run_prompt: "Run Prompt",
+        use_onboarding_session: "Use Onboarding Session",
+        search_memory_instead: "Search Memory Instead",
+        immediate_context: "Immediate Context",
+        immediate_context_desc: "What the runtime thinks is important right now.",
+        current_tab: "Current Tab",
+        web_address: "Web Address",
+        run_output: "Run Output",
+        run_output_ready: "Ready. Run a prompt or open another workspace tab.",
+        system_snapshot: "System Snapshot",
+        system_snapshot_desc: "High-signal runtime state without dropping you straight into raw JSON.",
+        refresh_status: "Refresh Status",
+        refresh_sessions: "Refresh Sessions",
+        refresh_queue: "Refresh Queue",
+        sessions: "Sessions",
+        queue: "Queue",
+        raw_status: "Raw Status",
+        queue_recovery: "Queue Recovery",
+        queue_recovery_desc: "Retry a failed task without digging through raw queue output first.",
+        queue_task_id: "Queue Task ID",
+        queue_task_id_placeholder: "task-...",
+        retry_task: "Retry Task",
+        retry_results_here: "Retry results will appear here.",
+        commitments: "Commitments",
+        commitments_desc: "Review due work, run a scan, and update commitment status from one place.",
+        refresh_commitments: "Refresh Commitments",
+        refresh_summary: "Refresh Summary",
+        run_scan: "Run Scan",
+        commitment_id: "Commitment ID",
+        commitment_id_placeholder: "commitment-...",
+        new_status: "New Status",
+        new_status_placeholder: "open / done / blocked",
+        update_commitment: "Update Commitment",
+        commitment_summary: "Commitment Summary",
+        commitment_feed: "Commitment Feed",
+        audit_trail: "Audit Trail",
+        audit_trail_desc: "See the effects of retries, scans, and status updates without mixing them into every other card.",
+        refresh_audit: "Refresh Audit",
+        memory_explorer: "Memory Explorer",
+        memory_explorer_desc: "Search long-term memory directly instead of scrolling through unrelated widgets.",
+        search_query: "Search Query",
+        memory_query_placeholder: "owner, timezone, project, preferences...",
+        search_memory: "Search Memory",
+        owner_profile: "Owner Profile",
+        projects: "Projects",
+        memory_output_ready: "Run a memory search to inspect what the agent remembers.",
+        self_evolution: "Self Evolution",
+        self_evolution_desc: "Keep backlog review and new idea capture together, without crowding the main workflow.",
+        refresh_backlog: "Refresh Backlog",
+        mine_ideas: "Mine Ideas",
+        backlog: "Backlog",
+        mined_ideas: "Mined Ideas",
+        backlog_id: "Backlog ID",
+        backlog_id_placeholder: "backlog item id",
+        self_status_placeholder: "planned / active / done",
+        update_self_status: "Update Self Status",
+        capture_improvement: "Capture Improvement",
+        capture_improvement_desc: "Turn a good idea into backlog state, and optionally promote it into queued execution.",
+        title: "Title",
+        capture_title_placeholder: "Captured idea title",
+        kind: "Kind",
+        capture_kind_placeholder: "reliability / automation / safety",
+        promotion_model: "Promotion Model",
+        description: "Description",
+        capture_description_placeholder: "Describe the improvement you want Qorvexus to remember or work on.",
+        capture_idea: "Capture Idea",
+        capture_and_promote: "Capture And Promote",
+        connectors: "Connectors",
+        connectors_desc: "Quick visibility into available social channels.",
+        refresh_connectors: "Refresh Connectors",
+        recent_social_activity: "Recent Social Activity",
+        recent_social_activity_desc: "Inspect inbound and outbound history without mixing it with config or memory tools.",
+        refresh_social_log: "Refresh Social Log",
+        simulate_inbound_message: "Simulate Inbound Message",
+        simulate_inbound_message_desc: "Test a connector flow from one compact form.",
+        channel: "Channel",
+        thread_id: "Thread ID",
+        sender_id: "Sender ID",
+        sender_name: "Sender Name",
+        inbound_text: "Inbound Text",
+        social_text_placeholder: "Paste the incoming message here.",
+        simulate_inbound_social: "Simulate Inbound Social",
+        runtime_config: "Runtime Config",
+        runtime_config_desc: "Raw configuration is available, but it now lives in its own dedicated workspace instead of crowding the main flow.",
+        reload: "Reload",
+        save_config: "Save Config",
+        loading_runtime_config: "Loading runtime config...",
+        config_empty: "# Runtime config loaded, but the file is empty.\n",
+        config_load_failed: "# Failed to load runtime config.\n# ",
+        config_saved: "Config saved."
+      },
+      "zh-CN": {
+        title: "Qorvexus 控制台",
+        eyebrow: "Qorvexus 控制台",
+        hero_title: "以更顺手的方式操作智能体，而不是和界面较劲。",
+        hero_lede: "这个控制台优先展示你真正常用的事情：运行任务、查看记忆、观察队列健康，再进入社交、自我进化或原始配置。",
+        chip_default_model: "默认模型",
+        chip_memory: "记忆",
+        chip_queue: "队列",
+        chip_scheduler: "调度",
+        chip_self: "自我进化",
+        chip_social: "社交",
+        runtime: "运行时",
+        started_at: "启动时间",
+        default_session: "默认会话",
+        primary_focus: "当前重点",
+        focus_onboarding: "主人引导",
+        focus_operations: "运行操作",
+        owner_onboarding_needed: "主人 onboarding 仍然需要回复。",
+        continue_in_session: "请在该会话中继续",
+        status: "状态",
+        owner_profile_present: "主人档案已经存在，新会话会自动带入已记住的身份、规则与偏好。",
+        workspace: "工作区",
+        workspace_hint: "一次只专注一个界面区域。",
+        tab_overview: "总览",
+        tab_operations: "运维",
+        tab_memory: "记忆",
+        tab_social: "社交",
+        tab_config: "配置",
+        quick_run: "快速运行",
+        quick_run_desc: "直接执行 prompt，不必在整页内容里来回找入口。",
+        model_override: "模型覆盖",
+        session_id: "会话 ID",
+        prompt: "提示词",
+        optional: "可选",
+        run_prompt_placeholder: "给 Qorvexus 一个明确的任务……",
+        run_prompt: "运行 Prompt",
+        use_onboarding_session: "使用 Onboarding 会话",
+        search_memory_instead: "改为搜索记忆",
+        immediate_context: "即时上下文",
+        immediate_context_desc: "当前运行时认为最重要的信息。",
+        current_tab: "当前标签页",
+        web_address: "Web 地址",
+        run_output: "运行结果",
+        run_output_ready: "已就绪。现在可以运行一个 prompt，或切换到其它工作区。",
+        system_snapshot: "系统快照",
+        system_snapshot_desc: "直接查看高价值运行状态，而不是一上来就面对整块原始 JSON。",
+        refresh_status: "刷新状态",
+        refresh_sessions: "刷新会话",
+        refresh_queue: "刷新队列",
+        sessions: "会话",
+        queue: "队列",
+        raw_status: "原始状态",
+        queue_recovery: "队列恢复",
+        queue_recovery_desc: "无需先看完整队列输出，就可以重试失败任务。",
+        queue_task_id: "队列任务 ID",
+        queue_task_id_placeholder: "task-...",
+        retry_task: "重试任务",
+        retry_results_here: "重试结果会显示在这里。",
+        commitments: "承诺事项",
+        commitments_desc: "在一个区域里查看待办承诺、执行扫描并更新状态。",
+        refresh_commitments: "刷新承诺",
+        refresh_summary: "刷新摘要",
+        run_scan: "执行扫描",
+        commitment_id: "承诺 ID",
+        commitment_id_placeholder: "commitment-...",
+        new_status: "新状态",
+        new_status_placeholder: "open / done / blocked",
+        update_commitment: "更新承诺",
+        commitment_summary: "承诺摘要",
+        commitment_feed: "承诺列表",
+        audit_trail: "审计轨迹",
+        audit_trail_desc: "把重试、扫描和状态更新的结果集中查看，不再打散在各个卡片里。",
+        refresh_audit: "刷新审计",
+        memory_explorer: "记忆浏览器",
+        memory_explorer_desc: "直接搜索长期记忆，而不是在无关组件里滚动查找。",
+        search_query: "搜索词",
+        memory_query_placeholder: "owner、timezone、project、preferences……",
+        search_memory: "搜索记忆",
+        owner_profile: "主人档案",
+        projects: "项目",
+        memory_output_ready: "执行一次记忆搜索，查看智能体当前记住了什么。",
+        self_evolution: "自我进化",
+        self_evolution_desc: "把 backlog 审查和新想法录入放在一起，但不干扰主流程。",
+        refresh_backlog: "刷新 Backlog",
+        mine_ideas: "挖掘想法",
+        backlog: "Backlog",
+        mined_ideas: "挖掘结果",
+        backlog_id: "Backlog ID",
+        backlog_id_placeholder: "backlog item id",
+        self_status_placeholder: "planned / active / done",
+        update_self_status: "更新自我进化状态",
+        capture_improvement: "记录改进项",
+        capture_improvement_desc: "把一个好想法变成 backlog，必要时直接推进为排队执行。",
+        title: "标题",
+        capture_title_placeholder: "改进想法标题",
+        kind: "类型",
+        capture_kind_placeholder: "reliability / automation / safety",
+        promotion_model: "推进模型",
+        description: "描述",
+        capture_description_placeholder: "描述你希望 Qorvexus 记住或推进的改进点。",
+        capture_idea: "记录想法",
+        capture_and_promote: "记录并推进",
+        connectors: "连接器",
+        connectors_desc: "快速查看当前可用的社交渠道。",
+        refresh_connectors: "刷新连接器",
+        recent_social_activity: "最近社交活动",
+        recent_social_activity_desc: "查看最近的收发内容，而不和配置或记忆工具混在一起。",
+        refresh_social_log: "刷新社交日志",
+        simulate_inbound_message: "模拟入站消息",
+        simulate_inbound_message_desc: "用一个紧凑表单测试连接器处理流程。",
+        channel: "渠道",
+        thread_id: "线程 ID",
+        sender_id: "发送者 ID",
+        sender_name: "发送者名称",
+        inbound_text: "入站文本",
+        social_text_placeholder: "把收到的消息粘贴到这里。",
+        simulate_inbound_social: "模拟入站社交消息",
+        runtime_config: "运行时配置",
+        runtime_config_desc: "原始配置依然可用，但它现在在单独工作区里，不再挤占主流程。",
+        reload: "重新加载",
+        save_config: "保存配置",
+        loading_runtime_config: "正在加载运行时配置……",
+        config_empty: "# 运行时配置已加载，但文件为空。\n",
+        config_load_failed: "# 加载运行时配置失败。\n# ",
+        config_saved: "配置已保存。"
+      }
+    };
+
+    let currentLanguage = "en";
+
     async function api(path, options) {
       const res = await fetch(path, options);
       if (!res.ok) throw new Error(await res.text());
@@ -1170,6 +1445,51 @@ const dashboardHTML = `<!doctype html>
         .replaceAll(">", "&gt;");
     }
 
+    function t(key) {
+      return translations[currentLanguage]?.[key] || translations.en[key] || key;
+    }
+
+    function applyTranslations() {
+      document.documentElement.lang = currentLanguage;
+      document.title = t("title");
+      for (const node of document.querySelectorAll("[data-i18n]")) {
+        node.textContent = t(node.dataset.i18n);
+      }
+      for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
+        node.placeholder = t(node.dataset.i18nPlaceholder);
+      }
+      for (const node of document.querySelectorAll("[data-i18n-dynamic]")) {
+        node.textContent = t(node.dataset.i18nDynamic);
+      }
+      for (const code of ["zh-CN", "en"]) {
+        document.getElementById("lang-" + code)?.classList.toggle("active", code === currentLanguage);
+      }
+    }
+
+    function preferredLanguage() {
+      const stored = localStorage.getItem("qorvexus_lang");
+      if (stored && translations[stored]) return stored;
+      const browser = navigator.language || "en";
+      if (browser.toLowerCase().startsWith("zh")) return "zh-CN";
+      return "en";
+    }
+
+    function setLanguage(lang) {
+      currentLanguage = translations[lang] ? lang : "en";
+      localStorage.setItem("qorvexus_lang", currentLanguage);
+      applyTranslations();
+      syncDynamicLabels();
+    }
+
+    function syncDynamicLabels() {
+      const currentTab = document.querySelector(".nav button.active")?.id?.replace("tab-button-", "") || "overview";
+      setText("current-tab-label", t("tab_" + currentTab));
+      const heroFocus = document.getElementById("hero-focus");
+      if (heroFocus?.dataset.i18nDynamic) {
+        heroFocus.textContent = t(heroFocus.dataset.i18nDynamic);
+      }
+    }
+
     function showTab(name) {
       for (const pane of document.querySelectorAll(".tab-pane")) {
         pane.classList.toggle("active", pane.id === "tab-" + name);
@@ -1177,8 +1497,10 @@ const dashboardHTML = `<!doctype html>
       for (const button of document.querySelectorAll(".nav button")) {
         button.classList.toggle("active", button.id === "tab-button-" + name);
       }
-      const label = name.charAt(0).toUpperCase() + name.slice(1);
-      setText("current-tab-label", label);
+      setText("current-tab-label", t("tab_" + name));
+      if (name === "config") {
+        loadConfig();
+      }
     }
 
     function prefillOnboarding() {
@@ -1186,8 +1508,17 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function loadConfig() {
-      const data = await api("/api/config");
-      document.getElementById("config-text").value = data.config;
+      const field = document.getElementById("config-text");
+      field.value = t("loading_runtime_config");
+      try {
+        const data = await api("/api/config");
+        field.value = data.config || "";
+        if (!field.value.trim()) {
+          field.value = t("config_empty");
+        }
+      } catch (err) {
+        field.value = t("config_load_failed") + (err?.message || String(err));
+      }
     }
 
     async function saveConfig() {
@@ -1196,7 +1527,7 @@ const dashboardHTML = `<!doctype html>
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({config:document.getElementById("config-text").value})
       });
-      alert("Config saved.");
+      alert(t("config_saved"));
     }
 
     async function loadStatus() {
@@ -1209,10 +1540,12 @@ const dashboardHTML = `<!doctype html>
         if (data.owner_onboarding_prompt) {
           setText("run-output", data.owner_onboarding_prompt);
           setText("hero-session", data.owner_onboarding_session_id || "owner-onboarding");
-          setText("hero-focus", "Onboarding");
+          document.getElementById("hero-focus").dataset.i18nDynamic = "focus_onboarding";
+          setText("hero-focus", t("focus_onboarding"));
         }
       } else {
-        setText("hero-focus", "Operations");
+        document.getElementById("hero-focus").dataset.i18nDynamic = "focus_operations";
+        setText("hero-focus", t("focus_operations"));
       }
       return data;
     }
@@ -1377,6 +1710,7 @@ const dashboardHTML = `<!doctype html>
       loadAudit();
     }
 
+    setLanguage(preferredLanguage());
     loadConfig();
     loadStatus();
     loadSessions();
