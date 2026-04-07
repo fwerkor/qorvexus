@@ -101,10 +101,17 @@ type SocialConfig struct {
 	CommitmentFile                string         `yaml:"commitment_file"`
 	CommitmentScanIntervalSeconds int            `yaml:"commitment_scan_interval_seconds"`
 	Discord                       DiscordConfig  `yaml:"discord"`
+	Slack                         SlackConfig    `yaml:"slack"`
 	Telegram                      TelegramConfig `yaml:"telegram"`
 }
 
 type DiscordConfig struct {
+	BotToken         string `yaml:"bot_token"`
+	APIBaseURL       string `yaml:"api_base_url"`
+	DefaultChannelID string `yaml:"default_channel_id"`
+}
+
+type SlackConfig struct {
 	BotToken         string `yaml:"bot_token"`
 	APIBaseURL       string `yaml:"api_base_url"`
 	DefaultChannelID string `yaml:"default_channel_id"`
@@ -285,6 +292,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if strings.TrimSpace(c.Social.Discord.APIBaseURL) == "" {
 		c.Social.Discord.APIBaseURL = "https://discord.com/api/v10"
+	}
+	if strings.TrimSpace(c.Social.Slack.APIBaseURL) == "" {
+		c.Social.Slack.APIBaseURL = "https://slack.com/api"
 	}
 	if strings.TrimSpace(c.Social.Telegram.Mode) == "" {
 		c.Social.Telegram.Mode = "polling"

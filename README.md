@@ -66,10 +66,14 @@ social:
   allowed_channels:
     - telegram
     - discord
+    - slack
   telegram:
     bot_token: "your-telegram-bot-token"
   discord:
     bot_token: "your-discord-bot-token"
+    default_channel_id: "your-channel-id"
+  slack:
+    bot_token: "your-slack-bot-token"
     default_channel_id: "your-channel-id"
 ```
 
@@ -123,6 +127,7 @@ Social channels are plugin-based, not core-runtime special cases.
 | --- | --- | --- |
 | Telegram | Available | Polling-first plugin, webhook still supported as an advanced mode |
 | Discord | Available | Outbound bot messaging baseline through the Discord REST API |
+| Slack | Available | Outbound bot messaging baseline through `chat.postMessage` |
 
 ### Telegram
 
@@ -153,6 +158,21 @@ social:
 ```
 
 If a task sends a Discord message without an explicit channel target, Qorvexus will fall back to `social.discord.default_channel_id`.
+
+### Slack
+
+Slack currently ships as a clean outbound plugin baseline.
+
+```yaml
+social:
+  allowed_channels:
+    - slack
+  slack:
+    bot_token: "your-slack-bot-token"
+    default_channel_id: "your-channel-id"
+```
+
+If a task sends a Slack message without an explicit target, Qorvexus will fall back to `social.slack.default_channel_id`.
 
 ### Manual Social Inbound Test
 
