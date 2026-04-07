@@ -418,6 +418,14 @@ func (a *appRuntime) MineSelfImprovements(ctx context.Context, limit int) (strin
 			})
 			continue
 		}
+		if entry.Channel != "" && entry.Trust == string(types.TrustExternal) {
+			out = append(out, candidate{
+				Title:       "Harden external social boundary on " + entry.Channel,
+				Description: "Recent external social activity suggests Qorvexus should further refine delegated authority, message review heuristics, or outbound safeguards on this channel.",
+				Kind:        "social-safety",
+				Source:      entry.Action,
+			})
+		}
 		switch entry.Action {
 		case "retry_queue_task":
 			out = append(out, candidate{
@@ -536,6 +544,13 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 	if sessionID == "-" || sessionID == "" {
 		sessionID = env.Channel + "-" + env.SenderID
 	}
+	toolCtx := tool.WithConversationContext(ctx, env.Context)
+	a.logAudit(toolCtx, "receive_social_message", "ok", sessionID, map[string]any{
+		"channel":     env.Channel,
+		"thread_id":   env.ThreadID,
+		"sender_id":   env.SenderID,
+		"sender_name": env.SenderName,
+	})
 	var parts []types.ContentPart
 	for _, image := range env.Images {
 		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
@@ -546,6 +561,12 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		Parts:     parts,
 		Context:   &env.Context,
 	})
+	if err == nil {
+		a.logAudit(toolCtx, "reply_social_message", "ok", sessionID, map[string]any{
+			"channel":   env.Channel,
+			"thread_id": env.ThreadID,
+		})
+	}
 	return out, err
 }
 

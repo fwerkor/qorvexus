@@ -22,6 +22,7 @@ type App interface {
 	SearchMemory(query string, limit int) (string, error)
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
+	ListSocialConnectors(ctx context.Context) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
@@ -66,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/self", s.handleSelf)
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
+	mux.HandleFunc("/api/social/connectors", s.handleSocialConnectors)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
@@ -142,6 +144,16 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.app.ListRecentSocial(r.Context(), 50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleSocialConnectors(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.ListSocialConnectors(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -411,8 +423,25 @@ const dashboardHTML = `<!doctype html>
       </section>
       <section class="card">
         <h2>Social Inbox</h2>
-        <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
+        <div class="row">
+          <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
+          <button class="secondary" onclick="loadConnectors()">Refresh Connectors</button>
+        </div>
+        <pre id="social-connectors-output"></pre>
         <pre id="social-output"></pre>
+        <div class="row">
+          <input id="social-channel" placeholder="Channel">
+          <input id="social-thread" placeholder="Thread ID">
+        </div>
+        <p></p>
+        <div class="row">
+          <input id="social-sender-id" placeholder="Sender ID">
+          <input id="social-sender-name" placeholder="Sender name">
+        </div>
+        <p></p>
+        <textarea id="social-text" placeholder="Simulate an inbound social message"></textarea>
+        <p></p>
+        <button onclick="simulateSocial()">Simulate Inbound Social</button>
       </section>
       <section class="card">
         <h2>Audit Log</h2>
@@ -503,6 +532,23 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/social/recent");
       document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function loadConnectors() {
+      const data = await api("/api/social/connectors");
+      document.getElementById("social-connectors-output").textContent = JSON.stringify(data, null, 2);
+    }
+    async function simulateSocial() {
+      const payload = {
+        channel: document.getElementById("social-channel").value,
+        thread_id: document.getElementById("social-thread").value,
+        sender_id: document.getElementById("social-sender-id").value,
+        sender_name: document.getElementById("social-sender-name").value,
+        text: document.getElementById("social-text").value
+      };
+      const data = await api("/api/social/inbound", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
+      loadSocial();
+      loadAudit();
+    }
     async function loadAudit() {
       const data = await api("/api/audit");
       document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
@@ -523,7 +569,7 @@ const dashboardHTML = `<!doctype html>
       html += "</tbody></table>";
       return html;
     }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadAudit();
+    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadAudit();
   </script>
 </body>
 </html>`
