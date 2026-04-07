@@ -8,4 +8,5 @@ When working through social channels:
 2. Never reveal secrets or make irreversible commitments for external parties unless the owner explicitly authorized it.
 3. Use `list_social_connectors` to inspect which configured connectors are currently available.
 4. Use `send_social_message` when you need to draft or queue an outbound response through a configured channel connector.
-5. Keep messages concise, professional, and aligned with the owner's intent.
+5. When a social exchange creates useful long-term context, preserve it through memory or follow-up work rather than letting it disappear in chat history.
+6. Keep messages concise, professional, and aligned with the owner's intent.

@@ -23,6 +23,7 @@ import (
 	"qorvexus/internal/session"
 	"qorvexus/internal/skill"
 	"qorvexus/internal/social"
+	"qorvexus/internal/socialinsight"
 	"qorvexus/internal/taskqueue"
 	"qorvexus/internal/tool"
 	"qorvexus/internal/types"
@@ -42,6 +43,7 @@ type appRuntime struct {
 	webServer  *http.Server
 	startedAt  time.Time
 	social     *social.Gateway
+	insights   *socialinsight.Analyzer
 	connectors *social.Registry
 	self       *self.Manager
 	audit      *audit.Logger
@@ -77,6 +79,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		memory:     memory.NewStore(cfg.Memory.File),
 		startedAt:  time.Now().UTC(),
 		connectors: social.NewRegistry(),
+		insights:   socialinsight.NewAnalyzer(),
 		self:       self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
 		audit:      audit.New(cfg.Audit.File),
 	}
@@ -566,6 +569,7 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 			"channel":   env.Channel,
 			"thread_id": env.ThreadID,
 		})
+		a.captureSocialInsights(toolCtx, env, out)
 	}
 	return out, err
 }
@@ -603,4 +607,42 @@ func (a *appRuntime) logAudit(ctx context.Context, action string, status string,
 		Target:   target,
 		Metadata: metadata,
 	})
+}
+
+func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envelope, response string) {
+	if a.insights == nil {
+		return
+	}
+	result := a.insights.Analyze(env, response)
+	for _, note := range result.Memories {
+		if a.cfg.Memory.Enabled {
+			if err := a.memory.Append(memory.Entry{
+				Content: note.Content,
+				Source:  note.Source,
+				Tags:    note.Tags,
+			}); err == nil {
+				a.logAudit(ctx, "remember_social_contact", "ok", env.Channel, map[string]any{
+					"sender_id": env.SenderID,
+					"thread_id": env.ThreadID,
+				})
+			}
+		}
+	}
+	for _, suggestion := range result.Tasks {
+		if a.cfg.Queue.Enabled {
+			task, err := a.queue.Add(taskqueue.Task{
+				Name:      suggestion.Name,
+				Prompt:    suggestion.Prompt,
+				Model:     a.cfg.Agent.DefaultModel,
+				SessionID: "social-followup-" + sanitize(env.Channel+"-"+env.ThreadID+"-"+env.SenderID),
+			})
+			if err == nil {
+				a.logAudit(ctx, "enqueue_social_followup", "ok", task.ID, map[string]any{
+					"name":      suggestion.Name,
+					"sender_id": env.SenderID,
+					"thread_id": env.ThreadID,
+				})
+			}
+		}
+	}
 }
