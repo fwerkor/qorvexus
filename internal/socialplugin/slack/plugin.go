@@ -13,6 +13,7 @@ import (
 	"qorvexus/internal/config"
 	"qorvexus/internal/social"
 	"qorvexus/internal/socialplugin"
+	"qorvexus/internal/socialpluginregistry"
 )
 
 type Plugin struct{}
@@ -30,6 +31,10 @@ type postMessageResponse struct {
 }
 
 func New() *Plugin { return &Plugin{} }
+
+func init() {
+	socialpluginregistry.Register(func() socialplugin.Plugin { return New() })
+}
 
 func (p *Plugin) Channel() string { return "slack" }
 

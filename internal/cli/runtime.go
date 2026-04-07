@@ -26,10 +26,8 @@ import (
 	"qorvexus/internal/social"
 	"qorvexus/internal/socialinsight"
 	"qorvexus/internal/socialplugin"
-	discordplugin "qorvexus/internal/socialplugin/discord"
-	qqbotplugin "qorvexus/internal/socialplugin/qqbot"
-	slackplugin "qorvexus/internal/socialplugin/slack"
-	telegramplugin "qorvexus/internal/socialplugin/telegram"
+	_ "qorvexus/internal/socialpluginautoload"
+	"qorvexus/internal/socialpluginregistry"
 	"qorvexus/internal/taskqueue"
 	"qorvexus/internal/tool"
 	"qorvexus/internal/types"
@@ -138,11 +136,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		PollInterval: time.Duration(cfg.Queue.PollInterval) * time.Second,
 	}
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
-	pluginManager := socialplugin.NewManager()
-	pluginManager.Register(discordplugin.New())
-	pluginManager.Register(qqbotplugin.New())
-	pluginManager.Register(slackplugin.New())
-	pluginManager.Register(telegramplugin.New())
+	pluginManager := socialpluginregistry.NewManager()
 	app.socialJobs, err = pluginManager.Setup(cfg.Social, app.connectors, cfg.DataDir, func(runCtx context.Context, env social.Envelope) error {
 		_, err := app.HandleSocialEnvelope(runCtx, env)
 		return err

@@ -35,7 +35,7 @@ Contact: `admin@fwerkor.com`
 - `tool` is first-class and model-visible, so the model decides when to act.
 - `skill` stays compatible with OpenClaw-style `SKILL.md` workflows.
 - `session`, `memory`, `scheduler`, and `taskqueue` are explicit subsystems instead of hidden prompt behavior.
-- `socialplugin` keeps channels like Telegram, QQ Bot, Discord, and Slack optional, so adding more platforms follows the same boundary.
+- `socialplugin` keeps channels like Telegram, QQ Bot, Discord, and Slack optional, and a generated autoload manifest keeps runtime registration out of the core loop.
 - `self` and `audit` make self-modification possible without making it invisible.
 
 ## Quick Start

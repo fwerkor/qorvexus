@@ -64,6 +64,13 @@ jobs:
           go-version: '1.23'
           cache: true
 
+      - name: Verify generated social plugin imports
+        run: |
+          tmp="$(mktemp)"
+          cp internal/socialpluginautoload/imports_gen.go "$tmp"
+          go generate ./internal/socialpluginautoload
+          diff -u "$tmp" internal/socialpluginautoload/imports_gen.go
+
       - name: Verify formatting
         run: |
           test -z "$(gofmt -l $(find . -name '*.go' -not -path './.git/*'))"

@@ -14,6 +14,7 @@ import (
 	"qorvexus/internal/config"
 	"qorvexus/internal/social"
 	"qorvexus/internal/socialplugin"
+	"qorvexus/internal/socialpluginregistry"
 )
 
 const (
@@ -90,6 +91,10 @@ func (r *qqBotTokenResponse) UnmarshalJSON(data []byte) error {
 }
 
 func New() *Plugin { return &Plugin{} }
+
+func init() {
+	socialpluginregistry.Register(func() socialplugin.Plugin { return New() })
+}
 
 func (p *Plugin) Channel() string { return "qqbot" }
 
