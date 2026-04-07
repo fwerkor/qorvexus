@@ -1,84 +1,54 @@
 # Qorvexus
 
-Qorvexus is a from-scratch Go agent runtime designed to stay maintainable while growing into a strong general-purpose autonomous assistant.
+Qorvexus is a maintainable Go agent platform for building an always-on assistant with tools, memory, social channels, self-improvement workflows, and a built-in control panel.
 
-Current baseline includes:
+> Think of it as an agent runtime, not a single hard-coded bot.
+> Models, tools, skills, sessions, background jobs, and social channels are all explicit subsystems.
 
-- Clear layered architecture: `config`, `model`, `agent`, `tool`, `skill`, `session`, `scheduler`, `contextx`
-- OpenAI-compatible model adapter with tool-calling support
-- Multimodal message parts plus automatic vision-model fallback
-- OpenClaw-style `SKILL.md` loading with YAML frontmatter and basic gating
-- Local command execution, HTTP fetch, Playwright command bridge, sub-agent delegation, multi-model consultation, scheduled tasks
-- Built-in web control panel for config editing, runtime inspection, queue/session visibility, and ad-hoc execution
-- Command policy engine with dangerous-command blocking
-- Durable memory store and persistent async task queue
-- Social gateway foundations with owner-aware trust boundaries and inbound channel handling
-- Self-improvement primitives for reading config, writing skills, and maintaining a self-evolution backlog
-- Audit logging for high-impact actions such as self-modification, task promotion, scheduling, and social sending
-- Session persistence plus automatic context compression
-- Cron manager for recurring background runs
+## What It Already Does
 
-## Project Layout
+| Area | Current baseline |
+| --- | --- |
+| Models | OpenAI-compatible adapters, multimodal message parts, vision fallback, model-call recording |
+| Agent loop | Tool calling, sub-agents, multi-model consultation, scheduled tasks |
+| Skills | OpenClaw-style `SKILL.md` loading with frontmatter gating |
+| Runtime | Sessions, context compression, queue worker, cron scheduling, audit log |
+| Memory | Durable notes plus recall tools |
+| Control plane | Built-in Web UI for config editing, inspection, and operations |
+| Social | Owner-aware trust boundaries plus plugin-based social channels |
+| Self-improvement | Config editing, skill writing, backlog capture, promotion into tasks |
 
-```text
-cmd/qorvexus           CLI entrypoint
-internal/agent         agent loop and tool orchestration
-internal/cli           app bootstrap and commands
-internal/config        yaml config model and defaults
-internal/contextx      context compression
-internal/model         provider abstraction and adapters
-internal/memory        durable note storage and retrieval
-internal/orchestrator  multi-model discussion
-internal/policy        command execution safety rules
-internal/scheduler     cron-backed task manager
-internal/self          self-improvement backlog and skill management
-internal/session       persistent session store
-internal/skill         skill discovery and prompt injection
-internal/social        social-channel envelopes and owner/trust routing
-internal/socialplugin  optional social-channel plugins
-internal/taskqueue     async work queue and worker
-internal/tool          tool registry and built-in tools
-internal/types         shared protocol types
-internal/webui         built-in control panel and HTTP APIs
-skills/                workspace skills
-```
+## Why The Project Is Shaped This Way
 
-## Why This Shape
-
-The goal is not a single hard-coded assistant, but an agent platform:
-
-- Model adapters are isolated so new protocols and distilled-logging interceptors can be added without touching the core loop.
-- Tools are first-class and model-visible, so the model can decide when to act.
-- Social integrations follow a connector/tool/skill layering similar in spirit to OpenClaw: adapters/connectors handle channel mechanics, tools expose capability, and skills teach the model how to use them.
-- Social channels can be attached as optional plugins, so Telegram is not treated as a special core pathway and future Slack/Discord-style channels can be added with the same boundary.
-- Skills are loadable from disk and remain compatible with the `SKILL.md` pattern used by OpenClaw.
-- Sessions, compression, and scheduling are explicit subsystems instead of scattered logic.
-- Multi-model discussion and child agents are built as orchestration services, not prompt hacks.
-- Conversation context can encode channel, sender identity, and trust boundaries so the agent knows when it is talking to the owner versus external parties.
-- High-impact self-modification flows can be exposed as tools, while owner-aware context still gates who may trigger them.
+- `model` is isolated so new providers or logging shims can be added without touching the core loop.
+- `tool` is first-class and model-visible, so the model decides when to act.
+- `skill` stays compatible with OpenClaw-style `SKILL.md` workflows.
+- `session`, `memory`, `scheduler`, and `taskqueue` are explicit subsystems instead of hidden prompt behavior.
+- `socialplugin` keeps channels like Telegram and Discord optional, so adding Slack later follows the same boundary.
+- `self` and `audit` make self-modification possible without making it invisible.
 
 ## Quick Start
 
-1. Build Qorvexus:
+1. Build the binary:
 
 ```bash
 go build ./cmd/qorvexus
 ```
 
-2. Start Qorvexus once so it generates `qorvexus.yaml` in the project root:
+2. Start Qorvexus once to generate `qorvexus.yaml`:
 
 ```bash
 ./qorvexus start
 ```
 
-Stop it after the file appears, then add your keys:
+3. Stop it after the file appears, then add your model and channel credentials:
 
 ```yaml
 models:
   primary:
     provider: openai-compatible
     base_url: https://api.openai.com/v1
-    api_key: "your-key"
+    api_key: "your-model-key"
     model: gpt-4.1
 
 social:
@@ -92,60 +62,85 @@ social:
     default_channel_id: "your-channel-id"
 ```
 
-3. Start everything with one command:
+4. Start the full service:
 
 ```bash
 ./qorvexus start
 ```
 
-If `qorvexus.yaml` does not exist yet, Qorvexus will auto-create it with sane defaults.
+5. Open the control panel:
 
-4. Open the web UI:
-
-```bash
+```text
 http://127.0.0.1:7788
 ```
 
-From there you can edit config and inspect runtime state. Provider wiring, model defaults, Telegram polling mode, owner alias defaults, data paths, and most other runtime details are filled in internally.
+Qorvexus fills in many internal defaults automatically, but model connection settings remain explicit because they are part of the deployment contract.
 
 ## Common Commands
 
-Start the full service:
-
 ```bash
 ./qorvexus start
-```
-
-Run a one-off prompt:
-
-```bash
 ./qorvexus run "Plan my day and execute any necessary research"
-```
-
-Run a one-off multimodal prompt:
-
-```bash
-./qorvexus run --image https://example.com/screen.png "Describe this screen and tell me what to do next"
-```
-
-List skills:
-
-```bash
+./qorvexus run --image https://example.com/screen.png "Describe this screen"
 ./qorvexus skills
-```
-
-Inspect the queue:
-
-```bash
 ./qorvexus queue
 ```
 
-Common local workflows:
+Local developer workflows:
 
 ```bash
 make build
 make test
+make race
 make docker-build
+make ci
+```
+
+## Social Plugins
+
+Social channels are plugin-based, not core-runtime special cases.
+
+| Plugin | Status | Notes |
+| --- | --- | --- |
+| Telegram | Available | Polling-first plugin, webhook still supported as an advanced mode |
+| Discord | Available | Outbound bot messaging baseline through the Discord REST API |
+
+### Telegram
+
+Telegram uses polling by default.
+
+```yaml
+social:
+  allowed_channels:
+    - telegram
+  telegram:
+    bot_token: "your-telegram-bot-token"
+    mode: polling
+```
+
+Qorvexus will call Telegram `getUpdates`, ingest messages through the social layer, and send replies back through the Telegram Bot API.
+
+### Discord
+
+Discord currently ships as a clean outbound plugin baseline.
+
+```yaml
+social:
+  allowed_channels:
+    - discord
+  discord:
+    bot_token: "your-discord-bot-token"
+    default_channel_id: "your-channel-id"
+```
+
+If a task sends a Discord message without an explicit channel target, Qorvexus will fall back to `social.discord.default_channel_id`.
+
+### Manual Social Inbound Test
+
+```bash
+curl -X POST http://127.0.0.1:7788/api/social/inbound \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","thread_id":"chat-1","sender_id":"owner","sender_name":"owner","text":"Summarize today and draft replies I should send."}'
 ```
 
 ## Docker
@@ -162,43 +157,52 @@ Run it with a persistent config and data volume:
 docker run --rm -p 7788:7788 -v "$(pwd)/docker-data:/data" qorvexus:local
 ```
 
-On first boot the container will generate `/data/qorvexus.yaml`. Edit that file on the host, add your model and social credentials, then restart the container.
+On first boot the container will generate `/data/qorvexus.yaml`. Edit that file on the host, add your credentials, then restart the container.
 
-## Telegram
+## CI And Release
 
-Telegram uses polling by default.
+The repository includes:
 
-1. Set `social.telegram.bot_token` in the generated `qorvexus.yaml`.
-2. Keep `social.telegram.mode: polling`.
-3. Start Qorvexus with `./qorvexus start`.
+- `CI` workflow for tests, race tests, formatting checks, builds, and Docker image builds
+- `Release` workflow for multi-platform binaries on tags or manual dispatch
+- a multi-stage `Dockerfile`
+- a small `Makefile` for common local workflows
 
-Qorvexus will call Telegram `getUpdates`, ingest new messages through the social layer, and send replies back through the Telegram Bot API. No webhook or public callback URL is required.
+## Project Layout
 
-Webhook mode still exists as an advanced option, but it is no longer the default path.
-
-## Discord
-
-Discord is available as an optional social plugin.
-
-1. Add `discord` to `social.allowed_channels`.
-2. Set `social.discord.bot_token`.
-3. Optionally set `social.discord.default_channel_id` if you want Discord sends to work without explicitly passing a channel ID each time.
-
-Current Discord support is a clean outbound plugin baseline: Qorvexus can send messages to Discord channels through the bot REST API, and future inbound support can be added without changing the core runtime/plugin boundary.
-
-Manual social-style inbound test:
-
-```bash
-curl -X POST http://127.0.0.1:7788/api/social/inbound \
-  -H 'Content-Type: application/json' \
-  -d '{"channel":"telegram","thread_id":"chat-1","sender_id":"owner","sender_name":"owner","text":"Summarize today and draft replies I should send."}'
+```text
+cmd/qorvexus           CLI entrypoint
+internal/agent         agent loop and tool orchestration
+internal/audit         high-impact action logging
+internal/cli           bootstrap, commands, runtime wiring
+internal/config        config schema and defaults
+internal/contextx      context compression
+internal/memory        durable note storage
+internal/model         provider abstraction and adapters
+internal/orchestrator  multi-model discussion
+internal/policy        command execution safety rules
+internal/scheduler     cron-backed recurring tasks
+internal/self          self-improvement backlog and skill management
+internal/session       persistent session state
+internal/skill         skill discovery and prompt injection
+internal/social        envelopes and trust routing
+internal/socialplugin  optional social-channel plugins
+internal/taskqueue     async work queue and worker
+internal/tool          built-in model-visible tools
+internal/types         shared protocol types
+internal/webui         control panel and HTTP APIs
+skills/                workspace skills
+docker/                container entrypoint assets
 ```
 
-## Next Expansion Paths
+## Current Direction
 
-- More model providers and protocol shims
-- Richer memory hierarchy and vector retrieval
-- Native multimodal ingestion and vision routing
-- Permission policies and execution sandboxes
-- Observability, traces, and data capture for fine-tuning or distillation
-- Long-running background agent workers and inbox/task queues
+Qorvexus is already usable, but it is still moving toward a stronger product shape:
+
+- richer social plugins
+- more model providers
+- better long-term memory retrieval
+- stronger operational observability
+- safer self-improvement workflows
+
+If you want to extend it, the intended path is to add adapters, tools, skills, or plugins without collapsing everything back into one giant runtime file.
