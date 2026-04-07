@@ -15,7 +15,7 @@ import (
 	"qorvexus/internal/types"
 )
 
-const defaultConfigPath = "qorvexus.yaml"
+const defaultConfigPath = "config.yaml"
 
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {

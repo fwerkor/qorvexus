@@ -46,7 +46,7 @@ Contact: `admin@fwerkor.com`
 go build ./cmd/qorvexus
 ```
 
-2. Start Qorvexus once to generate `qorvexus.yaml`:
+2. Start Qorvexus once to generate `config.yaml`:
 
 ```bash
 ./qorvexus start
@@ -219,7 +219,7 @@ Run it with a persistent config and data volume:
 docker run --rm -p 7788:7788 -v "$(pwd)/docker-data:/data" qorvexus:local
 ```
 
-On first boot the container will generate `/data/qorvexus.yaml`. Edit that file on the host, add your credentials, then restart the container.
+On first boot the container will generate `/data/config.yaml`. Edit that file on the host, add your credentials, then restart the container.
 
 ## CI And Release
 

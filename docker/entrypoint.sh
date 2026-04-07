@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CONFIG_PATH="/data/qorvexus.yaml"
+CONFIG_PATH="/data/config.yaml"
 
 if [ ! -f "$CONFIG_PATH" ]; then
   /usr/local/bin/qorvexus init --path "$CONFIG_PATH"

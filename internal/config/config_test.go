@@ -8,7 +8,7 @@ import (
 
 func TestLoadAppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "qorvexus.yaml")
+	path := filepath.Join(dir, "config.yaml")
 	content := `
 models:
   primary:
@@ -56,7 +56,7 @@ agent:
 
 func TestLoadAppliesTelegramDefaultsWhenSocialEnabled(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "qorvexus.yaml")
+	path := filepath.Join(dir, "config.yaml")
 	content := `
 models:
   primary:
@@ -81,7 +81,7 @@ social:
 
 func TestLoadAppliesQQBotDefaults(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "qorvexus.yaml")
+	path := filepath.Join(dir, "config.yaml")
 	content := `
 models:
   primary:
@@ -110,7 +110,7 @@ social:
 }
 
 func TestParseRawRejectsInvalidYAML(t *testing.T) {
-	_, err := ParseRaw("/tmp/qorvexus.yaml", []byte("models: ["))
+	_, err := ParseRaw("/tmp/config.yaml", []byte("models: ["))
 	if err == nil {
 		t.Fatal("expected parse error for invalid yaml")
 	}
@@ -124,7 +124,7 @@ models:
 agent:
   default_model: missing
 `)
-	_, err := ParseRaw("/tmp/qorvexus.yaml", raw)
+	_, err := ParseRaw("/tmp/config.yaml", raw)
 	if err == nil {
 		t.Fatal("expected validation error for missing default model")
 	}

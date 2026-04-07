@@ -11,7 +11,7 @@ import (
 
 func TestSampleConfigIsMinimalButRunnable(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "qorvexus.yaml")
+	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(sampleConfig()), 0o644); err != nil {
 		t.Fatal(err)
 	}
