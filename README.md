@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/qorvexus-logo.svg" alt="Qorvexus logo" width="720">
+</p>
+
 # Qorvexus
 
 [![CI](https://github.com/fwerkor/qorvexus/actions/workflows/ci.yml/badge.svg)](https://github.com/fwerkor/qorvexus/actions/workflows/ci.yml)
