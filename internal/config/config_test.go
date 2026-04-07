@@ -108,3 +108,24 @@ social:
 		t.Fatalf("expected default QQBot token base URL, got %q", got)
 	}
 }
+
+func TestParseRawRejectsInvalidYAML(t *testing.T) {
+	_, err := ParseRaw("/tmp/qorvexus.yaml", []byte("models: ["))
+	if err == nil {
+		t.Fatal("expected parse error for invalid yaml")
+	}
+}
+
+func TestParseRawRejectsUnknownDefaultModel(t *testing.T) {
+	raw := []byte(`
+models:
+  primary:
+    provider: openai-compatible
+agent:
+  default_model: missing
+`)
+	_, err := ParseRaw("/tmp/qorvexus.yaml", raw)
+	if err == nil {
+		t.Fatal("expected validation error for missing default model")
+	}
+}

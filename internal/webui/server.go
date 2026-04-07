@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"qorvexus/internal/config"
 	"qorvexus/internal/session"
 	"qorvexus/internal/social"
 	"qorvexus/internal/taskqueue"
@@ -333,6 +334,9 @@ func (s *Server) handleSocialWebhook(w http.ResponseWriter, r *http.Request, ada
 func SaveConfigText(path string, raw string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("config path is empty")
+	}
+	if _, err := config.ParseRaw(path, []byte(raw)); err != nil {
+		return err
 	}
 	return os.WriteFile(path, []byte(raw), 0o644)
 }
@@ -1422,6 +1426,10 @@ const dashboardHTML = `<!doctype html>
       return type.includes("application/json") ? res.json() : res.text();
     }
 
+    function apiPath(path) {
+      return path.startsWith("./") ? path : "./" + path.replace(/^\/+/, "");
+    }
+
     function setText(id, value) {
       const node = document.getElementById(id);
       if (!node) return;
@@ -1511,7 +1519,7 @@ const dashboardHTML = `<!doctype html>
       const field = document.getElementById("config-text");
       field.value = t("loading_runtime_config");
       try {
-        const data = await api("/api/config");
+        const data = await api(apiPath("api/config"));
         field.value = data.config || "";
         if (!field.value.trim()) {
           field.value = t("config_empty");
@@ -1522,7 +1530,7 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function saveConfig() {
-      await api("/api/config", {
+      await api(apiPath("api/config"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({config:document.getElementById("config-text").value})
@@ -1531,7 +1539,7 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function loadStatus() {
-      const data = await api("/api/status");
+      const data = await api(apiPath("api/status"));
       setText("status-output", data);
       if (data.owner_onboarding_required) {
         if (!document.getElementById("run-session").value) {
@@ -1556,7 +1564,7 @@ const dashboardHTML = `<!doctype html>
         model: document.getElementById("run-model").value,
         session_id: document.getElementById("run-session").value,
       };
-      const data = await api("/api/run", {
+      const data = await api(apiPath("api/run"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)
@@ -1567,28 +1575,28 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function loadSessions() {
-      const data = await api("/api/sessions");
+      const data = await api(apiPath("api/sessions"));
       document.getElementById("sessions").innerHTML = renderTable(data, ["id","model","updated_at"]);
     }
 
     async function loadQueue() {
-      const data = await api("/api/queue");
+      const data = await api(apiPath("api/queue"));
       document.getElementById("queue").innerHTML = renderTable(data, ["id","status","name","created_at"]);
     }
 
     async function loadMemory() {
       const q = encodeURIComponent(document.getElementById("memory-query").value);
-      const data = await api("/api/memory?q=" + q);
+      const data = await api(apiPath("api/memory?q=" + q));
       setText("memory-output", data);
     }
 
     async function loadSelf() {
-      const data = await api("/api/self");
+      const data = await api(apiPath("api/self"));
       setText("self-output", data);
     }
 
     async function mineSelf() {
-      const data = await api("/api/self/mine");
+      const data = await api(apiPath("api/self/mine"));
       setText("self-mine-output", data);
     }
 
@@ -1597,7 +1605,7 @@ const dashboardHTML = `<!doctype html>
         id: document.getElementById("self-id").value,
         status: document.getElementById("self-status").value,
       };
-      const data = await api("/api/self/status", {
+      const data = await api(apiPath("api/self/status"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)
@@ -1615,7 +1623,7 @@ const dashboardHTML = `<!doctype html>
         promote,
         model: document.getElementById("capture-model").value,
       };
-      const data = await api("/api/self/capture", {
+      const data = await api(apiPath("api/self/capture"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)
@@ -1627,27 +1635,27 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function loadSocial() {
-      const data = await api("/api/social/recent");
+      const data = await api(apiPath("api/social/recent"));
       setText("social-output", data);
     }
 
     async function loadConnectors() {
-      const data = await api("/api/social/connectors");
+      const data = await api(apiPath("api/social/connectors"));
       setText("social-connectors-output", data);
     }
 
     async function loadCommitments() {
-      const data = await api("/api/commitments");
+      const data = await api(apiPath("api/commitments"));
       setText("commitments-output", data);
     }
 
     async function loadCommitmentSummary() {
-      const data = await api("/api/commitments/summary");
+      const data = await api(apiPath("api/commitments/summary"));
       setText("commitments-summary-output", data);
     }
 
     async function scanCommitments() {
-      const data = await api("/api/commitments/scan", {method:"POST"});
+      const data = await api(apiPath("api/commitments/scan"), {method:"POST"});
       setText("commitments-summary-output", data);
       loadCommitments();
       loadCommitmentSummary();
@@ -1663,7 +1671,7 @@ const dashboardHTML = `<!doctype html>
         sender_name: document.getElementById("social-sender-name").value,
         text: document.getElementById("social-text").value
       };
-      const data = await api("/api/social/inbound", {
+      const data = await api(apiPath("api/social/inbound"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)
@@ -1681,7 +1689,7 @@ const dashboardHTML = `<!doctype html>
         id: document.getElementById("commitment-id").value,
         status: document.getElementById("commitment-status").value,
       };
-      const data = await api("/api/commitments/status", {
+      const data = await api(apiPath("api/commitments/status"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)
@@ -1693,13 +1701,13 @@ const dashboardHTML = `<!doctype html>
     }
 
     async function loadAudit() {
-      const data = await api("/api/audit");
+      const data = await api(apiPath("api/audit"));
       setText("audit-output", data);
     }
 
     async function retryQueue() {
       const payload = { id: document.getElementById("queue-retry-id").value };
-      const data = await api("/api/queue/retry", {
+      const data = await api(apiPath("api/queue/retry"), {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(payload)

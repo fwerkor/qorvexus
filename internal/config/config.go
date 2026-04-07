@@ -155,6 +155,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
+	return ParseRaw(path, raw)
+}
+
+func ParseRaw(path string, raw []byte) (*Config, error) {
 	cfg := &Config{}
 	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
