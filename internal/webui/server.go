@@ -777,7 +777,6 @@ const dashboardHTML = `<!doctype html>
       <div class="panel hero-main">
         <span class="eyebrow" data-i18n="eyebrow">Qorvexus Console</span>
         <h1 data-i18n="hero_title">Operate the agent without fighting the interface.</h1>
-        <p class="lede" data-i18n="hero_lede">The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.</p>
         <div class="lang-switch">
           <button id="lang-zh-CN" class="secondary" onclick="setLanguage('zh-CN')">中文</button>
           <button id="lang-en" class="secondary" onclick="setLanguage('en')">English</button>
@@ -816,7 +815,7 @@ const dashboardHTML = `<!doctype html>
         {{else}}
         <div class="status-card">
           <div class="metric-label" data-i18n="status">Status</div>
-          <p class="muted" data-i18n="owner_profile_present">Owner profile is already present, so new sessions can start with remembered identity, rules, and preferences.</p>
+          <p class="muted" data-i18n="owner_profile_present">Owner profile ready.</p>
         </div>
         {{end}}
       </div>
@@ -825,7 +824,6 @@ const dashboardHTML = `<!doctype html>
     <section class="layout">
       <aside class="panel sidebar">
         <h3 data-i18n="workspace">Workspace</h3>
-        <p class="muted" style="margin-bottom:12px;" data-i18n="workspace_hint">Keep one surface visible at a time.</p>
         <div class="nav">
           <button id="tab-button-overview" class="active" onclick="showTab('overview')" data-i18n="tab_overview">Overview</button>
           <button id="tab-button-operations" onclick="showTab('operations')" data-i18n="tab_operations">Operations</button>
@@ -842,7 +840,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="quick_run">Quick Run</h2>
-                  <p data-i18n="quick_run_desc">Run a prompt immediately without hunting through the rest of the dashboard.</p>
                 </div>
               </div>
               <div class="split-row">
@@ -870,7 +867,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="immediate_context">Immediate Context</h2>
-                  <p data-i18n="immediate_context_desc">What the runtime thinks is important right now.</p>
                 </div>
               </div>
               <div class="mini-grid">
@@ -893,7 +889,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="system_snapshot">System Snapshot</h2>
-                  <p data-i18n="system_snapshot_desc">High-signal runtime state without dropping you straight into raw JSON.</p>
                 </div>
                 <div class="button-row" style="margin-top:0;">
                   <button class="secondary" onclick="loadStatus()" data-i18n="refresh_status">Refresh Status</button>
@@ -931,7 +926,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="queue_recovery">Queue Recovery</h2>
-                  <p data-i18n="queue_recovery_desc">Retry a failed task without digging through raw queue output first.</p>
                 </div>
               </div>
               <label for="queue-retry-id" data-i18n="queue_task_id">Queue Task ID</label>
@@ -947,7 +941,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="commitments">Commitments</h2>
-                  <p data-i18n="commitments_desc">Review due work, run a scan, and update commitment status from one place.</p>
                 </div>
               </div>
               <div class="button-row">
@@ -984,7 +977,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="audit_trail">Audit Trail</h2>
-                  <p data-i18n="audit_trail_desc">See the effects of retries, scans, and status updates without mixing them into every other card.</p>
                 </div>
                 <button class="secondary" onclick="loadAudit()" data-i18n="refresh_audit">Refresh Audit</button>
               </div>
@@ -999,7 +991,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="memory_explorer">Memory Explorer</h2>
-                  <p data-i18n="memory_explorer_desc">Search long-term memory directly instead of scrolling through unrelated widgets.</p>
                 </div>
               </div>
               <label for="memory-query" data-i18n="search_query">Search Query</label>
@@ -1016,7 +1007,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="self_evolution">Self Evolution</h2>
-                  <p data-i18n="self_evolution_desc">Keep backlog review and new idea capture together, without crowding the main workflow.</p>
                 </div>
               </div>
               <div class="button-row">
@@ -1052,7 +1042,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="capture_improvement">Capture Improvement</h2>
-                  <p data-i18n="capture_improvement_desc">Turn a good idea into backlog state, and optionally promote it into queued execution.</p>
                 </div>
               </div>
               <div class="split-row">
@@ -1087,7 +1076,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="connectors">Connectors</h2>
-                  <p data-i18n="connectors_desc">Quick visibility into available social channels.</p>
                 </div>
                 <button class="secondary" onclick="loadConnectors()" data-i18n="refresh_connectors">Refresh Connectors</button>
               </div>
@@ -1098,7 +1086,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="recent_social_activity">Recent Social Activity</h2>
-                  <p data-i18n="recent_social_activity_desc">Inspect inbound and outbound history without mixing it with config or memory tools.</p>
                 </div>
                 <button class="secondary" onclick="loadSocial()" data-i18n="refresh_social_log">Refresh Social Log</button>
               </div>
@@ -1109,7 +1096,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="simulate_inbound_message">Simulate Inbound Message</h2>
-                  <p data-i18n="simulate_inbound_message_desc">Test a connector flow from one compact form.</p>
                 </div>
               </div>
               <div class="split-row">
@@ -1147,7 +1133,6 @@ const dashboardHTML = `<!doctype html>
               <div class="card-head">
                 <div>
                   <h2 data-i18n="runtime_config">Runtime Config</h2>
-                  <p data-i18n="runtime_config_desc">Raw configuration is available, but it now lives in its own dedicated workspace instead of crowding the main flow.</p>
                 </div>
                 <div class="button-row" style="margin-top:0;">
                   <button class="secondary" onclick="loadConfig()" data-i18n="reload">Reload</button>
