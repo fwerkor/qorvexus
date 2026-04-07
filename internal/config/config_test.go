@@ -52,6 +52,21 @@ agent:
 	if len(cfg.Identity.OwnerAliases) != 1 || cfg.Identity.OwnerAliases[0] != "owner" {
 		t.Fatalf("expected default owner alias, got %#v", cfg.Identity.OwnerAliases)
 	}
+	if cfg.Tools.PlaywrightCommand == "" {
+		t.Fatal("expected default playwright command")
+	}
+	if got := cfg.Tools.PlaywrightBrowser; got != "chromium" {
+		t.Fatalf("expected default playwright browser, got %q", got)
+	}
+	if cfg.Tools.PlaywrightProfileDir == "" || cfg.Tools.PlaywrightStateDir == "" || cfg.Tools.PlaywrightArtifactsDir == "" {
+		t.Fatal("expected default playwright persistence directories")
+	}
+	if cfg.Tools.PlaywrightTimeoutSeconds != 120 {
+		t.Fatalf("expected default playwright timeout, got %d", cfg.Tools.PlaywrightTimeoutSeconds)
+	}
+	if cfg.Tools.PlaywrightHeadless == nil || !*cfg.Tools.PlaywrightHeadless {
+		t.Fatalf("expected default playwright headless true, got %#v", cfg.Tools.PlaywrightHeadless)
+	}
 }
 
 func TestLoadAppliesTelegramDefaultsWhenSocialEnabled(t *testing.T) {

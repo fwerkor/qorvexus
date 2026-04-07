@@ -58,12 +58,18 @@ type DiscussionConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowCommandExecution bool     `yaml:"allow_command_execution"`
-	CommandShell          string   `yaml:"command_shell"`
-	PlaywrightCommand     string   `yaml:"playwright_command"`
-	MaxCommandBytes       int      `yaml:"max_command_bytes"`
-	HTTPUserAgent         string   `yaml:"http_user_agent"`
-	BlockedCommands       []string `yaml:"blocked_commands"`
+	AllowCommandExecution    bool     `yaml:"allow_command_execution"`
+	CommandShell             string   `yaml:"command_shell"`
+	PlaywrightCommand        string   `yaml:"playwright_command"`
+	PlaywrightBrowser        string   `yaml:"playwright_browser"`
+	PlaywrightProfileDir     string   `yaml:"playwright_profile_dir"`
+	PlaywrightStateDir       string   `yaml:"playwright_state_dir"`
+	PlaywrightArtifactsDir   string   `yaml:"playwright_artifacts_dir"`
+	PlaywrightTimeoutSeconds int      `yaml:"playwright_timeout_seconds"`
+	PlaywrightHeadless       *bool    `yaml:"playwright_headless"`
+	MaxCommandBytes          int      `yaml:"max_command_bytes"`
+	HTTPUserAgent            string   `yaml:"http_user_agent"`
+	BlockedCommands          []string `yaml:"blocked_commands"`
 }
 
 type IdentityConfig struct {
@@ -270,6 +276,30 @@ func (c *Config) setDefaults(path string) error {
 	if c.Tools.CommandShell == "" {
 		c.Tools.CommandShell = "bash"
 	}
+	if strings.TrimSpace(c.Tools.PlaywrightCommand) == "" {
+		c.Tools.PlaywrightCommand = fmt.Sprintf("node %q", filepath.Join(base, "scripts", "playwright_runner.js"))
+	}
+	if strings.TrimSpace(c.Tools.PlaywrightBrowser) == "" {
+		c.Tools.PlaywrightBrowser = "chromium"
+	}
+	if c.Tools.PlaywrightProfileDir == "" {
+		c.Tools.PlaywrightProfileDir = filepath.Join(c.DataDir, "browser", "profiles")
+	}
+	if c.Tools.PlaywrightStateDir == "" {
+		c.Tools.PlaywrightStateDir = filepath.Join(c.DataDir, "browser", "state")
+	}
+	if c.Tools.PlaywrightArtifactsDir == "" {
+		c.Tools.PlaywrightArtifactsDir = filepath.Join(c.DataDir, "browser", "artifacts")
+	}
+	if c.Tools.PlaywrightTimeoutSeconds <= 0 {
+		c.Tools.PlaywrightTimeoutSeconds = 120
+	}
+	if c.Tools.PlaywrightHeadless == nil {
+		c.Tools.PlaywrightHeadless = boolPtr(true)
+	}
+	c.Tools.PlaywrightProfileDir = expandPath(base, c.Tools.PlaywrightProfileDir)
+	c.Tools.PlaywrightStateDir = expandPath(base, c.Tools.PlaywrightStateDir)
+	c.Tools.PlaywrightArtifactsDir = expandPath(base, c.Tools.PlaywrightArtifactsDir)
 	if c.Tools.MaxCommandBytes <= 0 {
 		c.Tools.MaxCommandBytes = 64 * 1024
 	}
@@ -372,6 +402,7 @@ Use tools, background tasks, scheduling, memory, and social channels when they h
 For complex work, create a durable execution plan, break it into concrete steps with dependencies, and keep the plan updated as you execute it.
 Use subagents or queued plan steps when they help parallelize or isolate focused work, and preserve results back into the plan.
 When interacting with the local device, prefer structured system, filesystem, and process tools before falling back to raw shell commands.
+When browsing the web through Playwright, prefer persistent browser profiles so logins, cookies, and session state can survive across runs.
 When talking to external parties, represent the owner professionally without overcommitting.
 When improving yourself, make concrete, reversible progress and preserve auditability.
 `)
@@ -391,4 +422,8 @@ func expandPath(base string, value string) string {
 		return value
 	}
 	return filepath.Join(base, value)
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
