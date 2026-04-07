@@ -102,6 +102,9 @@ type SocialConfig struct {
 	CommitmentFile                string   `yaml:"commitment_file"`
 	CommitmentScanIntervalSeconds int      `yaml:"commitment_scan_interval_seconds"`
 	WebhookSecret                 string   `yaml:"webhook_secret"`
+	PublicBaseURL                 string   `yaml:"public_base_url"`
+	TelegramBotTokenEnv           string   `yaml:"telegram_bot_token_env"`
+	TelegramWebhookPath           string   `yaml:"telegram_webhook_path"`
 }
 
 type SelfConfig struct {
@@ -189,6 +192,12 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
+	}
+	if c.Social.TelegramBotTokenEnv == "" {
+		c.Social.TelegramBotTokenEnv = "TELEGRAM_BOT_TOKEN"
+	}
+	if c.Social.TelegramWebhookPath == "" {
+		c.Social.TelegramWebhookPath = "/webhooks/telegram"
 	}
 	if c.Self.SkillsDir == "" {
 		c.Self.SkillsDir = filepath.Join(base, "skills")

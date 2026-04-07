@@ -134,6 +134,13 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	}
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
 	for _, channel := range cfg.Social.AllowedChannels {
+		if channel == "telegram" {
+			token := strings.TrimSpace(os.Getenv(cfg.Social.TelegramBotTokenEnv))
+			if token != "" {
+				app.connectors.Register(social.NewTelegramConnector(token))
+				continue
+			}
+		}
 		app.connectors.Register(social.NewFileConnector(channel, filepath.Join(cfg.DataDir, "social_outbox_"+channel+".jsonl")))
 	}
 
@@ -288,6 +295,10 @@ func (a *appRuntime) SearchMemory(query string, limit int) (string, error) {
 
 func (a *appRuntime) LoadConfigText() (string, error) {
 	return webui.LoadConfigText(a.configPath)
+}
+
+func (a *appRuntime) TelegramWebhookPath() string {
+	return a.cfg.Social.TelegramWebhookPath
 }
 
 func (a *appRuntime) SaveConfigText(raw string) error {
@@ -684,6 +695,26 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 			"channel":   env.Channel,
 			"thread_id": env.ThreadID,
 		})
+		if strings.TrimSpace(out) != "" {
+			if _, sendErr := a.connectors.Send(toolCtx, env.Channel, social.OutboundMessage{
+				Channel:   env.Channel,
+				ThreadID:  env.ThreadID,
+				Recipient: env.SenderID,
+				Text:      out,
+				Context:   env.Context,
+			}); sendErr == nil {
+				a.logAudit(toolCtx, "deliver_social_reply", "ok", sessionID, map[string]any{
+					"channel":   env.Channel,
+					"thread_id": env.ThreadID,
+				})
+			} else {
+				a.logAudit(toolCtx, "deliver_social_reply", "error", sessionID, map[string]any{
+					"channel":   env.Channel,
+					"thread_id": env.ThreadID,
+					"error":     sendErr.Error(),
+				})
+			}
+		}
 		a.captureSocialInsights(toolCtx, env, out)
 	}
 	return out, err

@@ -11,14 +11,19 @@ import (
 	"qorvexus/internal/agent"
 	"qorvexus/internal/config"
 	"qorvexus/internal/skill"
+	"qorvexus/internal/social"
 	"qorvexus/internal/types"
 )
 
+const defaultConfigPath = "qorvexus.yaml"
+
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usage()
+		return startCommand(ctx, nil)
 	}
 	switch args[0] {
+	case "start":
+		return startCommand(ctx, args[1:])
 	case "run":
 		return runCommand(ctx, args[1:])
 	case "daemon":
@@ -38,7 +43,7 @@ func Run(ctx context.Context, args []string) error {
 
 func runCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	configPath := fs.String("config", defaultConfigPath, "config path")
 	modelName := fs.String("model", "", "override model")
 	sessionID := fs.String("session", "", "session id")
 	var images stringSliceFlag
@@ -76,15 +81,31 @@ func runCommand(ctx context.Context, args []string) error {
 
 func daemonCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	configPath := fs.String("config", defaultConfigPath, "config path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	return runService(ctx, *configPath, false)
+}
+
+func startCommand(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return runService(ctx, *configPath, false)
+}
+
+func runService(ctx context.Context, configPath string, forceWeb bool) error {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
-	app, err := newRuntime(cfg, *configPath)
+	if forceWeb {
+		cfg.Web.Enabled = true
+	}
+	app, err := newRuntime(cfg, configPath)
 	if err != nil {
 		return err
 	}
@@ -109,14 +130,17 @@ func daemonCommand(ctx context.Context, args []string) error {
 		}()
 		fmt.Printf("web panel listening on http://%s\n", cfg.Web.Address)
 	}
-	fmt.Println("qorvexus daemon is running")
+	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && cfg.Social.PublicBaseURL != "" {
+		fmt.Printf("telegram webhook endpoint: %s\n", social.TelegramWebhookURL(cfg.Social.PublicBaseURL, cfg.Social.TelegramWebhookPath))
+	}
+	fmt.Println("qorvexus service is running")
 	<-ctx.Done()
 	return nil
 }
 
 func webCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("web", flag.ContinueOnError)
-	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	configPath := fs.String("config", defaultConfigPath, "config path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -148,7 +172,7 @@ func webCommand(ctx context.Context, args []string) error {
 
 func skillsCommand(args []string) error {
 	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
-	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	configPath := fs.String("config", defaultConfigPath, "config path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -168,7 +192,7 @@ func skillsCommand(args []string) error {
 
 func queueCommand(args []string) error {
 	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
-	configPath := fs.String("config", "examples/qorvexus.yaml", "config path")
+	configPath := fs.String("config", defaultConfigPath, "config path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -188,7 +212,7 @@ func queueCommand(args []string) error {
 
 func initCommand(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	path := fs.String("path", "examples/qorvexus.yaml", "write config to path")
+	path := fs.String("path", defaultConfigPath, "write config to path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -199,7 +223,7 @@ func initCommand(args []string) error {
 }
 
 func usage() error {
-	return errors.New("usage: qorvexus <run|daemon|web|skills|queue|init> [flags]")
+	return errors.New("usage: qorvexus [start|run|daemon|web|skills|queue|init] [flags]")
 }
 
 func sampleConfig() string {
@@ -276,6 +300,9 @@ social:
   inbox_file: ./.qorvexus/social_inbox.jsonl
   commitment_file: ./.qorvexus/social_commitments.jsonl
   commitment_scan_interval_seconds: 3600
+  public_base_url: https://your-public-domain.example
+  telegram_bot_token_env: TELEGRAM_BOT_TOKEN
+  telegram_webhook_path: /webhooks/telegram
   webhook_secret: change-me
 self:
   enabled: true

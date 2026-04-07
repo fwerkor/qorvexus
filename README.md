@@ -40,7 +40,7 @@ internal/tool          tool registry and built-in tools
 internal/types         shared protocol types
 internal/webui         built-in control panel and HTTP APIs
 skills/                workspace skills
-examples/              sample configuration
+qorvexus.yaml          default local runtime configuration
 ```
 
 ## Why This Shape
@@ -59,46 +59,66 @@ The goal is not a single hard-coded assistant, but an agent platform:
 ## Quick Start
 
 1. Set `OPENAI_API_KEY`.
-2. Edit [examples/qorvexus.yaml](/root/project/qorvexus/examples/qorvexus.yaml).
+2. Edit [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
 3. Build:
 
 ```bash
 go build ./cmd/qorvexus
 ```
 
-4. Run:
+4. Start everything with one command:
 
 ```bash
-./qorvexus run --config examples/qorvexus.yaml "Plan my day and execute any necessary research"
-
-./qorvexus run --config examples/qorvexus.yaml --image https://example.com/screen.png "Describe this screen and tell me what to do next"
+./qorvexus start
 ```
 
-5. List loaded skills:
+This starts the web UI, queue worker, scheduler, social watchdogs, and other enabled runtime services.
+
+5. Run an ad-hoc prompt:
 
 ```bash
-./qorvexus skills --config examples/qorvexus.yaml
+./qorvexus run "Plan my day and execute any necessary research"
+
+./qorvexus run --image https://example.com/screen.png "Describe this screen and tell me what to do next"
 ```
 
-6. Start the scheduler daemon:
+6. List loaded skills:
 
 ```bash
-./qorvexus daemon --config examples/qorvexus.yaml
+./qorvexus skills
 ```
 
-7. Start the web panel:
+7. Inspect the queue:
 
 ```bash
-./qorvexus web --config examples/qorvexus.yaml
+./qorvexus queue
 ```
 
-8. Inspect the queue:
+8. Telegram webhook endpoint:
 
 ```bash
-./qorvexus queue --config examples/qorvexus.yaml
+https://your-public-domain.example/webhooks/telegram
 ```
 
-9. Send a social-style inbound message:
+To use Telegram:
+
+1. Set `TELEGRAM_BOT_TOKEN`.
+2. Set `social.public_base_url` and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+3. Start Qorvexus with `./qorvexus start`.
+4. Register the webhook with Telegram:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://your-public-domain.example/webhooks/telegram",
+    "secret_token": "change-me"
+  }'
+```
+
+When Telegram sends updates to that webhook, Qorvexus will ingest them as social messages and automatically send the agent reply back through the Telegram Bot API.
+
+9. Manual social-style inbound test:
 
 ```bash
 curl -X POST http://127.0.0.1:7788/api/social/inbound \
