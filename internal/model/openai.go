@@ -118,10 +118,12 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 	for k, v := range c.cfg.Headers {
 		httpReq.Header.Set(k, v)
 	}
-	if c.cfg.APIKeyEnv != "" {
-		if key := os.Getenv(c.cfg.APIKeyEnv); key != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+key)
-		}
+	key := strings.TrimSpace(c.cfg.APIKey)
+	if key == "" && c.cfg.APIKeyEnv != "" {
+		key = strings.TrimSpace(os.Getenv(c.cfg.APIKeyEnv))
+	}
+	if key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}
 
 	resp, err := c.httpClient.Do(httpReq)

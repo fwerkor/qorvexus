@@ -6,14 +6,14 @@ models:
   primary:
     provider: openai-compatible
     base_url: https://api.openai.com/v1
-    api_key_env: OPENAI_API_KEY
+    api_key: ""
     model: gpt-4.1
     max_tokens: 2000
     temperature: 0.2
   summarizer:
     provider: openai-compatible
     base_url: https://api.openai.com/v1
-    api_key_env: OPENAI_API_KEY
+    api_key: ""
     model: gpt-4.1-mini
     max_tokens: 800
     temperature: 0.1
@@ -71,7 +71,7 @@ social:
   commitment_file: ./.qorvexus/social_commitments.jsonl
   commitment_scan_interval_seconds: 3600
   public_base_url: https://your-public-domain.example
-  telegram_bot_token_env: TELEGRAM_BOT_TOKEN
+  telegram_bot_token: ""
   telegram_webhook_path: /webhooks/telegram
   webhook_secret: change-me
 self:

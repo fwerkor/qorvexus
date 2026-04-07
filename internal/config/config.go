@@ -32,6 +32,7 @@ type SkillsConfig struct {
 type ModelConfig struct {
 	Provider    string            `yaml:"provider"`
 	BaseURL     string            `yaml:"base_url"`
+	APIKey      string            `yaml:"api_key"`
 	APIKeyEnv   string            `yaml:"api_key_env"`
 	Model       string            `yaml:"model"`
 	MaxTokens   int               `yaml:"max_tokens"`
@@ -102,6 +103,7 @@ type SocialConfig struct {
 	CommitmentScanIntervalSeconds int      `yaml:"commitment_scan_interval_seconds"`
 	WebhookSecret                 string   `yaml:"webhook_secret"`
 	PublicBaseURL                 string   `yaml:"public_base_url"`
+	TelegramBotToken              string   `yaml:"telegram_bot_token"`
 	TelegramBotTokenEnv           string   `yaml:"telegram_bot_token_env"`
 	TelegramWebhookPath           string   `yaml:"telegram_webhook_path"`
 }

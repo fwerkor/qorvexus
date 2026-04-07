@@ -134,7 +134,10 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
 	for _, channel := range cfg.Social.AllowedChannels {
 		if channel == "telegram" {
-			token := strings.TrimSpace(os.Getenv(cfg.Social.TelegramBotTokenEnv))
+			token := strings.TrimSpace(cfg.Social.TelegramBotToken)
+			if token == "" && cfg.Social.TelegramBotTokenEnv != "" {
+				token = strings.TrimSpace(os.Getenv(cfg.Social.TelegramBotTokenEnv))
+			}
 			if token != "" {
 				app.connectors.Register(social.NewTelegramConnector(token))
 			}

@@ -58,7 +58,8 @@ The goal is not a single hard-coded assistant, but an agent platform:
 
 ## Quick Start
 
-1. Set `OPENAI_API_KEY`.
+1. Put your API credentials into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+You can still use environment variables as a fallback, but the config file is the primary place now.
 2. Optionally edit [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
 If the file does not exist yet, Qorvexus will auto-create a default one on first start.
 3. Build:
@@ -105,13 +106,13 @@ https://your-public-domain.example/webhooks/telegram
 
 To use Telegram:
 
-1. Set `TELEGRAM_BOT_TOKEN`.
-2. Set `social.public_base_url` and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+1. Set `social.telegram_bot_token`, `social.public_base_url`, and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+You may still use `telegram_bot_token_env` if you prefer, but it is optional.
 3. Start Qorvexus with `./qorvexus start`.
 4. Register the webhook with Telegram:
 
 ```bash
-curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+curl -X POST "https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook" \
   -H 'Content-Type: application/json' \
   -d '{
     "url": "https://your-public-domain.example/webhooks/telegram",
