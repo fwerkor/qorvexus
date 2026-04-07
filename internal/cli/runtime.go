@@ -57,7 +57,6 @@ type appRuntime struct {
 
 const (
 	ownerOnboardingSessionID = "owner-onboarding"
-	ownerProfileTag          = "memory_area:owner_profile"
 )
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -212,12 +211,15 @@ func (a *appRuntime) RunScheduled(_ context.Context, task scheduler.Task) error 
 	return err
 }
 
-func (a *appRuntime) Remember(_ context.Context, content string, tags []string, source string) (string, error) {
+func (a *appRuntime) Remember(_ context.Context, entry memory.Entry) (string, error) {
 	if !a.cfg.Memory.Enabled {
 		return "", fmt.Errorf("memory is disabled")
 	}
-	if err := a.memory.Append(memory.Entry{Content: content, Tags: tags, Source: source}); err != nil {
+	if err := a.memory.Upsert(entry); err != nil {
 		return "", err
+	}
+	if entry.Key != "" {
+		return "memory upserted", nil
 	}
 	return "memory stored", nil
 }
@@ -340,7 +342,9 @@ Ask a short, warm set of questions that helps you learn:
 - any boundaries, do-not-do rules, or identity details that must be remembered
 
 Do not dump a long questionnaire. Ask up to five concise questions in this turn and invite the owner to reply in the same session.
-As soon as you have enough stable facts, call the remember tool to store them with source "bootstrap:owner_onboarding" and tags ["owner_profile", "owner_identity", "memory_area:owner_profile"].
+As soon as you have enough stable facts, call the remember tool to store them as structured owner memories.
+Use stable keys like "owner:identity:name", "owner:identity:preferred_name", "owner:identity:timezone", "owner:goals:primary_needs", or hashed keys for preferences and rules.
+Use areas such as "owner_profile", "owner_preferences", and "owner_rules", source "bootstrap:owner_onboarding", and tags including "owner_profile" and "memory_area:owner_profile".
 Keep the questions practical and focused on facts that will help you serve the owner well.`),
 		Context: &types.ConversationContext{
 			Channel:  "bootstrap",
@@ -809,7 +813,10 @@ func (a *appRuntime) ownerProfileEntries(limit int) []memory.Entry {
 	if a.memory == nil || !a.cfg.Memory.Enabled {
 		return nil
 	}
-	items, err := a.memory.SearchByTag(ownerProfileTag, limit)
+	items, err := a.memory.SearchWithOptions(memory.SearchOptions{
+		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
+		Limit: limit,
+	})
 	if err != nil {
 		return nil
 	}
@@ -866,9 +873,15 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 	for _, note := range result.Memories {
 		if a.cfg.Memory.Enabled {
 			if err := a.memory.Append(memory.Entry{
-				Content: note.Content,
-				Source:  note.Source,
-				Tags:    note.Tags,
+				Area:       "contacts",
+				Kind:       "contact_note",
+				Subject:    env.SenderID,
+				Summary:    note.Content,
+				Content:    note.Content,
+				Source:     note.Source,
+				Tags:       note.Tags,
+				Importance: 6,
+				Confidence: 0.8,
 			}); err == nil {
 				a.logAudit(ctx, "remember_social_contact", "ok", env.Channel, map[string]any{
 					"sender_id": env.SenderID,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,6 +58,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		}
 		st.Messages = append(st.Messages, msg)
 	}
+	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, req.Prompt, st.Context); prompt != "" {
+		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
+	}
 
 	for turn := 0; turn < r.Config.Agent.MaxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
@@ -73,6 +77,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		msg := response.Message
 		if len(msg.ToolCalls) == 0 {
 			st.Messages = append(st.Messages, msg)
+			r.captureConversationMemories(req.SessionID, req.Prompt, strings.TrimSpace(msg.Content), st.Context)
 			if err := r.Sessions.Save(st); err != nil {
 				return nil, "", err
 			}
@@ -204,7 +209,10 @@ func (r *Runner) buildOwnerProfilePrompt() string {
 	if r.Memory == nil {
 		return ""
 	}
-	entries, err := r.Memory.SearchByTag("memory_area:owner_profile", 6)
+	entries, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
+		Limit: 8,
+	})
 	if err != nil || len(entries) == 0 {
 		return ""
 	}
@@ -222,6 +230,111 @@ func (r *Runner) buildOwnerProfilePrompt() string {
 		return ""
 	}
 	return result
+}
+
+func (r *Runner) buildRelevantMemoryPrompt(sessionID string, query string, ctx types.ConversationContext) string {
+	if r.Memory == nil {
+		return ""
+	}
+	selected := r.collectRelevantMemories(sessionID, query, ctx)
+	if len(selected) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(selected))
+	grouped := map[string][]memory.Entry{}
+	for _, entry := range selected {
+		ids = append(ids, entry.ID)
+		area := entry.Area
+		if area == "" {
+			area = "general"
+		}
+		grouped[area] = append(grouped[area], entry)
+	}
+	_ = r.Memory.MarkAccessed(ids...)
+
+	areas := make([]string, 0, len(grouped))
+	for area := range grouped {
+		areas = append(areas, area)
+	}
+	sort.Strings(areas)
+
+	var b strings.Builder
+	b.WriteString("Relevant long-term memory:\n")
+	for _, area := range areas {
+		b.WriteString("- " + area + ":\n")
+		for _, entry := range grouped[area] {
+			line := strings.TrimSpace(entry.Content)
+			if line == "" {
+				line = strings.TrimSpace(entry.Summary)
+			}
+			if line == "" {
+				continue
+			}
+			b.WriteString("  * " + line + "\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx types.ConversationContext) []memory.Entry {
+	selected := map[string]memory.Entry{}
+	add := func(items []memory.Entry) {
+		for _, item := range items {
+			key := item.Key
+			if key == "" {
+				key = item.ID
+			}
+			if strings.TrimSpace(key) == "" {
+				key = item.Content
+			}
+			if _, ok := selected[key]; ok {
+				continue
+			}
+			selected[key] = item
+		}
+	}
+	if ownerCore, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
+		Limit: 6,
+	}); err == nil {
+		add(ownerCore)
+	}
+	areas := []string{"owner_profile", "owner_preferences", "owner_rules", "projects", "contacts", "workflow"}
+	if ctx.Trust == types.TrustExternal || ctx.Trust == types.TrustTrusted {
+		areas = append(areas, "contacts")
+	}
+	if strings.TrimSpace(query) != "" {
+		if relevant, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+			Query: query,
+			Areas: areas,
+			Limit: 8,
+		}); err == nil {
+			add(relevant)
+		}
+	}
+	out := make([]memory.Entry, 0, len(selected))
+	for _, entry := range selected {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Importance == out[j].Importance {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		return out[i].Importance > out[j].Importance
+	})
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
+}
+
+func (r *Runner) captureConversationMemories(sessionID string, userInput string, assistantOutput string, ctx types.ConversationContext) {
+	if r.Memory == nil {
+		return
+	}
+	for _, entry := range memory.ExtractStructuredMemories(sessionID, userInput, assistantOutput, ctx) {
+		_ = r.Memory.Upsert(entry)
+	}
 }
 
 func ToolResultJSON(result any) string {

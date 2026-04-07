@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"qorvexus/internal/memory"
 	"qorvexus/internal/types"
 )
 
@@ -15,7 +16,7 @@ type Runtime interface {
 	RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error)
 	ConsultModels(ctx context.Context, prompt string, panel []string) (string, error)
 	AddScheduledTask(ctx context.Context, name string, schedule string, prompt string, model string) (string, error)
-	Remember(ctx context.Context, content string, tags []string, source string) (string, error)
+	Remember(ctx context.Context, entry memory.Entry) (string, error)
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
@@ -175,8 +176,19 @@ func (t *RememberTool) Definition() types.ToolDefinition {
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"key":     map[string]any{"type": "string"},
+				"area":    map[string]any{"type": "string"},
+				"kind":    map[string]any{"type": "string"},
+				"subject": map[string]any{"type": "string"},
+				"summary": map[string]any{"type": "string"},
 				"content": map[string]any{"type": "string"},
 				"source":  map[string]any{"type": "string"},
+				"importance": map[string]any{
+					"type": "integer",
+				},
+				"confidence": map[string]any{
+					"type": "number",
+				},
 				"tags": map[string]any{
 					"type":  "array",
 					"items": map[string]any{"type": "string"},
@@ -189,14 +201,32 @@ func (t *RememberTool) Definition() types.ToolDefinition {
 
 func (t *RememberTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
 	var input struct {
-		Content string   `json:"content"`
-		Source  string   `json:"source"`
-		Tags    []string `json:"tags"`
+		Key        string   `json:"key"`
+		Area       string   `json:"area"`
+		Kind       string   `json:"kind"`
+		Subject    string   `json:"subject"`
+		Summary    string   `json:"summary"`
+		Content    string   `json:"content"`
+		Source     string   `json:"source"`
+		Tags       []string `json:"tags"`
+		Importance int      `json:"importance"`
+		Confidence float64  `json:"confidence"`
 	}
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return "", err
 	}
-	return t.rt.Remember(ctx, input.Content, input.Tags, input.Source)
+	return t.rt.Remember(ctx, memory.Entry{
+		Key:        input.Key,
+		Area:       input.Area,
+		Kind:       input.Kind,
+		Subject:    input.Subject,
+		Summary:    input.Summary,
+		Content:    input.Content,
+		Source:     input.Source,
+		Tags:       input.Tags,
+		Importance: input.Importance,
+		Confidence: input.Confidence,
+	})
 }
 
 type RecallTool struct {
