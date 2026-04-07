@@ -78,3 +78,33 @@ social:
 		t.Fatalf("expected default telegram channel, got %#v", cfg.Social.AllowedChannels)
 	}
 }
+
+func TestLoadAppliesQQBotDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "qorvexus.yaml")
+	content := `
+models:
+  primary:
+    api_key: ""
+social:
+  enabled: true
+  allowed_channels:
+    - qqbot
+  qqbot:
+    app_id: "123"
+    client_secret: "secret"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Social.QQBot.APIBaseURL; got != "https://api.sgroup.qq.com" {
+		t.Fatalf("expected default QQBot API base URL, got %q", got)
+	}
+	if got := cfg.Social.QQBot.TokenBaseURL; got != "https://bots.qq.com" {
+		t.Fatalf("expected default QQBot token base URL, got %q", got)
+	}
+}

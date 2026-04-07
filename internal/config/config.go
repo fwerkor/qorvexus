@@ -101,6 +101,7 @@ type SocialConfig struct {
 	CommitmentFile                string         `yaml:"commitment_file"`
 	CommitmentScanIntervalSeconds int            `yaml:"commitment_scan_interval_seconds"`
 	Discord                       DiscordConfig  `yaml:"discord"`
+	QQBot                         QQBotConfig    `yaml:"qqbot"`
 	Slack                         SlackConfig    `yaml:"slack"`
 	Telegram                      TelegramConfig `yaml:"telegram"`
 }
@@ -115,6 +116,14 @@ type SlackConfig struct {
 	BotToken         string `yaml:"bot_token"`
 	APIBaseURL       string `yaml:"api_base_url"`
 	DefaultChannelID string `yaml:"default_channel_id"`
+}
+
+type QQBotConfig struct {
+	AppID         string `yaml:"app_id"`
+	ClientSecret  string `yaml:"client_secret"`
+	APIBaseURL    string `yaml:"api_base_url"`
+	TokenBaseURL  string `yaml:"token_base_url"`
+	DefaultTarget string `yaml:"default_target"`
 }
 
 type TelegramConfig struct {
@@ -292,6 +301,12 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if strings.TrimSpace(c.Social.Discord.APIBaseURL) == "" {
 		c.Social.Discord.APIBaseURL = "https://discord.com/api/v10"
+	}
+	if strings.TrimSpace(c.Social.QQBot.APIBaseURL) == "" {
+		c.Social.QQBot.APIBaseURL = "https://api.sgroup.qq.com"
+	}
+	if strings.TrimSpace(c.Social.QQBot.TokenBaseURL) == "" {
+		c.Social.QQBot.TokenBaseURL = "https://bots.qq.com"
 	}
 	if strings.TrimSpace(c.Social.Slack.APIBaseURL) == "" {
 		c.Social.Slack.APIBaseURL = "https://slack.com/api"

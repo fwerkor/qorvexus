@@ -27,6 +27,7 @@ import (
 	"qorvexus/internal/socialinsight"
 	"qorvexus/internal/socialplugin"
 	discordplugin "qorvexus/internal/socialplugin/discord"
+	qqbotplugin "qorvexus/internal/socialplugin/qqbot"
 	slackplugin "qorvexus/internal/socialplugin/slack"
 	telegramplugin "qorvexus/internal/socialplugin/telegram"
 	"qorvexus/internal/taskqueue"
@@ -139,6 +140,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
 	pluginManager := socialplugin.NewManager()
 	pluginManager.Register(discordplugin.New())
+	pluginManager.Register(qqbotplugin.New())
 	pluginManager.Register(slackplugin.New())
 	pluginManager.Register(telegramplugin.New())
 	app.socialJobs, err = pluginManager.Setup(cfg.Social, app.connectors, cfg.DataDir, func(runCtx context.Context, env social.Envelope) error {

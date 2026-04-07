@@ -35,7 +35,7 @@ Contact: `admin@fwerkor.com`
 - `tool` is first-class and model-visible, so the model decides when to act.
 - `skill` stays compatible with OpenClaw-style `SKILL.md` workflows.
 - `session`, `memory`, `scheduler`, and `taskqueue` are explicit subsystems instead of hidden prompt behavior.
-- `socialplugin` keeps channels like Telegram and Discord optional, so adding Slack later follows the same boundary.
+- `socialplugin` keeps channels like Telegram, QQ Bot, Discord, and Slack optional, so adding more platforms follows the same boundary.
 - `self` and `audit` make self-modification possible without making it invisible.
 
 ## Quick Start
@@ -126,6 +126,7 @@ Social channels are plugin-based, not core-runtime special cases.
 | Plugin | Status | Notes |
 | --- | --- | --- |
 | Telegram | Available | Polling-first plugin, webhook still supported as an advanced mode |
+| QQ Bot | Available | Outbound plugin baseline using the official QQ Bot AppID/AppSecret flow |
 | Discord | Available | Outbound bot messaging baseline through the Discord REST API |
 | Slack | Available | Outbound bot messaging baseline through `chat.postMessage` |
 
@@ -158,6 +159,28 @@ social:
 ```
 
 If a task sends a Discord message without an explicit channel target, Qorvexus will fall back to `social.discord.default_channel_id`.
+
+### QQ Bot
+
+QQ Bot ships as a plugin and uses the official `AppID + AppSecret` credential flow.
+
+```yaml
+social:
+  allowed_channels:
+    - qqbot
+  qqbot:
+    app_id: "your-app-id"
+    client_secret: "your-client-secret"
+    default_target: "qqbot:c2c:USER_OPENID"
+```
+
+Qorvexus accepts the same target shape OpenClaw documents:
+
+- `qqbot:c2c:OPENID` for private chat
+- `qqbot:group:GROUP_OPENID` for group chat
+- `qqbot:channel:CHANNEL_ID` for guild channel messages
+
+If a task sends a QQ Bot message without an explicit `thread_id` or `recipient`, Qorvexus will fall back to `social.qqbot.default_target`.
 
 ### Slack
 
