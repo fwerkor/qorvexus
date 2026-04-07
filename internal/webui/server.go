@@ -419,179 +419,725 @@ const dashboardHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Qorvexus Control Panel</title>
+  <title>Qorvexus Console</title>
   <style>
-    :root { color-scheme: light; --bg:#f5f1e8; --card:#fffdf7; --ink:#1e1d19; --muted:#6c6558; --line:#d9cfbf; --accent:#146356; --accent-soft:#d8efe8; --warn:#8a4b08; }
-    body { margin:0; font-family: Georgia, "Times New Roman", serif; background: radial-gradient(circle at top right, #efe7d7, var(--bg) 45%); color:var(--ink); }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
-    h1,h2 { margin: 0 0 12px; }
-    .hero { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:24px; }
-    .hero-card, .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:0 10px 30px rgba(60,40,10,.05); }
-    .hero-card { flex:1; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:18px; }
-    .stats { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
-    .chip { background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:6px 10px; font-size:13px; }
-    textarea, input { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#fff; font:inherit; }
-    textarea { min-height: 180px; resize: vertical; }
-    button { background:var(--accent); color:#fff; border:none; border-radius:12px; padding:10px 14px; font:inherit; cursor:pointer; }
-    button.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
-    .row { display:flex; gap:10px; }
-    .row > * { flex:1; }
-    pre { background:#f8f5ef; border:1px solid var(--line); border-radius:12px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
-    table { width:100%; border-collapse:collapse; font-size:14px; }
-    th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    :root {
+      color-scheme: light;
+      --bg:#f3efe7;
+      --bg-deep:#e6ddcf;
+      --panel:#fffdf8;
+      --panel-strong:#f8f2e7;
+      --ink:#182022;
+      --muted:#667178;
+      --line:#d7cec0;
+      --accent:#0b6e5e;
+      --accent-strong:#0a5348;
+      --accent-soft:#dff4ee;
+      --gold:#b57927;
+      --gold-soft:#f8ead3;
+      --danger:#9a3b2b;
+      --shadow:0 18px 48px rgba(34, 33, 29, .08);
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      font-family:"IBM Plex Sans","Avenir Next","Segoe UI",sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(11,110,94,.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(181,121,39,.12), transparent 24%),
+        linear-gradient(180deg, #f9f6f0 0%, var(--bg) 100%);
+    }
+    .shell { max-width: 1320px; margin: 0 auto; padding: 28px 20px 40px; }
+    .hero {
+      display:grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr);
+      gap:18px;
+      margin-bottom:18px;
+    }
+    .panel {
+      background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,253,248,.96));
+      border:1px solid rgba(215,206,192,.9);
+      border-radius:24px;
+      box-shadow:var(--shadow);
+    }
+    .hero-main {
+      padding:26px;
+      min-height:220px;
+      background:
+        linear-gradient(135deg, rgba(11,110,94,.08), rgba(255,255,255,.5) 45%, rgba(181,121,39,.10)),
+        linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,250,244,.96));
+    }
+    .eyebrow {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:7px 12px;
+      border-radius:999px;
+      background:var(--accent-soft);
+      color:var(--accent-strong);
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.06em;
+      text-transform:uppercase;
+    }
+    h1, h2, h3 {
+      font-family:"Iowan Old Style","Palatino Linotype","Book Antiqua",serif;
+      margin:0;
+      letter-spacing:-.02em;
+    }
+    h1 { font-size:clamp(2rem, 5vw, 3.4rem); margin-top:16px; }
+    h2 { font-size:1.45rem; margin-bottom:10px; }
+    h3 { font-size:1.05rem; margin-bottom:10px; }
+    p { margin:0; }
+    .lede {
+      margin-top:12px;
+      max-width:60ch;
+      color:var(--muted);
+      line-height:1.6;
+      font-size:1rem;
+    }
+    .chip-row, .metric-row, .button-row, .split-row, .mini-grid {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .chip {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border:1px solid rgba(11,110,94,.14);
+      border-radius:999px;
+      background:rgba(255,255,255,.75);
+      color:var(--ink);
+      font-size:13px;
+    }
+    .chip strong { color:var(--accent-strong); }
+    .hero-main .chip-row { margin-top:18px; }
+    .hero-side {
+      padding:22px;
+      display:flex;
+      flex-direction:column;
+      gap:14px;
+      background:
+        linear-gradient(180deg, rgba(255,253,248,.95), rgba(248,242,231,.98));
+    }
+    .status-card {
+      padding:16px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.7);
+    }
+    .metric {
+      flex:1 1 120px;
+      min-width:120px;
+      padding:14px 14px 12px;
+      border-radius:18px;
+      background:var(--panel-strong);
+      border:1px solid var(--line);
+    }
+    .metric-label {
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      color:var(--muted);
+      margin-bottom:8px;
+    }
+    .metric-value {
+      font-size:1.2rem;
+      font-weight:700;
+    }
+    .alert {
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid rgba(181,121,39,.28);
+      background:linear-gradient(180deg, rgba(248,234,211,.96), rgba(255,249,238,.98));
+    }
+    .alert strong {
+      display:block;
+      margin-bottom:6px;
+      color:#6a4510;
+    }
+    .alert p + p { margin-top:8px; }
+    .layout {
+      display:grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap:18px;
+      align-items:start;
+    }
+    .sidebar {
+      position:sticky;
+      top:18px;
+      padding:16px;
+    }
+    .nav {
+      display:grid;
+      gap:8px;
+      margin-top:6px;
+    }
+    .nav button {
+      text-align:left;
+      justify-content:flex-start;
+      width:100%;
+      padding:13px 14px;
+      border-radius:16px;
+      background:transparent;
+      color:var(--ink);
+      border:1px solid transparent;
+      font-weight:600;
+    }
+    .nav button.active {
+      background:var(--accent-soft);
+      color:var(--accent-strong);
+      border-color:rgba(11,110,94,.18);
+    }
+    .nav button.secondary {
+      background:transparent;
+      border-color:transparent;
+    }
+    .workspace {
+      display:grid;
+      gap:18px;
+    }
+    .tab-pane {
+      display:none;
+      gap:18px;
+    }
+    .tab-pane.active {
+      display:grid;
+    }
+    .overview-grid,
+    .ops-grid,
+    .data-grid,
+    .social-grid {
+      display:grid;
+      gap:18px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    .card {
+      padding:20px;
+    }
+    .card-head {
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:14px;
+    }
+    .card-head p {
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.55;
+    }
+    .mini-grid .metric {
+      background:rgba(255,255,255,.68);
+    }
+    label {
+      display:block;
+      margin-bottom:8px;
+      font-size:13px;
+      font-weight:700;
+      color:var(--muted);
+      letter-spacing:.03em;
+      text-transform:uppercase;
+    }
+    input, textarea {
+      width:100%;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.9);
+      color:var(--ink);
+      border-radius:16px;
+      padding:12px 14px;
+      font:inherit;
+      outline:none;
+      transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+    input:focus, textarea:focus {
+      border-color:rgba(11,110,94,.4);
+      box-shadow:0 0 0 4px rgba(11,110,94,.10);
+    }
+    textarea {
+      min-height:150px;
+      resize:vertical;
+      line-height:1.55;
+    }
+    .prompt-box {
+      min-height:220px;
+    }
+    button {
+      border:none;
+      border-radius:14px;
+      padding:12px 16px;
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+      transition:transform .16s ease, opacity .16s ease, background .16s ease;
+      background:var(--accent);
+      color:#fff;
+    }
+    button:hover { transform:translateY(-1px); }
+    button.secondary {
+      background:#fff;
+      color:var(--ink);
+      border:1px solid var(--line);
+    }
+    button.ghost {
+      background:transparent;
+      color:var(--accent-strong);
+      border:1px dashed rgba(11,110,94,.28);
+    }
+    .button-row { margin-top:14px; }
+    .split-row > * { flex:1 1 220px; }
+    .mono, pre, code {
+      font-family:"IBM Plex Mono","SFMono-Regular","Consolas",monospace;
+    }
+    pre {
+      margin:0;
+      border-radius:18px;
+      padding:16px;
+      border:1px solid #dfd7ca;
+      background:
+        linear-gradient(180deg, rgba(248,245,239,.96), rgba(245,240,231,.96));
+      overflow:auto;
+      white-space:pre-wrap;
+      word-break:break-word;
+      min-height:120px;
+      line-height:1.55;
+      font-size:13px;
+    }
+    .result {
+      min-height:180px;
+    }
+    .compact {
+      min-height:120px;
+      max-height:320px;
+    }
     .muted { color:var(--muted); }
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:14px;
+    }
+    th, td {
+      text-align:left;
+      padding:10px 8px;
+      border-bottom:1px solid #ece3d6;
+      vertical-align:top;
+    }
+    th {
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      color:var(--muted);
+    }
+    .stack { display:grid; gap:14px; }
+    .hidden { display:none; }
+    @media (max-width: 1080px) {
+      .hero, .layout { grid-template-columns: 1fr; }
+      .sidebar { position:static; }
+      .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: span 12; }
+    }
+    @media (max-width: 720px) {
+      .shell { padding:18px 14px 30px; }
+      .hero-main, .hero-side, .card, .sidebar { padding:16px; }
+      h1 { font-size:2.2rem; }
+      .nav { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .nav button { text-align:center; }
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div class="hero-card">
-        <h1>Qorvexus Control Panel</h1>
-        <p class="muted">Configure the agent, inspect status, run ad-hoc prompts, and monitor sessions, memory, and the background queue.</p>
-        <div class="stats">
-          <span class="chip">Default model: {{.DefaultModel}}</span>
-          <span class="chip">Scheduler: {{.SchedulerEnabled}}</span>
-          <span class="chip">Queue: {{.QueueEnabled}}</span>
-          <span class="chip">Memory: {{.MemoryEnabled}}</span>
-          <span class="chip">Self: {{.SelfEnabled}}</span>
-          <span class="chip">Social: {{.SocialEnabled}}</span>
+  <div class="shell">
+    <section class="hero">
+      <div class="panel hero-main">
+        <span class="eyebrow">Qorvexus Console</span>
+        <h1>Operate the agent without fighting the interface.</h1>
+        <p class="lede">The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.</p>
+        <div class="chip-row">
+          <span class="chip"><strong>Default model</strong> {{.DefaultModel}}</span>
+          <span class="chip"><strong>Memory</strong> {{.MemoryEnabled}}</span>
+          <span class="chip"><strong>Queue</strong> {{.QueueEnabled}}</span>
+          <span class="chip"><strong>Scheduler</strong> {{.SchedulerEnabled}}</span>
+          <span class="chip"><strong>Self</strong> {{.SelfEnabled}}</span>
+          <span class="chip"><strong>Social</strong> {{.SocialEnabled}}</span>
         </div>
       </div>
-      <div class="hero-card">
-        <h2>Runtime</h2>
-        <p class="muted">Started at {{.StartedAt}}</p>
-        <p class="muted">Listening on {{.WebAddress}}</p>
+      <div class="panel hero-side">
+        <div class="status-card">
+          <div class="metric-label">Runtime</div>
+          <div class="metric-value mono">{{.WebAddress}}</div>
+          <p class="muted" style="margin-top:8px;">Started at {{.StartedAt}}</p>
+        </div>
+        <div class="metric-row">
+          <div class="metric">
+            <div class="metric-label">Default Session</div>
+            <div class="metric-value mono" id="hero-session">{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingSessionID}}{{else}}ad-hoc{{end}}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Primary Focus</div>
+            <div class="metric-value" id="hero-focus">{{if .OwnerOnboardingRequired}}Onboarding{{else}}Operations{{end}}</div>
+          </div>
+        </div>
         {{if .OwnerOnboardingRequired}}
-        <p><strong>Owner onboarding required.</strong></p>
-        <p class="muted">Reply in session {{.OwnerOnboardingSessionID}}</p>
-        <pre>{{.OwnerOnboardingPrompt}}</pre>
+        <div class="alert">
+          <strong>Owner onboarding still needs a reply.</strong>
+          <p class="muted">Continue in session <span class="mono">{{.OwnerOnboardingSessionID}}</span>.</p>
+          <pre>{{.OwnerOnboardingPrompt}}</pre>
+        </div>
+        {{else}}
+        <div class="status-card">
+          <div class="metric-label">Status</div>
+          <p class="muted">Owner profile is already present, so new sessions can start with remembered identity, rules, and preferences.</p>
+        </div>
         {{end}}
       </div>
-    </div>
-    <div class="grid">
-      <section class="card">
-        <h2>Run Prompt</h2>
-        <div class="row">
-          <input id="run-model" placeholder="Model override (optional)">
-          <input id="run-session" placeholder="Session ID (optional)">
+    </section>
+
+    <section class="layout">
+      <aside class="panel sidebar">
+        <h3>Workspace</h3>
+        <p class="muted" style="margin-bottom:12px;">Keep one surface visible at a time.</p>
+        <div class="nav">
+          <button id="tab-button-overview" class="active" onclick="showTab('overview')">Overview</button>
+          <button id="tab-button-operations" onclick="showTab('operations')">Operations</button>
+          <button id="tab-button-memory" onclick="showTab('memory')">Memory</button>
+          <button id="tab-button-social" onclick="showTab('social')">Social</button>
+          <button id="tab-button-config" onclick="showTab('config')">Config</button>
         </div>
-        <p></p>
-        <textarea id="run-prompt" placeholder="Ask Qorvexus to do something..."></textarea>
-        <p></p>
-        <button onclick="runPrompt()">Run</button>
-        <pre id="run-output"></pre>
-      </section>
-      <section class="card">
-        <h2>Config</h2>
-        <textarea id="config-text"></textarea>
-        <p></p>
-        <div class="row">
-          <button onclick="saveConfig()">Save Config</button>
-          <button class="secondary" onclick="loadConfig()">Reload</button>
-        </div>
-      </section>
-      <section class="card">
-        <h2>Sessions</h2>
-        <button class="secondary" onclick="loadSessions()">Refresh Sessions</button>
-        <div id="sessions"></div>
-      </section>
-      <section class="card">
-        <h2>Queue</h2>
-        <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
-        <div id="queue"></div>
-        <p></p>
-        <div class="row">
-          <input id="queue-retry-id" placeholder="Queue task ID">
-          <button onclick="retryQueue()">Retry Task</button>
-        </div>
-      </section>
-      <section class="card">
-        <h2>Memory</h2>
-        <div class="row">
-          <input id="memory-query" placeholder="Search memory">
-          <button onclick="loadMemory()">Search</button>
-        </div>
-        <pre id="memory-output"></pre>
-      </section>
-      <section class="card">
-        <h2>Self Evolution</h2>
-        <div class="row">
-          <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
-          <button class="secondary" onclick="mineSelf()">Mine Ideas</button>
-        </div>
-        <pre id="self-output"></pre>
-        <div class="row">
-          <input id="self-id" placeholder="Backlog ID">
-          <input id="self-status" placeholder="New status">
-        </div>
-        <p></p>
-        <button onclick="updateSelfStatus()">Update Self Status</button>
-        <pre id="self-mine-output"></pre>
-        <div class="row">
-          <input id="capture-title" placeholder="Captured idea title">
-          <input id="capture-kind" placeholder="Kind">
-        </div>
-        <p></p>
-        <textarea id="capture-description" placeholder="Captured idea description"></textarea>
-        <p></p>
-        <div class="row">
-          <input id="capture-model" placeholder="Model for promotion (optional)">
-          <button onclick="captureSelf(false)">Capture Idea</button>
-        </div>
-        <p></p>
-        <button onclick="captureSelf(true)">Capture And Promote</button>
-      </section>
-      <section class="card">
-        <h2>Social Inbox</h2>
-        <div class="row">
-          <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
-          <button class="secondary" onclick="loadConnectors()">Refresh Connectors</button>
-        </div>
-        <pre id="social-connectors-output"></pre>
-        <pre id="social-output"></pre>
-        <div class="row">
-          <input id="social-channel" placeholder="Channel">
-          <input id="social-thread" placeholder="Thread ID">
-        </div>
-        <p></p>
-        <div class="row">
-          <input id="social-sender-id" placeholder="Sender ID">
-          <input id="social-sender-name" placeholder="Sender name">
-        </div>
-        <p></p>
-        <textarea id="social-text" placeholder="Simulate an inbound social message"></textarea>
-        <p></p>
-        <button onclick="simulateSocial()">Simulate Inbound Social</button>
-      </section>
-      <section class="card">
-        <h2>Commitments</h2>
-        <div class="row">
-          <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
-          <button class="secondary" onclick="loadCommitmentSummary()">Refresh Summary</button>
-        </div>
-        <p></p>
-        <button onclick="scanCommitments()">Run Commitment Scan</button>
-        <pre id="commitments-summary-output"></pre>
-        <pre id="commitments-output"></pre>
-        <div class="row">
-          <input id="commitment-id" placeholder="Commitment ID">
-          <input id="commitment-status" placeholder="New status">
-        </div>
-        <p></p>
-        <button onclick="updateCommitmentStatus()">Update Commitment</button>
-      </section>
-      <section class="card">
-        <h2>Audit Log</h2>
-        <button class="secondary" onclick="loadAudit()">Refresh Audit</button>
-        <pre id="audit-output"></pre>
-      </section>
-      <section class="card">
-        <h2>Status</h2>
-        <button class="secondary" onclick="loadStatus()">Refresh Status</button>
-        <pre id="status-output"></pre>
-      </section>
-    </div>
+      </aside>
+
+      <main class="workspace">
+        <section id="tab-overview" class="tab-pane active">
+          <div class="overview-grid">
+            <article class="panel card span-7">
+              <div class="card-head">
+                <div>
+                  <h2>Quick Run</h2>
+                  <p>Run a prompt immediately without hunting through the rest of the dashboard.</p>
+                </div>
+              </div>
+              <div class="split-row">
+                <div>
+                  <label for="run-model">Model Override</label>
+                  <input id="run-model" placeholder="Optional">
+                </div>
+                <div>
+                  <label for="run-session">Session ID</label>
+                  <input id="run-session" placeholder="Optional">
+                </div>
+              </div>
+              <div style="margin-top:14px;">
+                <label for="run-prompt">Prompt</label>
+                <textarea id="run-prompt" class="prompt-box" placeholder="Ask Qorvexus to do something concrete..."></textarea>
+              </div>
+              <div class="button-row">
+                <button onclick="runPrompt()">Run Prompt</button>
+                <button class="secondary" onclick="prefillOnboarding()">Use Onboarding Session</button>
+                <button class="ghost" onclick="showTab('memory')">Search Memory Instead</button>
+              </div>
+            </article>
+
+            <article class="panel card span-5">
+              <div class="card-head">
+                <div>
+                  <h2>Immediate Context</h2>
+                  <p>What the runtime thinks is important right now.</p>
+                </div>
+              </div>
+              <div class="mini-grid">
+                <div class="metric">
+                  <div class="metric-label">Current Tab</div>
+                  <div class="metric-value" id="current-tab-label">Overview</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">Web Address</div>
+                  <div class="metric-value mono">{{.WebAddress}}</div>
+                </div>
+              </div>
+              <div style="margin-top:14px;">
+                <label>Run Output</label>
+                <pre id="run-output" class="result">{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingPrompt}}{{else}}Ready. Run a prompt or open another workspace tab.{{end}}</pre>
+              </div>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2>System Snapshot</h2>
+                  <p>High-signal runtime state without dropping you straight into raw JSON.</p>
+                </div>
+                <div class="button-row" style="margin-top:0;">
+                  <button class="secondary" onclick="loadStatus()">Refresh Status</button>
+                  <button class="secondary" onclick="loadSessions()">Refresh Sessions</button>
+                  <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
+                </div>
+              </div>
+              <div class="overview-grid">
+                <div class="span-4 stack">
+                  <div>
+                    <label>Sessions</label>
+                    <div id="sessions"></div>
+                  </div>
+                </div>
+                <div class="span-4 stack">
+                  <div>
+                    <label>Queue</label>
+                    <div id="queue"></div>
+                  </div>
+                </div>
+                <div class="span-4 stack">
+                  <div>
+                    <label>Raw Status</label>
+                    <pre id="status-output" class="compact"></pre>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="tab-operations" class="tab-pane">
+          <div class="ops-grid">
+            <article class="panel card span-6">
+              <div class="card-head">
+                <div>
+                  <h2>Queue Recovery</h2>
+                  <p>Retry a failed task without digging through raw queue output first.</p>
+                </div>
+              </div>
+              <label for="queue-retry-id">Queue Task ID</label>
+              <input id="queue-retry-id" placeholder="task-...">
+              <div class="button-row">
+                <button onclick="retryQueue()">Retry Task</button>
+                <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
+              </div>
+              <pre id="queue-action-output" class="compact">Retry results will appear here.</pre>
+            </article>
+
+            <article class="panel card span-6">
+              <div class="card-head">
+                <div>
+                  <h2>Commitments</h2>
+                  <p>Review due work, run a scan, and update commitment status from one place.</p>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
+                <button class="secondary" onclick="loadCommitmentSummary()">Refresh Summary</button>
+                <button onclick="scanCommitments()">Run Scan</button>
+              </div>
+              <div style="margin-top:14px;" class="split-row">
+                <div>
+                  <label for="commitment-id">Commitment ID</label>
+                  <input id="commitment-id" placeholder="commitment-...">
+                </div>
+                <div>
+                  <label for="commitment-status">New Status</label>
+                  <input id="commitment-status" placeholder="open / done / blocked">
+                </div>
+              </div>
+              <div class="button-row">
+                <button onclick="updateCommitmentStatus()">Update Commitment</button>
+              </div>
+            </article>
+
+            <article class="panel card span-6">
+              <label>Commitment Summary</label>
+              <pre id="commitments-summary-output" class="compact"></pre>
+            </article>
+
+            <article class="panel card span-6">
+              <label>Commitment Feed</label>
+              <pre id="commitments-output" class="compact"></pre>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2>Audit Trail</h2>
+                  <p>See the effects of retries, scans, and status updates without mixing them into every other card.</p>
+                </div>
+                <button class="secondary" onclick="loadAudit()">Refresh Audit</button>
+              </div>
+              <pre id="audit-output" class="compact"></pre>
+            </article>
+          </div>
+        </section>
+
+        <section id="tab-memory" class="tab-pane">
+          <div class="data-grid">
+            <article class="panel card span-5">
+              <div class="card-head">
+                <div>
+                  <h2>Memory Explorer</h2>
+                  <p>Search long-term memory directly instead of scrolling through unrelated widgets.</p>
+                </div>
+              </div>
+              <label for="memory-query">Search Query</label>
+              <input id="memory-query" placeholder="owner, timezone, project, preferences...">
+              <div class="button-row">
+                <button onclick="loadMemory()">Search Memory</button>
+                <button class="secondary" onclick="document.getElementById('memory-query').value='owner'; loadMemory();">Owner Profile</button>
+                <button class="secondary" onclick="document.getElementById('memory-query').value='project'; loadMemory();">Projects</button>
+              </div>
+              <pre id="memory-output" class="result">Run a memory search to inspect what the agent remembers.</pre>
+            </article>
+
+            <article class="panel card span-7">
+              <div class="card-head">
+                <div>
+                  <h2>Self Evolution</h2>
+                  <p>Keep backlog review and new idea capture together, without crowding the main workflow.</p>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
+                <button class="secondary" onclick="mineSelf()">Mine Ideas</button>
+              </div>
+              <div class="split-row" style="margin-top:14px;">
+                <div>
+                  <label>Backlog</label>
+                  <pre id="self-output" class="compact"></pre>
+                </div>
+                <div>
+                  <label>Mined Ideas</label>
+                  <pre id="self-mine-output" class="compact"></pre>
+                </div>
+              </div>
+              <div class="split-row" style="margin-top:14px;">
+                <div>
+                  <label for="self-id">Backlog ID</label>
+                  <input id="self-id" placeholder="backlog item id">
+                </div>
+                <div>
+                  <label for="self-status">New Status</label>
+                  <input id="self-status" placeholder="planned / active / done">
+                </div>
+              </div>
+              <div class="button-row">
+                <button onclick="updateSelfStatus()">Update Self Status</button>
+              </div>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2>Capture Improvement</h2>
+                  <p>Turn a good idea into backlog state, and optionally promote it into queued execution.</p>
+                </div>
+              </div>
+              <div class="split-row">
+                <div>
+                  <label for="capture-title">Title</label>
+                  <input id="capture-title" placeholder="Captured idea title">
+                </div>
+                <div>
+                  <label for="capture-kind">Kind</label>
+                  <input id="capture-kind" placeholder="reliability / automation / safety">
+                </div>
+                <div>
+                  <label for="capture-model">Promotion Model</label>
+                  <input id="capture-model" placeholder="optional">
+                </div>
+              </div>
+              <div style="margin-top:14px;">
+                <label for="capture-description">Description</label>
+                <textarea id="capture-description" placeholder="Describe the improvement you want Qorvexus to remember or work on."></textarea>
+              </div>
+              <div class="button-row">
+                <button onclick="captureSelf(false)">Capture Idea</button>
+                <button class="secondary" onclick="captureSelf(true)">Capture And Promote</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="tab-social" class="tab-pane">
+          <div class="social-grid">
+            <article class="panel card span-5">
+              <div class="card-head">
+                <div>
+                  <h2>Connectors</h2>
+                  <p>Quick visibility into available social channels.</p>
+                </div>
+                <button class="secondary" onclick="loadConnectors()">Refresh Connectors</button>
+              </div>
+              <pre id="social-connectors-output" class="compact"></pre>
+            </article>
+
+            <article class="panel card span-7">
+              <div class="card-head">
+                <div>
+                  <h2>Recent Social Activity</h2>
+                  <p>Inspect inbound and outbound history without mixing it with config or memory tools.</p>
+                </div>
+                <button class="secondary" onclick="loadSocial()">Refresh Social Log</button>
+              </div>
+              <pre id="social-output" class="compact"></pre>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2>Simulate Inbound Message</h2>
+                  <p>Test a connector flow from one compact form.</p>
+                </div>
+              </div>
+              <div class="split-row">
+                <div>
+                  <label for="social-channel">Channel</label>
+                  <input id="social-channel" placeholder="telegram">
+                </div>
+                <div>
+                  <label for="social-thread">Thread ID</label>
+                  <input id="social-thread" placeholder="chat-1">
+                </div>
+                <div>
+                  <label for="social-sender-id">Sender ID</label>
+                  <input id="social-sender-id" placeholder="user-1">
+                </div>
+                <div>
+                  <label for="social-sender-name">Sender Name</label>
+                  <input id="social-sender-name" placeholder="Alice">
+                </div>
+              </div>
+              <div style="margin-top:14px;">
+                <label for="social-text">Inbound Text</label>
+                <textarea id="social-text" placeholder="Paste the incoming message here."></textarea>
+              </div>
+              <div class="button-row">
+                <button onclick="simulateSocial()">Simulate Inbound Social</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="tab-config" class="tab-pane">
+          <div class="data-grid">
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2>Runtime Config</h2>
+                  <p>Raw configuration is available, but it now lives in its own dedicated workspace instead of crowding the main flow.</p>
+                </div>
+                <div class="button-row" style="margin-top:0;">
+                  <button class="secondary" onclick="loadConfig()">Reload</button>
+                  <button onclick="saveConfig()">Save Config</button>
+                </div>
+              </div>
+              <textarea id="config-text" style="min-height:520px;"></textarea>
+            </article>
+          </div>
+        </section>
+      </main>
+    </section>
   </div>
   <script>
     async function api(path, options) {
@@ -600,66 +1146,134 @@ const dashboardHTML = `<!doctype html>
       const type = res.headers.get("content-type") || "";
       return type.includes("application/json") ? res.json() : res.text();
     }
+
+    function setText(id, value) {
+      const node = document.getElementById(id);
+      if (!node) return;
+      node.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }
+
+    function renderTable(rows, cols) {
+      if (!rows || !rows.length) return "<p class='muted'>No data yet.</p>";
+      let html = "<table><thead><tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
+      for (const row of rows) {
+        html += "<tr>" + cols.map(c => "<td>" + escapeHTML(row[c] ?? "") + "</td>").join("") + "</tr>";
+      }
+      html += "</tbody></table>";
+      return html;
+    }
+
+    function escapeHTML(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function showTab(name) {
+      for (const pane of document.querySelectorAll(".tab-pane")) {
+        pane.classList.toggle("active", pane.id === "tab-" + name);
+      }
+      for (const button of document.querySelectorAll(".nav button")) {
+        button.classList.toggle("active", button.id === "tab-button-" + name);
+      }
+      const label = name.charAt(0).toUpperCase() + name.slice(1);
+      setText("current-tab-label", label);
+    }
+
+    function prefillOnboarding() {
+      loadStatus().then(() => showTab("overview"));
+    }
+
     async function loadConfig() {
       const data = await api("/api/config");
       document.getElementById("config-text").value = data.config;
     }
+
     async function saveConfig() {
-      await api("/api/config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({config:document.getElementById("config-text").value})});
+      await api("/api/config", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({config:document.getElementById("config-text").value})
+      });
       alert("Config saved.");
     }
+
     async function loadStatus() {
       const data = await api("/api/status");
-      document.getElementById("status-output").textContent = JSON.stringify(data, null, 2);
+      setText("status-output", data);
       if (data.owner_onboarding_required) {
         if (!document.getElementById("run-session").value) {
           document.getElementById("run-session").value = data.owner_onboarding_session_id || "";
         }
         if (data.owner_onboarding_prompt) {
-          document.getElementById("run-output").textContent = data.owner_onboarding_prompt;
+          setText("run-output", data.owner_onboarding_prompt);
+          setText("hero-session", data.owner_onboarding_session_id || "owner-onboarding");
+          setText("hero-focus", "Onboarding");
         }
+      } else {
+        setText("hero-focus", "Operations");
       }
+      return data;
     }
+
     async function runPrompt() {
       const payload = {
         prompt: document.getElementById("run-prompt").value,
         model: document.getElementById("run-model").value,
         session_id: document.getElementById("run-session").value,
       };
-      const data = await api("/api/run", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("run-output").textContent = data.output;
+      const data = await api("/api/run", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("run-output", data.output);
+      loadSessions();
+      loadAudit();
     }
+
     async function loadSessions() {
       const data = await api("/api/sessions");
       document.getElementById("sessions").innerHTML = renderTable(data, ["id","model","updated_at"]);
     }
+
     async function loadQueue() {
       const data = await api("/api/queue");
       document.getElementById("queue").innerHTML = renderTable(data, ["id","status","name","created_at"]);
     }
+
     async function loadMemory() {
       const q = encodeURIComponent(document.getElementById("memory-query").value);
       const data = await api("/api/memory?q=" + q);
-      document.getElementById("memory-output").textContent = JSON.stringify(data, null, 2);
+      setText("memory-output", data);
     }
+
     async function loadSelf() {
       const data = await api("/api/self");
-      document.getElementById("self-output").textContent = JSON.stringify(data, null, 2);
+      setText("self-output", data);
     }
+
     async function mineSelf() {
       const data = await api("/api/self/mine");
-      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+      setText("self-mine-output", data);
     }
+
     async function updateSelfStatus() {
       const payload = {
         id: document.getElementById("self-id").value,
         status: document.getElementById("self-status").value,
       };
-      const data = await api("/api/self/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+      const data = await api("/api/self/status", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("self-mine-output", data);
       loadSelf();
       loadAudit();
     }
+
     async function captureSelf(promote) {
       const payload = {
         title: document.getElementById("capture-title").value,
@@ -668,36 +1282,46 @@ const dashboardHTML = `<!doctype html>
         promote,
         model: document.getElementById("capture-model").value,
       };
-      const data = await api("/api/self/capture", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+      const data = await api("/api/self/capture", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("self-mine-output", data);
       loadSelf();
       loadQueue();
       loadAudit();
     }
+
     async function loadSocial() {
       const data = await api("/api/social/recent");
-      document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
+      setText("social-output", data);
     }
+
     async function loadConnectors() {
       const data = await api("/api/social/connectors");
-      document.getElementById("social-connectors-output").textContent = JSON.stringify(data, null, 2);
+      setText("social-connectors-output", data);
     }
+
     async function loadCommitments() {
       const data = await api("/api/commitments");
-      document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
+      setText("commitments-output", data);
     }
+
     async function loadCommitmentSummary() {
       const data = await api("/api/commitments/summary");
-      document.getElementById("commitments-summary-output").textContent = JSON.stringify(data, null, 2);
+      setText("commitments-summary-output", data);
     }
+
     async function scanCommitments() {
       const data = await api("/api/commitments/scan", {method:"POST"});
-      document.getElementById("commitments-summary-output").textContent = JSON.stringify(data, null, 2);
+      setText("commitments-summary-output", data);
       loadCommitments();
       loadCommitmentSummary();
       loadQueue();
       loadAudit();
     }
+
     async function simulateSocial() {
       const payload = {
         channel: document.getElementById("social-channel").value,
@@ -706,46 +1330,63 @@ const dashboardHTML = `<!doctype html>
         sender_name: document.getElementById("social-sender-name").value,
         text: document.getElementById("social-text").value
       };
-      const data = await api("/api/social/inbound", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
+      const data = await api("/api/social/inbound", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("social-output", data);
       loadSocial();
       loadCommitments();
       loadCommitmentSummary();
       loadQueue();
       loadAudit();
     }
+
     async function updateCommitmentStatus() {
       const payload = {
         id: document.getElementById("commitment-id").value,
         status: document.getElementById("commitment-status").value,
       };
-      const data = await api("/api/commitments/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
+      const data = await api("/api/commitments/status", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("commitments-output", data);
       loadCommitments();
       loadCommitmentSummary();
       loadAudit();
     }
+
     async function loadAudit() {
       const data = await api("/api/audit");
-      document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
+      setText("audit-output", data);
     }
+
     async function retryQueue() {
       const payload = { id: document.getElementById("queue-retry-id").value };
-      const data = await api("/api/queue/retry", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
-      document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
+      const data = await api("/api/queue/retry", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("queue-action-output", data);
+      setText("audit-output", data);
       loadQueue();
       loadAudit();
     }
-    function renderTable(rows, cols) {
-      if (!rows.length) return "<p class='muted'>No data yet.</p>";
-      let html = "<table><thead><tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
-      for (const row of rows) {
-        html += "<tr>" + cols.map(c => "<td>" + (row[c] ?? "") + "</td>").join("") + "</tr>";
-      }
-      html += "</tbody></table>";
-      return html;
-    }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadCommitments(); loadCommitmentSummary(); loadAudit();
+
+    loadConfig();
+    loadStatus();
+    loadSessions();
+    loadQueue();
+    loadSelf();
+    loadSocial();
+    loadConnectors();
+    loadCommitments();
+    loadCommitmentSummary();
+    loadAudit();
   </script>
 </body>
 </html>`
