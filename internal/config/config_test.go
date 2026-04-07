@@ -76,6 +76,18 @@ agent:
 	if cfg.Tools.PlaywrightHeadless == nil || !*cfg.Tools.PlaywrightHeadless {
 		t.Fatalf("expected default playwright headless true, got %#v", cfg.Tools.PlaywrightHeadless)
 	}
+	if cfg.Memory.SemanticSearch == nil || !*cfg.Memory.SemanticSearch {
+		t.Fatal("expected semantic memory search enabled by default")
+	}
+	if cfg.Memory.CompactionThreshold != 6 {
+		t.Fatalf("expected default memory compaction threshold 6, got %d", cfg.Memory.CompactionThreshold)
+	}
+	if cfg.Memory.CompactionRetain != 3 {
+		t.Fatalf("expected default memory compaction retain 3, got %d", cfg.Memory.CompactionRetain)
+	}
+	if cfg.Memory.MaxSummarySources != 6 {
+		t.Fatalf("expected default memory summary sources 6, got %d", cfg.Memory.MaxSummarySources)
+	}
 }
 
 func TestLoadAppliesTelegramDefaultsWhenSocialEnabled(t *testing.T) {
@@ -151,5 +163,19 @@ agent:
 	_, err := ParseRaw("/tmp/config.yaml", raw)
 	if err == nil {
 		t.Fatal("expected validation error for missing default model")
+	}
+}
+
+func TestParseRawRejectsUnknownMemoryEmbeddingModel(t *testing.T) {
+	raw := []byte(`
+models:
+  primary:
+    provider: openai-compatible
+memory:
+  embedding_model: missing
+`)
+	_, err := ParseRaw("/tmp/config.yaml", raw)
+	if err == nil {
+		t.Fatal("expected validation error for missing memory embedding model")
 	}
 }

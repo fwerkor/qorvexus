@@ -20,8 +20,23 @@ type CompletionResponse struct {
 	Usage   map[string]int
 }
 
+type EmbeddingRequest struct {
+	Model  string
+	Inputs []string
+}
+
+type EmbeddingResponse struct {
+	Model   string
+	Vectors [][]float64
+	Usage   map[string]int
+}
+
 type Client interface {
 	Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error)
+}
+
+type EmbeddingClient interface {
+	Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error)
 }
 
 type Registry struct {
@@ -47,4 +62,23 @@ func (r *Registry) Get(name string) (Client, config.ModelConfig, bool) {
 		return nil, config.ModelConfig{}, false
 	}
 	return client, r.configs[name], true
+}
+
+func (r *Registry) Embed(ctx context.Context, name string, inputs []string) (*EmbeddingResponse, bool, error) {
+	client, cfg, ok := r.Get(name)
+	if !ok {
+		return nil, false, nil
+	}
+	embedder, ok := client.(EmbeddingClient)
+	if !ok {
+		return nil, false, nil
+	}
+	resp, err := embedder.Embed(ctx, EmbeddingRequest{
+		Model:  cfg.Model,
+		Inputs: inputs,
+	})
+	if resp != nil && resp.Model == "" {
+		resp.Model = cfg.Model
+	}
+	return resp, true, err
 }

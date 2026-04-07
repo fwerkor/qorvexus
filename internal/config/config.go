@@ -87,8 +87,14 @@ type SchedulerConfig struct {
 }
 
 type MemoryConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	File    string `yaml:"file"`
+	Enabled             bool   `yaml:"enabled"`
+	File                string `yaml:"file"`
+	EmbeddingModel      string `yaml:"embedding_model"`
+	SummaryModel        string `yaml:"summary_model"`
+	SemanticSearch      *bool  `yaml:"semantic_search"`
+	CompactionThreshold int    `yaml:"compaction_threshold"`
+	CompactionRetain    int    `yaml:"compaction_retain"`
+	MaxSummarySources   int    `yaml:"max_summary_sources"`
 }
 
 type QueueConfig struct {
@@ -325,6 +331,18 @@ func (c *Config) setDefaults(path string) error {
 	if c.Memory.File == "" {
 		c.Memory.File = filepath.Join(c.DataDir, "memory.jsonl")
 	}
+	if c.Memory.SemanticSearch == nil {
+		c.Memory.SemanticSearch = boolPtr(true)
+	}
+	if c.Memory.CompactionThreshold <= 0 {
+		c.Memory.CompactionThreshold = 6
+	}
+	if c.Memory.CompactionRetain <= 0 {
+		c.Memory.CompactionRetain = 3
+	}
+	if c.Memory.MaxSummarySources <= 0 {
+		c.Memory.MaxSummarySources = 6
+	}
 	if c.Queue.File == "" {
 		c.Queue.File = filepath.Join(c.DataDir, "queue.json")
 	}
@@ -394,6 +412,16 @@ func (c *Config) setDefaults(path string) error {
 	if c.Agent.VisionFallbackModel != "" {
 		if _, ok := c.Models[c.Agent.VisionFallbackModel]; !ok {
 			return fmt.Errorf("vision fallback model %q not found", c.Agent.VisionFallbackModel)
+		}
+	}
+	if c.Memory.EmbeddingModel != "" {
+		if _, ok := c.Models[c.Memory.EmbeddingModel]; !ok {
+			return fmt.Errorf("memory embedding model %q not found", c.Memory.EmbeddingModel)
+		}
+	}
+	if c.Memory.SummaryModel != "" {
+		if _, ok := c.Models[c.Memory.SummaryModel]; !ok {
+			return fmt.Errorf("memory summary model %q not found", c.Memory.SummaryModel)
 		}
 	}
 	if c.Agent.Discussion.SynthesisModel != "" {

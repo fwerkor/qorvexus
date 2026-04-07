@@ -15,11 +15,14 @@ type Recorder struct {
 }
 
 type Record struct {
-	Timestamp time.Time           `json:"timestamp"`
-	Model     string              `json:"model"`
-	Request   CompletionRequest   `json:"request"`
-	Response  *CompletionResponse `json:"response,omitempty"`
-	Error     string              `json:"error,omitempty"`
+	Timestamp         time.Time           `json:"timestamp"`
+	Model             string              `json:"model"`
+	RequestType       string              `json:"request_type,omitempty"`
+	Request           CompletionRequest   `json:"request,omitempty"`
+	Response          *CompletionResponse `json:"response,omitempty"`
+	EmbeddingRequest  *EmbeddingRequest   `json:"embedding_request,omitempty"`
+	EmbeddingResponse *EmbeddingResponse  `json:"embedding_response,omitempty"`
+	Error             string              `json:"error,omitempty"`
 }
 
 func NewRecorder(path string) *Recorder {
@@ -41,10 +44,31 @@ type recordingClient struct {
 func (c *recordingClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	resp, err := c.inner.Complete(ctx, req)
 	record := Record{
-		Timestamp: time.Now().UTC(),
-		Model:     req.Model,
-		Request:   req,
-		Response:  resp,
+		Timestamp:   time.Now().UTC(),
+		Model:       req.Model,
+		RequestType: "completion",
+		Request:     req,
+		Response:    resp,
+	}
+	if err != nil {
+		record.Error = err.Error()
+	}
+	_ = c.recorder.Append(record)
+	return resp, err
+}
+
+func (c *recordingClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
+	embedder, ok := c.inner.(EmbeddingClient)
+	if !ok {
+		return nil, nil
+	}
+	resp, err := embedder.Embed(ctx, req)
+	record := Record{
+		Timestamp:         time.Now().UTC(),
+		Model:             req.Model,
+		RequestType:       "embedding",
+		EmbeddingRequest:  &req,
+		EmbeddingResponse: resp,
 	}
 	if err != nil {
 		record.Error = err.Error()

@@ -99,11 +99,20 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	policyEngine := policy.NewEngine(cfg.Tools)
 	playwrightManager := tool.NewPlaywrightManager(cfg.Tools)
 	app := &appRuntime{
-		cfg:         cfg,
-		configPath:  configPath,
-		discussion:  discussion,
-		sessions:    store,
-		memory:      memory.NewStore(cfg.Memory.File),
+		cfg:        cfg,
+		configPath: configPath,
+		discussion: discussion,
+		sessions:   store,
+		memory: memory.NewStoreWithOptions(memory.Options{
+			Path:                cfg.Memory.File,
+			Models:              registry,
+			EmbeddingModel:      cfg.Memory.EmbeddingModel,
+			SummaryModel:        cfg.Memory.SummaryModel,
+			SemanticSearch:      cfg.Memory.SemanticSearch == nil || *cfg.Memory.SemanticSearch,
+			CompactionThreshold: cfg.Memory.CompactionThreshold,
+			CompactionRetain:    cfg.Memory.CompactionRetain,
+			MaxSummarySources:   cfg.Memory.MaxSummarySources,
+		}),
 		plans:       plan.NewStore(filepath.Join(cfg.DataDir, "plans.json")),
 		playwright:  playwrightManager,
 		startedAt:   time.Now().UTC(),
@@ -1373,8 +1382,8 @@ func (a *appRuntime) ownerProfileEntries(limit int) []memory.Entry {
 		return nil
 	}
 	items, err := a.memory.SearchWithOptions(memory.SearchOptions{
-		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
-		Limit: limit,
+		Layers: []string{"owner"},
+		Limit:  limit,
 	})
 	if err != nil {
 		return nil
@@ -1432,6 +1441,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 	for _, note := range result.Memories {
 		if a.cfg.Memory.Enabled {
 			if err := a.memory.Append(memory.Entry{
+				Layer:      "people",
 				Area:       "contacts",
 				Kind:       "contact_note",
 				Subject:    env.SenderID,

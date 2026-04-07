@@ -462,11 +462,12 @@ func NewRememberTool(rt Runtime) *RememberTool { return &RememberTool{rt: rt} }
 func (t *RememberTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "remember",
-		Description: "Store a durable memory for later retrieval.",
+		Description: "Store a durable memory for later semantic retrieval and layered recall.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"key":     map[string]any{"type": "string"},
+				"layer":   map[string]any{"type": "string"},
 				"area":    map[string]any{"type": "string"},
 				"kind":    map[string]any{"type": "string"},
 				"subject": map[string]any{"type": "string"},
@@ -492,6 +493,7 @@ func (t *RememberTool) Definition() types.ToolDefinition {
 func (t *RememberTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
 	var input struct {
 		Key        string   `json:"key"`
+		Layer      string   `json:"layer"`
 		Area       string   `json:"area"`
 		Kind       string   `json:"kind"`
 		Subject    string   `json:"subject"`
@@ -507,6 +509,7 @@ func (t *RememberTool) Invoke(ctx context.Context, raw json.RawMessage) (string,
 	}
 	return t.rt.Remember(ctx, memory.Entry{
 		Key:        input.Key,
+		Layer:      input.Layer,
 		Area:       input.Area,
 		Kind:       input.Kind,
 		Subject:    input.Subject,
@@ -528,7 +531,7 @@ func NewRecallTool(rt Runtime) *RecallTool { return &RecallTool{rt: rt} }
 func (t *RecallTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "recall",
-		Description: "Search durable memory for facts, preferences, and prior work.",
+		Description: "Search durable memory semantically for facts, preferences, people, projects, and prior workflow.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

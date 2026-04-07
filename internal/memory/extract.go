@@ -17,6 +17,8 @@ var (
 	reHelpWith        = regexp.MustCompile(`(?i)\b(?:help me with|i want this bot to help with|this bot should help with)\s+(.{4,160})`)
 	rePreferenceLead  = regexp.MustCompile(`(?i)\b(?:i prefer|please|always|never|do not|don't|avoid|use)\b`)
 	reQuotedStatement = regexp.MustCompile(`["“](.+?)["”]`)
+	reProjectName     = regexp.MustCompile(`(?i)\b(?:project|repo|repository|feature|milestone|initiative)\s+([A-Za-z0-9._/\-]{2,80})`)
+	reWorkingOn       = regexp.MustCompile(`(?i)\b(?:working on|building|shipping|fixing|implementing)\s+([A-Za-z0-9 _./#:\-]{3,90})`)
 )
 
 func ExtractStructuredMemories(sessionID string, userText string, assistantText string, ctx types.ConversationContext) []Entry {
@@ -31,6 +33,7 @@ func ExtractStructuredMemories(sessionID string, userText string, assistantText 
 		if strings.EqualFold(sessionID, "owner-onboarding") {
 			out = append(out, Entry{
 				Key:        stableKey("owner", "onboarding", HashKey(userText)),
+				Layer:      "owner",
 				Area:       "owner_profile",
 				Kind:       "onboarding_note",
 				Subject:    "owner",
@@ -43,6 +46,9 @@ func ExtractStructuredMemories(sessionID string, userText string, assistantText 
 			})
 		}
 	}
+	out = append(out, extractPeopleMemories(userText, assistantText, ctx)...)
+	out = append(out, extractProjectMemories(sessionID, userText, assistantText, ctx)...)
+	out = append(out, extractWorkflowMemories(sessionID, userText, assistantText, ctx)...)
 	return dedupeEntries(out)
 }
 
@@ -68,6 +74,7 @@ func extractOwnerMemories(text string) []Entry {
 	for _, pref := range extractPreferenceStatements(text) {
 		out = append(out, Entry{
 			Key:        stableKey("owner", "preference", HashKey(pref)),
+			Layer:      "owner",
 			Area:       "owner_preferences",
 			Kind:       "preference",
 			Subject:    "owner",
@@ -82,6 +89,7 @@ func extractOwnerMemories(text string) []Entry {
 	for _, rule := range extractRuleStatements(text) {
 		out = append(out, Entry{
 			Key:        stableKey("owner", "rule", HashKey(rule)),
+			Layer:      "owner",
 			Area:       "owner_rules",
 			Kind:       "rule",
 			Subject:    "owner",
@@ -100,6 +108,7 @@ func ownerEntry(kind string, slot string, value string, content string, importan
 	value = cleanSentence(value)
 	return Entry{
 		Key:        stableKey("owner", kind, slot),
+		Layer:      "owner",
 		Area:       "owner_profile",
 		Kind:       kind,
 		Subject:    "owner",
@@ -110,6 +119,96 @@ func ownerEntry(kind string, slot string, value string, content string, importan
 		Importance: importance,
 		Confidence: confidence,
 	}
+}
+
+func extractPeopleMemories(userText string, assistantText string, ctx types.ConversationContext) []Entry {
+	if ctx.IsOwner {
+		return nil
+	}
+	if ctx.Trust != types.TrustExternal && ctx.Trust != types.TrustTrusted {
+		return nil
+	}
+	subject := strings.TrimSpace(ctx.SenderName)
+	if subject == "" {
+		subject = strings.TrimSpace(ctx.SenderID)
+	}
+	if subject == "" {
+		return nil
+	}
+	content := fmt.Sprintf("Interaction with %s. Latest inbound: %s", subject, compact(userText, 220))
+	if strings.TrimSpace(assistantText) != "" {
+		content += ". Latest reply: " + compact(assistantText, 180)
+	}
+	return []Entry{{
+		Key:        stableKey("person", HashKey(subject), "interaction", HashKey(compact(userText, 120))),
+		Layer:      "people",
+		Area:       "contacts",
+		Kind:       "interaction_note",
+		Subject:    subject,
+		Summary:    compact(content, 140),
+		Content:    content,
+		Source:     "auto:conversation",
+		Tags:       []string{"people", "contact", "memory_layer:people"},
+		Importance: 5,
+		Confidence: 0.7,
+	}}
+}
+
+func extractProjectMemories(sessionID string, userText string, assistantText string, ctx types.ConversationContext) []Entry {
+	if !(ctx.IsOwner || ctx.Trust == types.TrustOwner) {
+		return nil
+	}
+	subject := firstMatch(reProjectName, userText)
+	if subject == "" {
+		subject = firstMatch(reWorkingOn, userText)
+	}
+	if subject == "" {
+		return nil
+	}
+	content := fmt.Sprintf("Project context for %s: %s", cleanSentence(subject), compact(userText, 220))
+	if strings.TrimSpace(assistantText) != "" {
+		content += ". Latest outcome: " + compact(assistantText, 180)
+	}
+	return []Entry{{
+		Key:        stableKey("project", HashKey(subject), HashKey(sessionID), HashKey(compact(userText, 120))),
+		Layer:      "projects",
+		Area:       "projects",
+		Kind:       "project_note",
+		Subject:    cleanSentence(subject),
+		Summary:    compact(content, 140),
+		Content:    content,
+		Source:     "auto:conversation",
+		Tags:       []string{"projects", "project", "memory_layer:projects"},
+		Importance: 7,
+		Confidence: 0.72,
+	}}
+}
+
+func extractWorkflowMemories(sessionID string, userText string, assistantText string, ctx types.ConversationContext) []Entry {
+	if strings.EqualFold(sessionID, "owner-onboarding") {
+		return nil
+	}
+	if !(ctx.IsOwner || ctx.Trust == types.TrustOwner) {
+		return nil
+	}
+	summary := fmt.Sprintf("Session %s focused on %s", sessionID, compact(userText, 120))
+	content := summary
+	if strings.TrimSpace(assistantText) != "" {
+		content += ". Assistant outcome: " + compact(assistantText, 180)
+	}
+	return []Entry{{
+		Key:        stableKey("workflow", "conversation", HashKey(sessionID), HashKey(compact(userText, 120))),
+		Layer:      "workflow",
+		Area:       "workflow",
+		Kind:       "conversation_outcome",
+		Subject:    sessionID,
+		Summary:    compact(summary, 140),
+		Content:    content,
+		Source:     "auto:conversation",
+		Tags:       []string{"workflow", "memory_layer:workflow", "session:" + sessionID},
+		Importance: 4,
+		Confidence: 0.65,
+	}}
 }
 
 func extractPreferenceStatements(text string) []string {

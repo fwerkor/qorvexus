@@ -216,8 +216,8 @@ func (r *Runner) buildOwnerProfilePrompt() string {
 		return ""
 	}
 	entries, err := r.Memory.SearchWithOptions(memory.SearchOptions{
-		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
-		Limit: 8,
+		Layers: []string{"owner"},
+		Limit:  8,
 	})
 	if err != nil || len(entries) == 0 {
 		return ""
@@ -250,30 +250,41 @@ func (r *Runner) buildRelevantMemoryPrompt(sessionID string, query string, ctx t
 	grouped := map[string][]memory.Entry{}
 	for _, entry := range selected {
 		ids = append(ids, entry.ID)
-		area := entry.Area
-		if area == "" {
-			area = "general"
+		layer := entry.Layer
+		if layer == "" {
+			layer = "general"
 		}
-		grouped[area] = append(grouped[area], entry)
+		grouped[layer] = append(grouped[layer], entry)
 	}
 	_ = r.Memory.MarkAccessed(ids...)
 
-	areas := make([]string, 0, len(grouped))
-	for area := range grouped {
-		areas = append(areas, area)
+	layers := make([]string, 0, len(grouped))
+	for layer := range grouped {
+		layers = append(layers, layer)
 	}
-	sort.Strings(areas)
+	sort.Strings(layers)
 
 	var b strings.Builder
 	b.WriteString("Relevant long-term memory:\n")
-	for _, area := range areas {
-		b.WriteString("- " + area + ":\n")
-		for _, entry := range grouped[area] {
+	for _, layer := range layers {
+		b.WriteString("- " + layer + ":\n")
+		items := grouped[layer]
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Importance == items[j].Importance {
+				return items[i].UpdatedAt.After(items[j].UpdatedAt)
+			}
+			return items[i].Importance > items[j].Importance
+		})
+		for _, entry := range items {
 			line := strings.TrimSpace(entry.Content)
 			if line == "" {
 				line = strings.TrimSpace(entry.Summary)
 			}
 			if line == "" {
+				continue
+			}
+			if entry.Area != "" && !strings.EqualFold(entry.Area, layer) {
+				b.WriteString("  * [" + entry.Area + "] " + line + "\n")
 				continue
 			}
 			b.WriteString("  * " + line + "\n")
@@ -348,20 +359,21 @@ func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx typ
 		}
 	}
 	if ownerCore, err := r.Memory.SearchWithOptions(memory.SearchOptions{
-		Areas: []string{"owner_profile", "owner_preferences", "owner_rules"},
-		Limit: 6,
+		Layers: []string{"owner"},
+		Limit:  6,
 	}); err == nil {
 		add(ownerCore)
 	}
-	areas := []string{"owner_profile", "owner_preferences", "owner_rules", "projects", "contacts", "workflow"}
+	layers := []string{"owner", "projects", "workflow"}
 	if ctx.Trust == types.TrustExternal || ctx.Trust == types.TrustTrusted {
-		areas = append(areas, "contacts")
+		layers = append(layers, "people")
 	}
 	if strings.TrimSpace(query) != "" {
 		if relevant, err := r.Memory.SearchWithOptions(memory.SearchOptions{
-			Query: query,
-			Areas: areas,
-			Limit: 8,
+			Query:            query,
+			Layers:           layers,
+			Limit:            10,
+			IncludeSummaries: true,
 		}); err == nil {
 			add(relevant)
 		}

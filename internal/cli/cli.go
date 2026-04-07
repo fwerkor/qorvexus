@@ -291,6 +291,10 @@ scheduler:
   enabled: true
 memory:
   enabled: true
+  semantic_search: true
+  compaction_threshold: 6
+  compaction_retain: 3
+  max_summary_sources: 6
 queue:
   enabled: true
   worker_enabled: true
