@@ -55,6 +55,11 @@ type appRuntime struct {
 	audit       *audit.Logger
 }
 
+const (
+	ownerOnboardingSessionID = "owner-onboarding"
+	ownerProfileTag          = "memory_area:owner_profile"
+)
+
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	registry := model.NewRegistry()
 	recorder := model.NewRecorder(filepath.Join(cfg.DataDir, "traces", "model_calls.jsonl"))
@@ -119,6 +124,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		Sessions: store,
 		Tools:    toolRegistry,
 		Skills:   skills,
+		Memory:   app.memory,
 		Compressor: &contextx.Compressor{
 			Registry:  registry,
 			MaxChars:  cfg.Agent.ContextWindowChars,
@@ -262,19 +268,28 @@ func (a *appRuntime) RunQueuedTask(ctx context.Context, task taskqueue.Task) (st
 }
 
 func (a *appRuntime) Status() webui.Status {
+	required, sessionID, prompt := a.ownerOnboardingState()
 	return webui.Status{
-		StartedAt:        a.startedAt,
-		DefaultModel:     a.cfg.Agent.DefaultModel,
-		SchedulerEnabled: a.cfg.Scheduler.Enabled,
-		QueueEnabled:     a.cfg.Queue.Enabled,
-		MemoryEnabled:    a.cfg.Memory.Enabled,
-		SelfEnabled:      a.cfg.Self.Enabled,
-		SocialEnabled:    a.cfg.Social.Enabled,
-		WebAddress:       a.cfg.Web.Address,
+		StartedAt:                a.startedAt,
+		DefaultModel:             a.cfg.Agent.DefaultModel,
+		SchedulerEnabled:         a.cfg.Scheduler.Enabled,
+		QueueEnabled:             a.cfg.Queue.Enabled,
+		MemoryEnabled:            a.cfg.Memory.Enabled,
+		SelfEnabled:              a.cfg.Self.Enabled,
+		SocialEnabled:            a.cfg.Social.Enabled,
+		WebAddress:               a.cfg.Web.Address,
+		OwnerOnboardingRequired:  required,
+		OwnerOnboardingSessionID: sessionID,
+		OwnerOnboardingPrompt:    prompt,
 	}
 }
 
 func (a *appRuntime) RunPrompt(ctx context.Context, prompt string, model string, sessionID string) (string, error) {
+	if sessionID == "" {
+		if required, onboardingSessionID, _ := a.ownerOnboardingState(); required {
+			sessionID = onboardingSessionID
+		}
+	}
 	_, out, err := a.runner.Run(ctx, agent.Request{
 		SessionID: sessionID,
 		Model:     model,
@@ -302,6 +317,42 @@ func (a *appRuntime) ListQueue() []taskqueue.Task {
 
 func (a *appRuntime) SearchMemory(query string, limit int) (string, error) {
 	return a.Recall(context.Background(), query, limit)
+}
+
+func (a *appRuntime) EnsureOwnerOnboarding(ctx context.Context) (string, error) {
+	required, sessionID, prompt := a.ownerOnboardingState()
+	if !required {
+		return "", nil
+	}
+	if strings.TrimSpace(prompt) != "" {
+		return prompt, nil
+	}
+	_, out, err := a.runner.Run(ownerContext(ctx), agent.Request{
+		SessionID: sessionID,
+		Prompt: strings.TrimSpace(`You are onboarding your owner for the first time.
+Your goal is to learn who the owner is and preserve a durable owner profile for future sessions.
+Ask a short, warm set of questions that helps you learn:
+- what the owner wants to be called
+- their role or background
+- timezone or locale
+- what they want this bot to help with
+- communication style preferences
+- any boundaries, do-not-do rules, or identity details that must be remembered
+
+Do not dump a long questionnaire. Ask up to five concise questions in this turn and invite the owner to reply in the same session.
+As soon as you have enough stable facts, call the remember tool to store them with source "bootstrap:owner_onboarding" and tags ["owner_profile", "owner_identity", "memory_area:owner_profile"].
+Keep the questions practical and focused on facts that will help you serve the owner well.`),
+		Context: &types.ConversationContext{
+			Channel:  "bootstrap",
+			SenderID: "owner",
+			Trust:    types.TrustOwner,
+			IsOwner:  true,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func (a *appRuntime) LoadConfigText() (string, error) {
@@ -743,6 +794,46 @@ func ownerAllowedFromContext(ctx context.Context) bool {
 		return false
 	}
 	return convo.IsOwner || convo.Trust == types.TrustOwner
+}
+
+func ownerContext(ctx context.Context) context.Context {
+	return tool.WithConversationContext(ctx, types.ConversationContext{
+		Channel:  "bootstrap",
+		SenderID: "owner",
+		Trust:    types.TrustOwner,
+		IsOwner:  true,
+	})
+}
+
+func (a *appRuntime) ownerProfileEntries(limit int) []memory.Entry {
+	if a.memory == nil || !a.cfg.Memory.Enabled {
+		return nil
+	}
+	items, err := a.memory.SearchByTag(ownerProfileTag, limit)
+	if err != nil {
+		return nil
+	}
+	return items
+}
+
+func (a *appRuntime) ownerOnboardingState() (bool, string, string) {
+	if !a.cfg.Memory.Enabled {
+		return false, "", ""
+	}
+	if len(a.ownerProfileEntries(1)) > 0 {
+		return false, "", ""
+	}
+	st, err := a.sessions.Load(ownerOnboardingSessionID)
+	if err != nil {
+		return true, ownerOnboardingSessionID, ""
+	}
+	for i := len(st.Messages) - 1; i >= 0; i-- {
+		msg := st.Messages[i]
+		if msg.Role == types.RoleAssistant && strings.TrimSpace(msg.Content) != "" {
+			return true, ownerOnboardingSessionID, strings.TrimSpace(msg.Content)
+		}
+	}
+	return true, ownerOnboardingSessionID, ""
 }
 
 func (a *appRuntime) logAudit(ctx context.Context, action string, status string, target string, metadata map[string]any) {

@@ -42,14 +42,17 @@ type App interface {
 }
 
 type Status struct {
-	StartedAt        time.Time `json:"started_at"`
-	DefaultModel     string    `json:"default_model"`
-	SchedulerEnabled bool      `json:"scheduler_enabled"`
-	QueueEnabled     bool      `json:"queue_enabled"`
-	MemoryEnabled    bool      `json:"memory_enabled"`
-	SelfEnabled      bool      `json:"self_enabled"`
-	SocialEnabled    bool      `json:"social_enabled"`
-	WebAddress       string    `json:"web_address"`
+	StartedAt                time.Time `json:"started_at"`
+	DefaultModel             string    `json:"default_model"`
+	SchedulerEnabled         bool      `json:"scheduler_enabled"`
+	QueueEnabled             bool      `json:"queue_enabled"`
+	MemoryEnabled            bool      `json:"memory_enabled"`
+	SelfEnabled              bool      `json:"self_enabled"`
+	SocialEnabled            bool      `json:"social_enabled"`
+	WebAddress               string    `json:"web_address"`
+	OwnerOnboardingRequired  bool      `json:"owner_onboarding_required"`
+	OwnerOnboardingSessionID string    `json:"owner_onboarding_session_id,omitempty"`
+	OwnerOnboardingPrompt    string    `json:"owner_onboarding_prompt,omitempty"`
 }
 
 type Server struct {
@@ -459,6 +462,11 @@ const dashboardHTML = `<!doctype html>
         <h2>Runtime</h2>
         <p class="muted">Started at {{.StartedAt}}</p>
         <p class="muted">Listening on {{.WebAddress}}</p>
+        {{if .OwnerOnboardingRequired}}
+        <p><strong>Owner onboarding required.</strong></p>
+        <p class="muted">Reply in session {{.OwnerOnboardingSessionID}}</p>
+        <pre>{{.OwnerOnboardingPrompt}}</pre>
+        {{end}}
       </div>
     </div>
     <div class="grid">
@@ -603,6 +611,14 @@ const dashboardHTML = `<!doctype html>
     async function loadStatus() {
       const data = await api("/api/status");
       document.getElementById("status-output").textContent = JSON.stringify(data, null, 2);
+      if (data.owner_onboarding_required) {
+        if (!document.getElementById("run-session").value) {
+          document.getElementById("run-session").value = data.owner_onboarding_session_id || "";
+        }
+        if (data.owner_onboarding_prompt) {
+          document.getElementById("run-output").textContent = data.owner_onboarding_prompt;
+        }
+      }
     }
     async function runPrompt() {
       const payload = {

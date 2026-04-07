@@ -20,6 +20,15 @@ type Entry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+func (e Entry) HasTag(tag string) bool {
+	for _, item := range e.Tags {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(tag)) {
+			return true
+		}
+	}
+	return false
+}
+
 type Store struct {
 	path string
 	mu   sync.Mutex
@@ -97,6 +106,23 @@ func (s *Store) Search(query string, limit int) ([]Entry, error) {
 	out := make([]Entry, 0, limit)
 	for _, item := range results[:limit] {
 		out = append(out, item.entry)
+	}
+	return out, nil
+}
+
+func (s *Store) SearchByTag(tag string, limit int) ([]Entry, error) {
+	entries, err := s.Search("", 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.HasTag(tag) {
+			out = append(out, entry)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

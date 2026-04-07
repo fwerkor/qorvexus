@@ -115,6 +115,9 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 	if err != nil {
 		return err
 	}
+	if onboardingPrompt, err := app.EnsureOwnerOnboarding(ctx); err == nil && strings.TrimSpace(onboardingPrompt) != "" {
+		fmt.Printf("owner onboarding session: %s\n%s\n", ownerOnboardingSessionID, onboardingPrompt)
+	}
 	if cfg.Scheduler.Enabled {
 		if err := app.scheduler.Start(); err != nil {
 			return err
@@ -161,6 +164,9 @@ func webCommand(ctx context.Context, args []string) error {
 	app, err := newRuntime(cfg, *configPath)
 	if err != nil {
 		return err
+	}
+	if onboardingPrompt, err := app.EnsureOwnerOnboarding(ctx); err == nil && strings.TrimSpace(onboardingPrompt) != "" {
+		fmt.Printf("owner onboarding session: %s\n%s\n", ownerOnboardingSessionID, onboardingPrompt)
 	}
 	if app.webServer == nil {
 		return errors.New("web server is not configured")

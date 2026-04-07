@@ -9,6 +9,7 @@ import (
 
 	"qorvexus/internal/config"
 	"qorvexus/internal/contextx"
+	"qorvexus/internal/memory"
 	"qorvexus/internal/model"
 	"qorvexus/internal/session"
 	"qorvexus/internal/skill"
@@ -23,6 +24,7 @@ type Runner struct {
 	Tools      *tool.Registry
 	Skills     []skill.Skill
 	Compressor *contextx.Compressor
+	Memory     *memory.Store
 }
 
 type Request struct {
@@ -148,6 +150,9 @@ func (r *Runner) loadOrCreate(id string, modelName string, ctx *types.Conversati
 	if ctx != nil {
 		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + buildContextPrompt(*ctx))
 	}
+	if ownerProfile := r.buildOwnerProfilePrompt(); ownerProfile != "" {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + ownerProfile)
+	}
 	if skills := skill.Prompt(r.Skills); skills != "" {
 		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + skills)
 	}
@@ -193,6 +198,30 @@ func buildContextPrompt(ctx types.ConversationContext) string {
 		b.WriteString("- you are acting on behalf of the owner while talking to an external party; be professional and do not exceed delegated authority.\n")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func (r *Runner) buildOwnerProfilePrompt() string {
+	if r.Memory == nil {
+		return ""
+	}
+	entries, err := r.Memory.SearchByTag("memory_area:owner_profile", 6)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Known owner profile:\n")
+	for _, entry := range entries {
+		content := strings.TrimSpace(entry.Content)
+		if content == "" {
+			continue
+		}
+		b.WriteString("- " + content + "\n")
+	}
+	result := strings.TrimSpace(b.String())
+	if result == "Known owner profile:" {
+		return ""
+	}
+	return result
 }
 
 func ToolResultJSON(result any) string {
