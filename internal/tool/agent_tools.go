@@ -26,6 +26,7 @@ type Runtime interface {
 	AddSelfImprovement(ctx context.Context, title string, description string, kind string) (string, error)
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	PromoteSelfImprovement(ctx context.Context, title string, description string, model string) (string, error)
+	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -492,4 +493,35 @@ func (t *PromoteSelfImprovementTool) Invoke(ctx context.Context, raw json.RawMes
 		return "", err
 	}
 	return t.rt.PromoteSelfImprovement(ctx, input.Title, input.Description, input.Model)
+}
+
+type MineSelfImprovementsTool struct{ rt Runtime }
+
+func NewMineSelfImprovementsTool(rt Runtime) *MineSelfImprovementsTool {
+	return &MineSelfImprovementsTool{rt: rt}
+}
+
+func (t *MineSelfImprovementsTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "mine_self_improvements",
+		Description: "Generate self-improvement candidates from recent audit history and failures.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer"},
+			},
+		},
+	}
+}
+
+func (t *MineSelfImprovementsTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit int `json:"limit"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.MineSelfImprovements(ctx, input.Limit)
 }

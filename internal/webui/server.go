@@ -23,6 +23,7 @@ type App interface {
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
+	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	LoadConfigText() (string, error)
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
@@ -65,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/self", s.handleSelf)
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
 	mux.HandleFunc("/api/audit", s.handleAudit)
+	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
 	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
@@ -148,6 +150,16 @@ func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.app.ListAudit(r.Context(), 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleSelfMine(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.MineSelfImprovements(r.Context(), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -329,6 +341,11 @@ const dashboardHTML = `<!doctype html>
         <h2>Queue</h2>
         <button class="secondary" onclick="loadQueue()">Refresh Queue</button>
         <div id="queue"></div>
+        <p></p>
+        <div class="row">
+          <input id="queue-retry-id" placeholder="Queue task ID">
+          <button onclick="retryQueue()">Retry Task</button>
+        </div>
       </section>
       <section class="card">
         <h2>Memory</h2>
@@ -340,8 +357,18 @@ const dashboardHTML = `<!doctype html>
       </section>
       <section class="card">
         <h2>Self Evolution</h2>
-        <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
+        <div class="row">
+          <button class="secondary" onclick="loadSelf()">Refresh Backlog</button>
+          <button class="secondary" onclick="mineSelf()">Mine Ideas</button>
+        </div>
         <pre id="self-output"></pre>
+        <div class="row">
+          <input id="self-id" placeholder="Backlog ID">
+          <input id="self-status" placeholder="New status">
+        </div>
+        <p></p>
+        <button onclick="updateSelfStatus()">Update Self Status</button>
+        <pre id="self-mine-output"></pre>
       </section>
       <section class="card">
         <h2>Social Inbox</h2>
@@ -405,6 +432,20 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/self");
       document.getElementById("self-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function mineSelf() {
+      const data = await api("/api/self/mine");
+      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+    }
+    async function updateSelfStatus() {
+      const payload = {
+        id: document.getElementById("self-id").value,
+        status: document.getElementById("self-status").value,
+      };
+      const data = await api("/api/self/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+      loadSelf();
+      loadAudit();
+    }
     async function loadSocial() {
       const data = await api("/api/social/recent");
       document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
@@ -412,6 +453,13 @@ const dashboardHTML = `<!doctype html>
     async function loadAudit() {
       const data = await api("/api/audit");
       document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
+    }
+    async function retryQueue() {
+      const payload = { id: document.getElementById("queue-retry-id").value };
+      const data = await api("/api/queue/retry", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
+      loadQueue();
+      loadAudit();
     }
     function renderTable(rows, cols) {
       if (!rows.length) return "<p class='muted'>No data yet.</p>";

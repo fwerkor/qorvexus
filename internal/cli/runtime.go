@@ -100,6 +100,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewSelfBacklogAddTool(app))
 	toolRegistry.Register(tool.NewSelfBacklogListTool(app))
 	toolRegistry.Register(tool.NewPromoteSelfImprovementTool(app))
+	toolRegistry.Register(tool.NewMineSelfImprovementsTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -380,6 +381,64 @@ func (a *appRuntime) PromoteSelfImprovement(ctx context.Context, title string, d
 		a.logAudit("promote_self_improvement", "ok", title, map[string]any{"model": modelName})
 	}
 	return out, err
+}
+
+func (a *appRuntime) MineSelfImprovements(ctx context.Context, limit int) (string, error) {
+	if !a.cfg.Self.Enabled {
+		return "", fmt.Errorf("self improvement is disabled")
+	}
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("mining self improvements requires owner context")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if !a.cfg.Audit.Enabled {
+		return "[]", nil
+	}
+	entries, err := a.audit.Recent(limit)
+	if err != nil {
+		return "", err
+	}
+	type candidate struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+		Source      string `json:"source"`
+	}
+	var out []candidate
+	for _, entry := range entries {
+		if entry.Status != "ok" && entry.Status != "" {
+			out = append(out, candidate{
+				Title:       "Investigate failed action: " + entry.Action,
+				Description: "A recent audited action did not complete cleanly and may need a workflow, prompt, or tool improvement.",
+				Kind:        "reliability",
+				Source:      entry.Action,
+			})
+			continue
+		}
+		switch entry.Action {
+		case "retry_queue_task":
+			out = append(out, candidate{
+				Title:       "Reduce queue retries",
+				Description: "Recent manual queue retries suggest the task execution flow should be more reliable or recoverable.",
+				Kind:        "reliability",
+				Source:      entry.Action,
+			})
+		case "write_runtime_config", "upsert_skill":
+			out = append(out, candidate{
+				Title:       "Review self-modification ergonomics",
+				Description: "Frequent self-modification actions suggest a chance to make configuration and skill evolution safer or more structured.",
+				Kind:        "self-optimization",
+				Source:      entry.Action,
+			})
+		}
+	}
+	raw, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {
