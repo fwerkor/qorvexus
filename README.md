@@ -59,7 +59,8 @@ The goal is not a single hard-coded assistant, but an agent platform:
 ## Quick Start
 
 1. Set `OPENAI_API_KEY`.
-2. Edit [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+2. Optionally edit [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+If the file does not exist yet, Qorvexus will auto-create a default one on first start.
 3. Build:
 
 ```bash
@@ -73,6 +74,7 @@ go build ./cmd/qorvexus
 ```
 
 This starts the web UI, queue worker, scheduler, social watchdogs, and other enabled runtime services.
+It also auto-creates a default config file if needed, including a built-in system prompt and default model wiring.
 
 5. Run an ad-hoc prompt:
 

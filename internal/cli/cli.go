@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"qorvexus/internal/agent"
@@ -54,6 +55,9 @@ func runCommand(ctx context.Context, args []string) error {
 	if fs.NArg() == 0 {
 		return errors.New("prompt is required")
 	}
+	if err := ensureConfigExists(*configPath); err != nil {
+		return err
+	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -98,6 +102,9 @@ func startCommand(ctx context.Context, args []string) error {
 }
 
 func runService(ctx context.Context, configPath string, forceWeb bool) error {
+	if err := ensureConfigExists(configPath); err != nil {
+		return err
+	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -144,6 +151,9 @@ func webCommand(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := ensureConfigExists(*configPath); err != nil {
+		return err
+	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -176,6 +186,9 @@ func skillsCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := ensureConfigExists(*configPath); err != nil {
+		return err
+	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -194,6 +207,9 @@ func queueCommand(args []string) error {
 	fs := flag.NewFlagSet("queue", flag.ContinueOnError)
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := ensureConfigExists(*configPath); err != nil {
 		return err
 	}
 	cfg, err := config.Load(*configPath)
@@ -224,6 +240,21 @@ func initCommand(args []string) error {
 
 func usage() error {
 	return errors.New("usage: qorvexus [start|run|daemon|web|skills|queue|init] [flags]")
+}
+
+func ensureConfigExists(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(sampleConfig()), 0o644)
 }
 
 func sampleConfig() string {

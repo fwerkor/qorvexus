@@ -34,4 +34,10 @@ agent:
 	if cfg.Agent.MaxTurns != 12 {
 		t.Fatalf("expected default max turns, got %d", cfg.Agent.MaxTurns)
 	}
+	if cfg.Agent.SystemPrompt == "" {
+		t.Fatal("expected default system prompt")
+	}
+	if cfg.Agent.SummarizerModel != "summarizer" {
+		t.Fatalf("expected default summarizer model, got %q", cfg.Agent.SummarizerModel)
+	}
 }

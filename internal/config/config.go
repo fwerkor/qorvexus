@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -139,6 +138,47 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) setDefaults(path string) error {
 	base := filepath.Dir(path)
+	if c.Models == nil {
+		c.Models = map[string]ModelConfig{}
+	}
+	if len(c.Models) == 0 {
+		c.Models["primary"] = ModelConfig{
+			Provider:    "openai-compatible",
+			BaseURL:     "https://api.openai.com/v1",
+			APIKeyEnv:   "OPENAI_API_KEY",
+			Model:       "gpt-4.1",
+			MaxTokens:   2000,
+			Temperature: 0.2,
+		}
+		c.Models["summarizer"] = ModelConfig{
+			Provider:    "openai-compatible",
+			BaseURL:     "https://api.openai.com/v1",
+			APIKeyEnv:   "OPENAI_API_KEY",
+			Model:       "gpt-4.1-mini",
+			MaxTokens:   800,
+			Temperature: 0.1,
+		}
+	}
+	if _, ok := c.Models["primary"]; !ok {
+		c.Models["primary"] = ModelConfig{
+			Provider:    "openai-compatible",
+			BaseURL:     "https://api.openai.com/v1",
+			APIKeyEnv:   "OPENAI_API_KEY",
+			Model:       "gpt-4.1",
+			MaxTokens:   2000,
+			Temperature: 0.2,
+		}
+	}
+	if _, ok := c.Models["summarizer"]; !ok {
+		c.Models["summarizer"] = ModelConfig{
+			Provider:    "openai-compatible",
+			BaseURL:     "https://api.openai.com/v1",
+			APIKeyEnv:   "OPENAI_API_KEY",
+			Model:       "gpt-4.1-mini",
+			MaxTokens:   800,
+			Temperature: 0.1,
+		}
+	}
 	if c.DataDir == "" {
 		c.DataDir = filepath.Join(base, ".qorvexus")
 	}
@@ -151,6 +191,15 @@ func (c *Config) setDefaults(path string) error {
 	for i, dir := range c.Skills.Dirs {
 		c.Skills.Dirs[i] = expandPath(base, dir)
 	}
+	if c.Agent.DefaultModel == "" {
+		c.Agent.DefaultModel = "primary"
+	}
+	if c.Agent.SummarizerModel == "" {
+		c.Agent.SummarizerModel = "summarizer"
+	}
+	if c.Agent.VisionFallbackModel == "" {
+		c.Agent.VisionFallbackModel = c.Agent.DefaultModel
+	}
 	if c.Agent.MaxTurns <= 0 {
 		c.Agent.MaxTurns = 12
 	}
@@ -159,6 +208,18 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Agent.CompressionThreshold <= 0 || c.Agent.CompressionThreshold >= 1 {
 		c.Agent.CompressionThreshold = 0.75
+	}
+	if strings.TrimSpace(c.Agent.SystemPrompt) == "" {
+		c.Agent.SystemPrompt = defaultSystemPrompt()
+	}
+	if len(c.Agent.Discussion.DefaultPanel) == 0 {
+		c.Agent.Discussion.DefaultPanel = []string{c.Agent.DefaultModel, c.Agent.SummarizerModel}
+	}
+	if c.Agent.Discussion.SynthesisModel == "" {
+		c.Agent.Discussion.SynthesisModel = c.Agent.DefaultModel
+	}
+	if c.Agent.Discussion.MaxParallelModels <= 0 {
+		c.Agent.Discussion.MaxParallelModels = 4
 	}
 	if c.Tools.CommandShell == "" {
 		c.Tools.CommandShell = "bash"
@@ -209,9 +270,6 @@ func (c *Config) setDefaults(path string) error {
 	if c.Audit.File == "" {
 		c.Audit.File = filepath.Join(c.DataDir, "audit.jsonl")
 	}
-	if c.Agent.DefaultModel == "" {
-		return errors.New("agent.default_model is required")
-	}
 	if _, ok := c.Models[c.Agent.DefaultModel]; !ok {
 		return fmt.Errorf("default model %q not found", c.Agent.DefaultModel)
 	}
@@ -234,6 +292,16 @@ func (c *Config) setDefaults(path string) error {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 	return nil
+}
+
+func defaultSystemPrompt() string {
+	return strings.TrimSpace(`
+You are Qorvexus, a capable autonomous agent with long-horizon memory and tool access.
+Act directly when the next step is clear, stay careful with authority boundaries, and prefer verifiable action over vague advice.
+Use tools, background tasks, scheduling, memory, and social channels when they help complete real work.
+When talking to external parties, represent the owner professionally without overcommitting.
+When improving yourself, make concrete, reversible progress and preserve auditability.
+`)
 }
 
 func expandPath(base string, value string) string {
