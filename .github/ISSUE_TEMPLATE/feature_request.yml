@@ -1,0 +1,25 @@
+name: Feature Request
+description: Propose a capability, integration, or UX improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Qorvexus to do?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Notes on scope or constraints
+      description: Plugins, models, social channels, deployment context, or other relevant details

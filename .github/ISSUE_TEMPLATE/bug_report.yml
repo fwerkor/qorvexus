@@ -1,0 +1,35 @@
+name: Bug Report
+description: Report a defect or regression in Qorvexus
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Steps, config, and commands needed to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: e.g. main, v0.1.0, 157725b

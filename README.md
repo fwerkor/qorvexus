@@ -1,6 +1,13 @@
 # Qorvexus
 
+[![CI](https://github.com/fwerkor/qorvexus/actions/workflows/ci.yml/badge.svg)](https://github.com/fwerkor/qorvexus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fwerkor/qorvexus)](https://github.com/fwerkor/qorvexus/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 Qorvexus is a maintainable Go agent platform for building an always-on assistant with tools, memory, social channels, self-improvement workflows, and a built-in control panel.
+
+Maintained by `FWERKOR Team`  
+Contact: `admin@fwerkor.com`
 
 > Think of it as an agent runtime, not a single hard-coded bot.
 > Models, tools, skills, sessions, background jobs, and social channels are all explicit subsystems.
@@ -75,6 +82,14 @@ http://127.0.0.1:7788
 ```
 
 Qorvexus fills in many internal defaults automatically, but model connection settings remain explicit because they are part of the deployment contract.
+
+## Community
+
+- License: [GPL v3](LICENSE)
+- Security: [SECURITY.md](SECURITY.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Support: [SUPPORT.md](SUPPORT.md)
+- Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## Common Commands
 
