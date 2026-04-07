@@ -93,6 +93,11 @@ func daemonCommand(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+	if cfg.Social.Enabled {
+		go func() {
+			_ = app.RunCommitmentWatchdog(ctx)
+		}()
+	}
 	if cfg.Queue.Enabled && cfg.Queue.WorkerEnabled {
 		go func() {
 			_ = app.worker.Run(ctx)
@@ -130,6 +135,11 @@ func webCommand(ctx context.Context, args []string) error {
 	if cfg.Queue.Enabled && cfg.Queue.WorkerEnabled {
 		go func() {
 			_ = app.worker.Run(ctx)
+		}()
+	}
+	if cfg.Social.Enabled {
+		go func() {
+			_ = app.RunCommitmentWatchdog(ctx)
 		}()
 	}
 	fmt.Printf("qorvexus web panel listening on http://%s\n", cfg.Web.Address)
@@ -265,6 +275,7 @@ social:
     - email
   inbox_file: ./.qorvexus/social_inbox.jsonl
   commitment_file: ./.qorvexus/social_commitments.jsonl
+  commitment_scan_interval_seconds: 3600
   webhook_secret: change-me
 self:
   enabled: true

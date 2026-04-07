@@ -532,6 +532,67 @@ func (a *appRuntime) CommitmentSummary(_ context.Context) (string, error) {
 	return string(raw), nil
 }
 
+func (a *appRuntime) ScanCommitments(ctx context.Context) (string, error) {
+	items, err := a.commitments.List(0)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	scan := commitment.Scan(items, now)
+	type scanSummary struct {
+		Checked       int      `json:"checked"`
+		MarkedOverdue []string `json:"marked_overdue"`
+		QueuedReview  []string `json:"queued_review"`
+	}
+	out := scanSummary{Checked: len(items)}
+	for _, entry := range scan.Overdue {
+		if err := a.commitments.UpdateStatus(entry.ID, commitment.StatusOverdue); err == nil {
+			out.MarkedOverdue = append(out.MarkedOverdue, entry.ID)
+			a.logAudit(ctx, "mark_commitment_overdue", "ok", entry.ID, map[string]any{
+				"due_hint": entry.DueHint,
+				"channel":  entry.Channel,
+			})
+		}
+		taskID, err := a.enqueueCommitmentReview(ctx, entry, "This commitment appears overdue. Review what was promised, decide whether to follow up externally, escalate to the owner, or queue concrete delivery work.")
+		if err == nil && taskID != "" {
+			out.QueuedReview = append(out.QueuedReview, taskID)
+			_ = a.commitments.AttachTask(entry.ID, taskID)
+		}
+	}
+	for _, entry := range scan.Stale {
+		if entry.RelatedTaskID != "" {
+			continue
+		}
+		taskID, err := a.enqueueCommitmentReview(ctx, entry, "This commitment is getting stale. Review whether it needs a reminder, owner escalation, or a concrete next-step task before it becomes overdue.")
+		if err == nil && taskID != "" {
+			out.QueuedReview = append(out.QueuedReview, taskID)
+			_ = a.commitments.AttachTask(entry.ID, taskID)
+		}
+	}
+	raw, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) RunCommitmentWatchdog(ctx context.Context) error {
+	interval := time.Duration(a.cfg.Social.CommitmentScanIntervalSeconds) * time.Second
+	if !a.cfg.Social.Enabled || interval <= 0 {
+		return nil
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			_, _ = a.ScanCommitments(context.Background())
+		}
+	}
+}
+
 func (a *appRuntime) UpdateCommitmentStatus(ctx context.Context, id string, status string) (string, error) {
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("updating commitments requires owner context")
@@ -690,32 +751,17 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 	for _, suggestion := range result.Commitments {
 		relatedTaskID := followUpTaskID
 		if a.cfg.Queue.Enabled && (suggestion.DueHint != "" || relatedTaskID == "") {
-			task, err := a.queue.Add(taskqueue.Task{
-				Name: "commitment-review: " + suggestion.Summary,
-				Prompt: strings.TrimSpace(fmt.Sprintf(
-					"Review and advance this commitment for Qorvexus.\n"+
-						"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\n"+
-						"Recent inbound message: %s\nRecent agent response: %s\n"+
-						"Decide whether to prepare a deliverable, send a follow-up, ask the owner for approval, or schedule further work. Respect authority boundaries and keep the commitment moving.",
-					env.Channel,
-					env.ThreadID,
-					suggestion.Counterparty,
-					env.Context.Trust,
-					suggestion.Summary,
-					suggestion.DueHint,
-					env.Text,
-					response,
-				)),
-				Model:     a.cfg.Agent.DefaultModel,
-				SessionID: "commitment-review-" + sanitize(env.Channel+"-"+env.ThreadID+"-"+env.SenderID),
-			})
-			if err == nil {
-				relatedTaskID = task.ID
-				a.logAudit(ctx, "enqueue_commitment_review", "ok", task.ID, map[string]any{
-					"summary":      suggestion.Summary,
-					"counterparty": suggestion.Counterparty,
-					"due_hint":     suggestion.DueHint,
-				})
+			taskID, err := a.enqueueCommitmentReview(ctx, commitment.Entry{
+				Channel:      env.Channel,
+				ThreadID:     env.ThreadID,
+				Counterparty: suggestion.Counterparty,
+				Summary:      suggestion.Summary,
+				DueHint:      suggestion.DueHint,
+				Trust:        string(env.Context.Trust),
+				Source:       "social:" + env.Channel,
+			}, "Review and advance this commitment for Qorvexus based on the recent social exchange.")
+			if err == nil && taskID != "" {
+				relatedTaskID = taskID
 			}
 		}
 		entry, err := a.commitments.Append(commitment.Entry{
@@ -736,4 +782,37 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 			})
 		}
 	}
+}
+
+func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitment.Entry, instruction string) (string, error) {
+	if !a.cfg.Queue.Enabled {
+		return "", nil
+	}
+	task, err := a.queue.Add(taskqueue.Task{
+		Name: "commitment-review: " + entry.Summary,
+		Prompt: strings.TrimSpace(fmt.Sprintf(
+			"%s\n"+
+				"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\nSource: %s\n"+
+				"Decide whether to prepare a deliverable, send a follow-up, ask the owner for approval, or queue further work. Respect authority boundaries and keep the commitment moving.",
+			instruction,
+			entry.Channel,
+			entry.ThreadID,
+			entry.Counterparty,
+			entry.Trust,
+			entry.Summary,
+			entry.DueHint,
+			entry.Source,
+		)),
+		Model:     a.cfg.Agent.DefaultModel,
+		SessionID: "commitment-review-" + sanitize(entry.Channel+"-"+entry.ThreadID+"-"+entry.Counterparty),
+	})
+	if err != nil {
+		return "", err
+	}
+	a.logAudit(ctx, "enqueue_commitment_review", "ok", task.ID, map[string]any{
+		"summary":      entry.Summary,
+		"counterparty": entry.Counterparty,
+		"due_hint":     entry.DueHint,
+	})
+	return task.ID, nil
 }

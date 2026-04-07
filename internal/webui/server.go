@@ -12,6 +12,8 @@ import (
 	"qorvexus/internal/session"
 	"qorvexus/internal/social"
 	"qorvexus/internal/taskqueue"
+	"qorvexus/internal/tool"
+	"qorvexus/internal/types"
 )
 
 type App interface {
@@ -25,6 +27,7 @@ type App interface {
 	ListSocialConnectors(ctx context.Context) (string, error)
 	ListCommitments(ctx context.Context, limit int) (string, error)
 	CommitmentSummary(ctx context.Context) (string, error)
+	ScanCommitments(ctx context.Context) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
@@ -73,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/social/connectors", s.handleSocialConnectors)
 	mux.HandleFunc("/api/commitments", s.handleCommitments)
 	mux.HandleFunc("/api/commitments/summary", s.handleCommitmentSummary)
+	mux.HandleFunc("/api/commitments/scan", s.handleCommitmentScan)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
@@ -106,7 +110,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out, err := s.app.RunPrompt(r.Context(), input.Prompt, input.Model, input.SessionID)
+	out, err := s.app.RunPrompt(ownerContext(r.Context()), input.Prompt, input.Model, input.SessionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -139,7 +143,7 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.ListSelfImprovements(r.Context(), 50)
+	raw, err := s.app.ListSelfImprovements(ownerContext(r.Context()), 50)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -149,7 +153,7 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.ListRecentSocial(r.Context(), 50)
+	raw, err := s.app.ListRecentSocial(ownerContext(r.Context()), 50)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -159,7 +163,7 @@ func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSocialConnectors(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.ListSocialConnectors(r.Context())
+	raw, err := s.app.ListSocialConnectors(ownerContext(r.Context()))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -169,7 +173,7 @@ func (s *Server) handleSocialConnectors(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCommitments(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.ListCommitments(r.Context(), 100)
+	raw, err := s.app.ListCommitments(ownerContext(r.Context()), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -179,7 +183,7 @@ func (s *Server) handleCommitments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCommitmentSummary(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.CommitmentSummary(r.Context())
+	raw, err := s.app.CommitmentSummary(ownerContext(r.Context()))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -188,8 +192,22 @@ func (s *Server) handleCommitmentSummary(w http.ResponseWriter, r *http.Request)
 	_, _ = w.Write([]byte(raw))
 }
 
+func (s *Server) handleCommitmentScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	raw, err := s.app.ScanCommitments(ownerContext(r.Context()))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.ListAudit(r.Context(), 100)
+	raw, err := s.app.ListAudit(ownerContext(r.Context()), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -199,7 +217,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSelfMine(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.app.MineSelfImprovements(r.Context(), 100)
+	raw, err := s.app.MineSelfImprovements(ownerContext(r.Context()), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -224,7 +242,7 @@ func (s *Server) handleSelfCapture(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out, err := s.app.CaptureSelfImprovement(r.Context(), input.Title, input.Description, input.Kind, input.Promote, input.Model)
+	out, err := s.app.CaptureSelfImprovement(ownerContext(r.Context()), input.Title, input.Description, input.Kind, input.Promote, input.Model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -289,7 +307,7 @@ func (s *Server) handleQueueRetry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out, err := s.app.RetryQueueTask(r.Context(), input.ID)
+	out, err := s.app.RetryQueueTask(ownerContext(r.Context()), input.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -310,7 +328,7 @@ func (s *Server) handleCommitmentStatus(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out, err := s.app.UpdateCommitmentStatus(r.Context(), input.ID, input.Status)
+	out, err := s.app.UpdateCommitmentStatus(ownerContext(r.Context()), input.ID, input.Status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -331,7 +349,7 @@ func (s *Server) handleSelfStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out, err := s.app.UpdateSelfImprovementStatus(r.Context(), input.ID, input.Status)
+	out, err := s.app.UpdateSelfImprovementStatus(ownerContext(r.Context()), input.ID, input.Status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -343,6 +361,15 @@ func writeJSON(w http.ResponseWriter, code int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func ownerContext(ctx context.Context) context.Context {
+	return tool.WithConversationContext(ctx, types.ConversationContext{
+		Channel:  "web",
+		SenderID: "owner",
+		Trust:    types.TrustOwner,
+		IsOwner:  true,
+	})
 }
 
 const dashboardHTML = `<!doctype html>
@@ -496,6 +523,8 @@ const dashboardHTML = `<!doctype html>
           <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
           <button class="secondary" onclick="loadCommitmentSummary()">Refresh Summary</button>
         </div>
+        <p></p>
+        <button onclick="scanCommitments()">Run Commitment Scan</button>
         <pre id="commitments-summary-output"></pre>
         <pre id="commitments-output"></pre>
         <div class="row">
@@ -605,6 +634,14 @@ const dashboardHTML = `<!doctype html>
     async function loadCommitmentSummary() {
       const data = await api("/api/commitments/summary");
       document.getElementById("commitments-summary-output").textContent = JSON.stringify(data, null, 2);
+    }
+    async function scanCommitments() {
+      const data = await api("/api/commitments/scan", {method:"POST"});
+      document.getElementById("commitments-summary-output").textContent = JSON.stringify(data, null, 2);
+      loadCommitments();
+      loadCommitmentSummary();
+      loadQueue();
+      loadAudit();
     }
     async function simulateSocial() {
       const payload = {

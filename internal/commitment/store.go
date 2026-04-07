@@ -90,6 +90,21 @@ func (s *Store) List(limit int) ([]Entry, error) {
 	return items, nil
 }
 
+func (s *Store) Get(id string) (Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return Entry{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Entry{}, fmt.Errorf("commitment %q not found", id)
+}
+
 func (s *Store) UpdateStatus(id string, status Status) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -72,6 +72,7 @@ social:
     - email
   inbox_file: ./.qorvexus/social_inbox.jsonl
   commitment_file: ./.qorvexus/social_commitments.jsonl
+  commitment_scan_interval_seconds: 3600
   webhook_secret: change-me
 self:
   enabled: true

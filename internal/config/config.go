@@ -96,11 +96,12 @@ type WebConfig struct {
 }
 
 type SocialConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	AllowedChannels []string `yaml:"allowed_channels"`
-	InboxFile       string   `yaml:"inbox_file"`
-	CommitmentFile  string   `yaml:"commitment_file"`
-	WebhookSecret   string   `yaml:"webhook_secret"`
+	Enabled                       bool     `yaml:"enabled"`
+	AllowedChannels               []string `yaml:"allowed_channels"`
+	InboxFile                     string   `yaml:"inbox_file"`
+	CommitmentFile                string   `yaml:"commitment_file"`
+	CommitmentScanIntervalSeconds int      `yaml:"commitment_scan_interval_seconds"`
+	WebhookSecret                 string   `yaml:"webhook_secret"`
 }
 
 type SelfConfig struct {
@@ -185,6 +186,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.CommitmentFile == "" {
 		c.Social.CommitmentFile = filepath.Join(c.DataDir, "social_commitments.jsonl")
+	}
+	if c.Social.CommitmentScanIntervalSeconds <= 0 {
+		c.Social.CommitmentScanIntervalSeconds = 3600
 	}
 	if c.Self.SkillsDir == "" {
 		c.Self.SkillsDir = filepath.Join(base, "skills")
