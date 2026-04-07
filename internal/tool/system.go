@@ -53,10 +53,12 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 	if input.TimeoutSeconds <= 0 {
 		input.TimeoutSeconds = 60
 	}
+	policyCtx := policyContextFromTool(ctx)
+	var policyResult policy.Result
 	if t.policy != nil {
-		result := t.policy.EvaluateCommand(input.Command)
-		if result.Verdict != policy.VerdictAllow {
-			return "", fmt.Errorf("command denied by policy: %s (risk=%s)", result.Reason, result.Risk)
+		policyResult = t.policy.EvaluateCommandForContext(input.Command, policyCtx)
+		if policyResult.Verdict != policy.VerdictAllow {
+			return "", fmt.Errorf("command denied by policy: %s (risk=%s)", policyResult.Reason, policyResult.Risk)
 		}
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
@@ -81,11 +83,10 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 		return out, fmt.Errorf("command failed: %w", err)
 	}
 	if t.policy != nil {
-		result := t.policy.EvaluateCommand(input.Command)
 		if out != "" {
 			out += "\n"
 		}
-		out += fmt.Sprintf("[policy]\nrisk=%s\nreason=%s", result.Risk, result.Reason)
+		out += fmt.Sprintf("[policy]\nrisk=%s\nreason=%s", policyResult.Risk, policyResult.Reason)
 	}
 	return out, nil
 }

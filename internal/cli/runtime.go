@@ -113,6 +113,9 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 
 	toolRegistry := tool.NewRegistry()
 	toolRegistry.Register(&tool.ThinkTool{})
+	toolRegistry.Register(tool.NewSystemSnapshotTool())
+	toolRegistry.Register(tool.NewFilesystemTool(cfg.Tools))
+	toolRegistry.Register(tool.NewProcessTool(cfg.Tools, policyEngine))
 	toolRegistry.Register(tool.NewCommandTool(cfg.Tools, policyEngine))
 	toolRegistry.Register(tool.NewHTTPTool(cfg.Tools))
 	toolRegistry.Register(tool.NewPlaywrightTool(cfg.Tools))

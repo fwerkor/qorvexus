@@ -48,7 +48,7 @@ func (e *Engine) EvaluateCommandForContext(command string, ctx types.Conversatio
 		}
 	}
 	dangerous := []string{
-		"rm -rf /", "mkfs", "shutdown", "reboot", "userdel", "dd if=", "git reset --hard", "git checkout --",
+		"rm -rf /", "mkfs", "shutdown", "reboot", "userdel", "dd if=", "git reset --hard", "git checkout --", "sudo ", "poweroff",
 	}
 	for _, pattern := range dangerous {
 		if strings.Contains(cmd, pattern) {
@@ -61,7 +61,7 @@ func (e *Engine) EvaluateCommandForContext(command string, ctx types.Conversatio
 	}
 	if !ctx.IsOwner {
 		risk := classifyRisk(cmd)
-		if risk == "high" || strings.Contains(cmd, "git push") || strings.Contains(cmd, "ssh ") {
+		if risk == "high" || strings.Contains(cmd, "git push") || strings.Contains(cmd, "ssh ") || strings.Contains(cmd, "systemctl ") || strings.Contains(cmd, "launchctl ") || strings.Contains(cmd, "kill ") {
 			return Result{
 				Verdict: VerdictDeny,
 				Risk:    risk,
@@ -80,7 +80,7 @@ func classifyRisk(command string) string {
 	switch {
 	case strings.Contains(command, "curl ") || strings.Contains(command, "wget ") || strings.Contains(command, "scp "):
 		return "medium"
-	case strings.Contains(command, "apt ") || strings.Contains(command, "npm install") || strings.Contains(command, "go install"):
+	case strings.Contains(command, "apt ") || strings.Contains(command, "npm install") || strings.Contains(command, "go install") || strings.Contains(command, "systemctl ") || strings.Contains(command, "launchctl ") || strings.Contains(command, "kill "):
 		return "high"
 	case strings.Contains(command, "mv ") || strings.Contains(command, "cp ") || strings.Contains(command, ">"):
 		return "medium"

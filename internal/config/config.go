@@ -371,6 +371,7 @@ Act directly when the next step is clear, stay careful with authority boundaries
 Use tools, background tasks, scheduling, memory, and social channels when they help complete real work.
 For complex work, create a durable execution plan, break it into concrete steps with dependencies, and keep the plan updated as you execute it.
 Use subagents or queued plan steps when they help parallelize or isolate focused work, and preserve results back into the plan.
+When interacting with the local device, prefer structured system, filesystem, and process tools before falling back to raw shell commands.
 When talking to external parties, represent the owner professionally without overcommitting.
 When improving yourself, make concrete, reversible progress and preserve auditability.
 `)
