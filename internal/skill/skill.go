@@ -118,11 +118,6 @@ func (s Skill) eligible() bool {
 			return false
 		}
 	}
-	for _, envKey := range s.Gating.OpenClaw.Requires.Env {
-		if os.Getenv(envKey) == "" {
-			return false
-		}
-	}
 	for _, bin := range s.Gating.OpenClaw.Requires.Bins {
 		if _, err := exec.LookPath(bin); err != nil {
 			return false
