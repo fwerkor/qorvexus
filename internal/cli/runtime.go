@@ -40,6 +40,7 @@ type appRuntime struct {
 	webServer  *http.Server
 	startedAt  time.Time
 	social     *social.Gateway
+	connectors *social.Registry
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -71,6 +72,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		sessions:   store,
 		memory:     memory.NewStore(cfg.Memory.File),
 		startedAt:  time.Now().UTC(),
+		connectors: social.NewRegistry(),
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -84,6 +86,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewRememberTool(app))
 	toolRegistry.Register(tool.NewRecallTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
+	toolRegistry.Register(tool.NewSocialSendTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -109,6 +112,9 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		PollInterval: time.Duration(cfg.Queue.PollInterval) * time.Second,
 	}
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
+	for _, channel := range cfg.Social.AllowedChannels {
+		app.connectors.Register(social.NewFileConnector(channel, filepath.Join(cfg.DataDir, "social_outbox_"+channel+".jsonl")))
+	}
 
 	if cfg.Web.Enabled {
 		panel, err := webui.NewServer(app)
@@ -268,6 +274,21 @@ func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelo
 		return a.HandleEnvelope(ctx, env)
 	}
 	return a.social.Receive(ctx, env)
+}
+
+func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error) {
+	return a.connectors.Send(ctx, channel, social.OutboundMessage{
+		Channel:   channel,
+		ThreadID:  threadID,
+		Recipient: recipient,
+		Text:      text,
+		Context: types.ConversationContext{
+			Channel:      channel,
+			Trust:        types.TrustOwner,
+			IsOwner:      true,
+			ReplyAsAgent: true,
+		},
+	})
 }
 
 func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (string, error) {

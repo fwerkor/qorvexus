@@ -18,6 +18,7 @@ type Runtime interface {
 	Remember(ctx context.Context, content string, tags []string, source string) (string, error)
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
+	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -255,4 +256,40 @@ func (t *EnqueueTaskTool) Invoke(ctx context.Context, raw json.RawMessage) (stri
 		return "", err
 	}
 	return t.rt.EnqueueTask(ctx, input.Name, input.Prompt, input.Model, input.SessionID)
+}
+
+type SocialSendTool struct {
+	rt Runtime
+}
+
+func NewSocialSendTool(rt Runtime) *SocialSendTool { return &SocialSendTool{rt: rt} }
+
+func (t *SocialSendTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "send_social_message",
+		Description: "Send or queue a message through a configured social connector. Useful when acting as the owner's digital representative.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channel":   map[string]any{"type": "string"},
+				"thread_id": map[string]any{"type": "string"},
+				"recipient": map[string]any{"type": "string"},
+				"text":      map[string]any{"type": "string"},
+			},
+			"required": []string{"channel", "text"},
+		},
+	}
+}
+
+func (t *SocialSendTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Channel   string `json:"channel"`
+		ThreadID  string `json:"thread_id"`
+		Recipient string `json:"recipient"`
+		Text      string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.SendSocialMessage(ctx, input.Channel, input.ThreadID, input.Recipient, input.Text)
 }
