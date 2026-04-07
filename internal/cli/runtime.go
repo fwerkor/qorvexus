@@ -90,6 +90,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewRecallTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
 	toolRegistry.Register(tool.NewSocialSendTool(app))
+	toolRegistry.Register(tool.NewSocialListTool(app))
 	toolRegistry.Register(tool.NewReadConfigTool(app))
 	toolRegistry.Register(tool.NewWriteConfigTool(app))
 	toolRegistry.Register(tool.NewUpsertSkillTool(app))
@@ -359,6 +360,14 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 			ReplyAsAgent: true,
 		},
 	})
+}
+
+func (a *appRuntime) ListSocialConnectors(_ context.Context) (string, error) {
+	raw, err := json.MarshalIndent(a.connectors.List(), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (string, error) {

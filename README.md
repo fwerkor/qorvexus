@@ -48,6 +48,7 @@ The goal is not a single hard-coded assistant, but an agent platform:
 
 - Model adapters are isolated so new protocols and distilled-logging interceptors can be added without touching the core loop.
 - Tools are first-class and model-visible, so the model can decide when to act.
+- Social integrations follow a connector/tool/skill layering similar in spirit to OpenClaw: connectors handle channel mechanics, tools expose capability, and skills teach the model how to use them.
 - Skills are loadable from disk and remain compatible with the `SKILL.md` pattern used by OpenClaw.
 - Sessions, compression, and scheduling are explicit subsystems instead of scattered logic.
 - Multi-model discussion and child agents are built as orchestration services, not prompt hacks.

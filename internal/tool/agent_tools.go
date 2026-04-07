@@ -19,6 +19,7 @@ type Runtime interface {
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
+	ListSocialConnectors(ctx context.Context) (string, error)
 	ReadRuntimeConfig(ctx context.Context) (string, error)
 	WriteRuntimeConfig(ctx context.Context, raw string) (string, error)
 	UpsertSkill(ctx context.Context, name string, description string, body string) (string, error)
@@ -297,6 +298,25 @@ func (t *SocialSendTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 		return "", err
 	}
 	return t.rt.SendSocialMessage(ctx, input.Channel, input.ThreadID, input.Recipient, input.Text)
+}
+
+type SocialListTool struct{ rt Runtime }
+
+func NewSocialListTool(rt Runtime) *SocialListTool { return &SocialListTool{rt: rt} }
+
+func (t *SocialListTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_social_connectors",
+		Description: "List configured social connectors/channels currently available for outbound communication.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}
+}
+
+func (t *SocialListTool) Invoke(ctx context.Context, _ json.RawMessage) (string, error) {
+	return t.rt.ListSocialConnectors(ctx)
 }
 
 type ReadConfigTool struct{ rt Runtime }

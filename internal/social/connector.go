@@ -52,6 +52,16 @@ func (r *Registry) Send(ctx context.Context, channel string, msg OutboundMessage
 	return connector.Send(ctx, msg)
 }
 
+func (r *Registry) List() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.connectors))
+	for name := range r.connectors {
+		out = append(out, name)
+	}
+	return out
+}
+
 type FileConnector struct {
 	channel string
 	path    string
