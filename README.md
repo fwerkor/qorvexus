@@ -40,7 +40,6 @@ internal/tool          tool registry and built-in tools
 internal/types         shared protocol types
 internal/webui         built-in control panel and HTTP APIs
 skills/                workspace skills
-qorvexus.yaml          default local runtime configuration
 ```
 
 ## Why This Shape
@@ -64,7 +63,13 @@ The goal is not a single hard-coded assistant, but an agent platform:
 go build ./cmd/qorvexus
 ```
 
-2. Put your model key into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml):
+2. Start Qorvexus once so it generates `qorvexus.yaml` in the project root:
+
+```bash
+./qorvexus start
+```
+
+Stop it after the file appears, then add your keys:
 
 ```yaml
 models:
@@ -81,7 +86,7 @@ social:
 ./qorvexus start
 ```
 
-If [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml) does not exist yet, Qorvexus will auto-create it with sane defaults.
+If `qorvexus.yaml` does not exist yet, Qorvexus will auto-create it with sane defaults.
 
 4. Open the web UI:
 
@@ -127,7 +132,7 @@ Inspect the queue:
 
 Telegram uses polling by default.
 
-1. Set `social.telegram_bot_token` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+1. Set `social.telegram_bot_token` in the generated `qorvexus.yaml`.
 2. Keep `social.telegram_mode: polling`.
 3. Start Qorvexus with `./qorvexus start`.
 
