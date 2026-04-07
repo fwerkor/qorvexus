@@ -95,18 +95,22 @@ type WebConfig struct {
 }
 
 type SocialConfig struct {
-	Enabled                       bool     `yaml:"enabled"`
-	AllowedChannels               []string `yaml:"allowed_channels"`
-	InboxFile                     string   `yaml:"inbox_file"`
-	CommitmentFile                string   `yaml:"commitment_file"`
-	CommitmentScanIntervalSeconds int      `yaml:"commitment_scan_interval_seconds"`
-	WebhookSecret                 string   `yaml:"webhook_secret"`
-	PublicBaseURL                 string   `yaml:"public_base_url"`
-	TelegramBotToken              string   `yaml:"telegram_bot_token"`
-	TelegramMode                  string   `yaml:"telegram_mode"`
-	TelegramPollTimeoutSeconds    int      `yaml:"telegram_poll_timeout_seconds"`
-	TelegramPollIntervalSeconds   int      `yaml:"telegram_poll_interval_seconds"`
-	TelegramWebhookPath           string   `yaml:"telegram_webhook_path"`
+	Enabled                       bool           `yaml:"enabled"`
+	AllowedChannels               []string       `yaml:"allowed_channels"`
+	InboxFile                     string         `yaml:"inbox_file"`
+	CommitmentFile                string         `yaml:"commitment_file"`
+	CommitmentScanIntervalSeconds int            `yaml:"commitment_scan_interval_seconds"`
+	Telegram                      TelegramConfig `yaml:"telegram"`
+}
+
+type TelegramConfig struct {
+	BotToken            string `yaml:"bot_token"`
+	Mode                string `yaml:"mode"`
+	PollTimeoutSeconds  int    `yaml:"poll_timeout_seconds"`
+	PollIntervalSeconds int    `yaml:"poll_interval_seconds"`
+	WebhookPath         string `yaml:"webhook_path"`
+	WebhookSecret       string `yaml:"webhook_secret"`
+	PublicBaseURL       string `yaml:"public_base_url"`
 }
 
 type SelfConfig struct {
@@ -272,20 +276,20 @@ func (c *Config) setDefaults(path string) error {
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
 	}
-	if strings.TrimSpace(c.Social.TelegramMode) == "" {
-		c.Social.TelegramMode = "polling"
+	if strings.TrimSpace(c.Social.Telegram.Mode) == "" {
+		c.Social.Telegram.Mode = "polling"
 	}
 	if len(c.Social.AllowedChannels) == 0 && c.Social.Enabled {
 		c.Social.AllowedChannels = []string{"telegram"}
 	}
-	if c.Social.TelegramPollTimeoutSeconds <= 0 {
-		c.Social.TelegramPollTimeoutSeconds = 30
+	if c.Social.Telegram.PollTimeoutSeconds <= 0 {
+		c.Social.Telegram.PollTimeoutSeconds = 30
 	}
-	if c.Social.TelegramPollIntervalSeconds <= 0 {
-		c.Social.TelegramPollIntervalSeconds = 1
+	if c.Social.Telegram.PollIntervalSeconds <= 0 {
+		c.Social.Telegram.PollIntervalSeconds = 1
 	}
-	if c.Social.TelegramWebhookPath == "" {
-		c.Social.TelegramWebhookPath = "/webhooks/telegram"
+	if c.Social.Telegram.WebhookPath == "" {
+		c.Social.Telegram.WebhookPath = "/webhooks/telegram"
 	}
 	if c.Self.SkillsDir == "" {
 		c.Self.SkillsDir = filepath.Join(base, "skills")

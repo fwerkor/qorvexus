@@ -135,19 +135,19 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
 	for _, channel := range cfg.Social.AllowedChannels {
 		if channel == "telegram" {
-			token := strings.TrimSpace(cfg.Social.TelegramBotToken)
+			token := strings.TrimSpace(cfg.Social.Telegram.BotToken)
 			if token != "" {
 				app.connectors.Register(social.NewTelegramConnector(token))
-				if strings.EqualFold(cfg.Social.TelegramMode, "polling") {
+				if strings.EqualFold(cfg.Social.Telegram.Mode, "polling") {
 					app.telegram = social.NewTelegramPoller(
 						token,
-						cfg.Social.TelegramPollTimeoutSeconds,
-						time.Duration(cfg.Social.TelegramPollIntervalSeconds)*time.Second,
+						cfg.Social.Telegram.PollTimeoutSeconds,
+						time.Duration(cfg.Social.Telegram.PollIntervalSeconds)*time.Second,
 					)
 				}
 			}
-			if strings.EqualFold(cfg.Social.TelegramMode, "webhook") {
-				app.connectors.RegisterWebhook(social.NewTelegramWebhookAdapter(cfg.Social.TelegramWebhookPath, cfg.Social.WebhookSecret))
+			if strings.EqualFold(cfg.Social.Telegram.Mode, "webhook") {
+				app.connectors.RegisterWebhook(social.NewTelegramWebhookAdapter(cfg.Social.Telegram.WebhookPath, cfg.Social.Telegram.WebhookSecret))
 			}
 			continue
 		}

@@ -77,7 +77,8 @@ models:
     api_key: "your-key"
 
 social:
-  telegram_bot_token: "your-telegram-bot-token"
+  telegram:
+    bot_token: "your-telegram-bot-token"
 ```
 
 3. Start everything with one command:
@@ -132,8 +133,8 @@ Inspect the queue:
 
 Telegram uses polling by default.
 
-1. Set `social.telegram_bot_token` in the generated `qorvexus.yaml`.
-2. Keep `social.telegram_mode: polling`.
+1. Set `social.telegram.bot_token` in the generated `qorvexus.yaml`.
+2. Keep `social.telegram.mode: polling`.
 3. Start Qorvexus with `./qorvexus start`.
 
 Qorvexus will call Telegram `getUpdates`, ingest new messages through the social layer, and send replies back through the Telegram Bot API. No webhook or public callback URL is required.

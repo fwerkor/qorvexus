@@ -140,10 +140,10 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 		}()
 		fmt.Printf("web panel listening on http://%s\n", cfg.Web.Address)
 	}
-	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.TelegramMode, "webhook") && cfg.Social.PublicBaseURL != "" {
-		fmt.Printf("telegram webhook endpoint: %s\n", social.TelegramWebhookURL(cfg.Social.PublicBaseURL, cfg.Social.TelegramWebhookPath))
+	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.Telegram.Mode, "webhook") && cfg.Social.Telegram.PublicBaseURL != "" {
+		fmt.Printf("telegram webhook endpoint: %s\n", social.TelegramWebhookURL(cfg.Social.Telegram.PublicBaseURL, cfg.Social.Telegram.WebhookPath))
 	}
-	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.TelegramMode, "polling") {
+	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.Telegram.Mode, "polling") {
 		fmt.Println("telegram polling is enabled")
 	}
 	fmt.Println("qorvexus service is running")
@@ -282,7 +282,8 @@ web:
   address: 127.0.0.1:7788
 social:
   enabled: true
-  telegram_bot_token: ""
+  telegram:
+    bot_token: ""
 tools:
   allow_command_execution: true
 self:

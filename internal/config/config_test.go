@@ -71,7 +71,7 @@ social:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Social.TelegramMode; got != "polling" {
+	if got := cfg.Social.Telegram.Mode; got != "polling" {
 		t.Fatalf("expected default telegram mode polling, got %q", got)
 	}
 	if len(cfg.Social.AllowedChannels) != 1 || cfg.Social.AllowedChannels[0] != "telegram" {
