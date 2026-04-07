@@ -1,2 +1,5 @@
 .qorvexus/
 /tmp/
+bin/
+dist/
+coverage.out

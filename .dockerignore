@@ -1,0 +1,8 @@
+.git
+.github
+.qorvexus
+bin
+dist
+tmp
+*.log
+*.out

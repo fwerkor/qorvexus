@@ -134,6 +134,30 @@ Inspect the queue:
 ./qorvexus queue
 ```
 
+Common local workflows:
+
+```bash
+make build
+make test
+make docker-build
+```
+
+## Docker
+
+Build the image:
+
+```bash
+docker build -t qorvexus:local .
+```
+
+Run it with a persistent config and data volume:
+
+```bash
+docker run --rm -p 7788:7788 -v "$(pwd)/docker-data:/data" qorvexus:local
+```
+
+On first boot the container will generate `/data/qorvexus.yaml`. Edit that file on the host, add your model and social credentials, then restart the container.
+
 ## Telegram
 
 Telegram uses polling by default.
