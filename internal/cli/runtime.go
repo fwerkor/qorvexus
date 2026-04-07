@@ -43,6 +43,7 @@ type appRuntime struct {
 	sessions    *session.Store
 	memory      *memory.Store
 	plans       *plan.Store
+	playwright  *tool.PlaywrightManager
 	queue       *taskqueue.Queue
 	worker      *taskqueue.Worker
 	webServer   *http.Server
@@ -96,6 +97,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	store := session.NewStore(cfg.DataDir)
 	discussion := &orchestrator.Discussion{Registry: registry}
 	policyEngine := policy.NewEngine(cfg.Tools)
+	playwrightManager := tool.NewPlaywrightManager(cfg.Tools)
 	app := &appRuntime{
 		cfg:         cfg,
 		configPath:  configPath,
@@ -103,6 +105,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		sessions:    store,
 		memory:      memory.NewStore(cfg.Memory.File),
 		plans:       plan.NewStore(filepath.Join(cfg.DataDir, "plans.json")),
+		playwright:  playwrightManager,
 		startedAt:   time.Now().UTC(),
 		connectors:  social.NewRegistry(),
 		insights:    socialinsight.NewAnalyzer(),
@@ -118,7 +121,8 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewProcessTool(cfg.Tools, policyEngine))
 	toolRegistry.Register(tool.NewCommandTool(cfg.Tools, policyEngine))
 	toolRegistry.Register(tool.NewHTTPTool(cfg.Tools))
-	toolRegistry.Register(tool.NewPlaywrightTool(cfg.Tools))
+	toolRegistry.Register(tool.NewPlaywrightTool(cfg.Tools, playwrightManager))
+	toolRegistry.Register(tool.NewBrowserWorkflowTool(cfg.Tools, playwrightManager))
 	toolRegistry.Register(tool.NewSubAgentTool(app))
 	toolRegistry.Register(tool.NewDiscussTool(app))
 	toolRegistry.Register(tool.NewScheduleTool(app))
@@ -199,6 +203,17 @@ func (a *appRuntime) RunSocialBackground(ctx context.Context) error {
 		}()
 	}
 	return nil
+}
+
+func (a *appRuntime) EnsureBrowserRuntime(ctx context.Context) (string, error) {
+	if a.playwright == nil {
+		return "", nil
+	}
+	status, err := a.playwright.EnsureInstalled(ctx, a.cfg.Tools.PlaywrightBrowser)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("playwright runtime ready: browser=%s runtime=%s", status.Browser, status.RuntimeDir), nil
 }
 
 func (a *appRuntime) RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error) {

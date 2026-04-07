@@ -65,6 +65,9 @@ type ToolsConfig struct {
 	PlaywrightProfileDir     string   `yaml:"playwright_profile_dir"`
 	PlaywrightStateDir       string   `yaml:"playwright_state_dir"`
 	PlaywrightArtifactsDir   string   `yaml:"playwright_artifacts_dir"`
+	PlaywrightRuntimeDir     string   `yaml:"playwright_runtime_dir"`
+	PlaywrightInstallBrowser []string `yaml:"playwright_install_browsers"`
+	PlaywrightAutoInstall    *bool    `yaml:"playwright_auto_install"`
 	PlaywrightTimeoutSeconds int      `yaml:"playwright_timeout_seconds"`
 	PlaywrightHeadless       *bool    `yaml:"playwright_headless"`
 	MaxCommandBytes          int      `yaml:"max_command_bytes"`
@@ -291,6 +294,15 @@ func (c *Config) setDefaults(path string) error {
 	if c.Tools.PlaywrightArtifactsDir == "" {
 		c.Tools.PlaywrightArtifactsDir = filepath.Join(c.DataDir, "browser", "artifacts")
 	}
+	if c.Tools.PlaywrightRuntimeDir == "" {
+		c.Tools.PlaywrightRuntimeDir = filepath.Join(c.DataDir, "browser", "runtime")
+	}
+	if len(c.Tools.PlaywrightInstallBrowser) == 0 {
+		c.Tools.PlaywrightInstallBrowser = []string{c.Tools.PlaywrightBrowser}
+	}
+	if c.Tools.PlaywrightAutoInstall == nil {
+		c.Tools.PlaywrightAutoInstall = boolPtr(true)
+	}
 	if c.Tools.PlaywrightTimeoutSeconds <= 0 {
 		c.Tools.PlaywrightTimeoutSeconds = 120
 	}
@@ -300,6 +312,7 @@ func (c *Config) setDefaults(path string) error {
 	c.Tools.PlaywrightProfileDir = expandPath(base, c.Tools.PlaywrightProfileDir)
 	c.Tools.PlaywrightStateDir = expandPath(base, c.Tools.PlaywrightStateDir)
 	c.Tools.PlaywrightArtifactsDir = expandPath(base, c.Tools.PlaywrightArtifactsDir)
+	c.Tools.PlaywrightRuntimeDir = expandPath(base, c.Tools.PlaywrightRuntimeDir)
 	if c.Tools.MaxCommandBytes <= 0 {
 		c.Tools.MaxCommandBytes = 64 * 1024
 	}
@@ -402,6 +415,7 @@ Use tools, background tasks, scheduling, memory, and social channels when they h
 For complex work, create a durable execution plan, break it into concrete steps with dependencies, and keep the plan updated as you execute it.
 Use subagents or queued plan steps when they help parallelize or isolate focused work, and preserve results back into the plan.
 When interacting with the local device, prefer structured system, filesystem, and process tools before falling back to raw shell commands.
+When browsing the web, prefer the structured browser workflow tool for common tasks, and use raw Playwright scripts only for flows that need custom logic.
 When browsing the web through Playwright, prefer persistent browser profiles so logins, cookies, and session state can survive across runs.
 When talking to external parties, represent the owner professionally without overcommitting.
 When improving yourself, make concrete, reversible progress and preserve auditability.

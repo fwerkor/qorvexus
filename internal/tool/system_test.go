@@ -42,7 +42,7 @@ echo "EOF"
 		PlaywrightTimeoutSeconds: 45,
 		PlaywrightHeadless:       &headless,
 		MaxCommandBytes:          16 * 1024,
-	})
+	}, nil)
 
 	out, err := invokeTool(t, tool, context.Background(), map[string]any{
 		"script":             "return { ok: true, message: 'hello' };",
@@ -82,5 +82,123 @@ echo "EOF"
 	}
 	if !strings.Contains(output, "return { ok: true, message: 'hello' };") {
 		t.Fatalf("expected script file content in output, got %s", output)
+	}
+}
+
+func TestBrowserWorkflowToolPassesActionsAndMode(t *testing.T) {
+	tempDir := t.TempDir()
+	runnerPath := filepath.Join(tempDir, "runner.sh")
+	runner := `#!/bin/sh
+echo "{"
+echo "  \"mode\": \"$QORVEXUS_PLAYWRIGHT_MODE\","
+echo "  \"profile\": \"$QORVEXUS_PLAYWRIGHT_PROFILE_NAME\","
+echo "  \"state\": \"$QORVEXUS_PLAYWRIGHT_STORAGE_STATE_NAME\","
+echo "  \"browser\": \"$QORVEXUS_PLAYWRIGHT_BROWSER\","
+echo "  \"actions\":"
+cat "$QORVEXUS_PLAYWRIGHT_ACTIONS_FILE"
+echo "}"
+`
+	if err := os.WriteFile(runnerPath, []byte(runner), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	headless := true
+	tool := NewBrowserWorkflowTool(config.ToolsConfig{
+		CommandShell:             "bash",
+		PlaywrightCommand:        fmt.Sprintf("%q", runnerPath),
+		PlaywrightBrowser:        "chromium",
+		PlaywrightProfileDir:     filepath.Join(tempDir, "profiles"),
+		PlaywrightStateDir:       filepath.Join(tempDir, "state"),
+		PlaywrightArtifactsDir:   filepath.Join(tempDir, "artifacts"),
+		PlaywrightTimeoutSeconds: 30,
+		PlaywrightHeadless:       &headless,
+		MaxCommandBytes:          16 * 1024,
+	}, nil)
+
+	out, err := invokeTool(t, tool, context.Background(), map[string]any{
+		"start_url":     "https://example.com",
+		"profile":       "Research Main",
+		"storage_state": "Research State",
+		"retry_count":   2,
+		"actions": []map[string]any{
+			{"type": "goto", "url": "https://example.com/login"},
+			{"type": "wait_for", "selector": "#login"},
+			{"type": "screenshot", "path": "page.png"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatal(err)
+	}
+	output, ok := payload["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured output map, got %#v", payload["output"])
+	}
+	if got := output["mode"]; got != "actions" {
+		t.Fatalf("expected actions mode, got %#v", got)
+	}
+	if got := output["profile"]; got != "research-main" {
+		t.Fatalf("expected sanitized profile, got %#v", got)
+	}
+	actions, ok := output["actions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected action payload map, got %#v", output["actions"])
+	}
+	items, ok := actions["actions"].([]any)
+	if !ok || len(items) != 3 {
+		t.Fatalf("expected 3 actions, got %#v", actions["actions"])
+	}
+}
+
+func TestPlaywrightManagerAutoInstallsRuntime(t *testing.T) {
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodePath := filepath.Join(binDir, "node")
+	npmPath := filepath.Join(binDir, "npm")
+	nodeScript := `#!/bin/sh
+if [ "$2" = "install" ]; then
+  exit 0
+fi
+exit 0
+`
+	npmScript := `#!/bin/sh
+mkdir -p "$PWD/node_modules/playwright"
+echo '#!/usr/bin/env node' > "$PWD/node_modules/playwright/cli.js"
+exit 0
+`
+	if err := os.WriteFile(nodePath, []byte(nodeScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(npmPath, []byte(npmScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	autoInstall := true
+	manager := NewPlaywrightManager(config.ToolsConfig{
+		PlaywrightRuntimeDir:     filepath.Join(tempDir, "runtime"),
+		PlaywrightBrowser:        "chromium",
+		PlaywrightInstallBrowser: []string{"chromium"},
+		PlaywrightAutoInstall:    &autoInstall,
+	})
+
+	status, err := manager.EnsureInstalled(context.Background(), "chromium")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.ModuleReady || !status.BrowserReady {
+		t.Fatalf("expected runtime and browser ready, got %#v", status)
+	}
+	if !pathExists(filepath.Join(status.RuntimeDir, "node_modules", "playwright", "cli.js")) {
+		t.Fatalf("expected installed playwright cli in %s", status.RuntimeDir)
+	}
+	if !pathExists(filepath.Join(status.RuntimeDir, ".chromium.ready")) {
+		t.Fatalf("expected browser ready stamp in %s", status.RuntimeDir)
 	}
 }

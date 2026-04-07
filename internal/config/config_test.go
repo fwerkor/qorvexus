@@ -61,6 +61,15 @@ agent:
 	if cfg.Tools.PlaywrightProfileDir == "" || cfg.Tools.PlaywrightStateDir == "" || cfg.Tools.PlaywrightArtifactsDir == "" {
 		t.Fatal("expected default playwright persistence directories")
 	}
+	if cfg.Tools.PlaywrightRuntimeDir == "" {
+		t.Fatal("expected default playwright runtime dir")
+	}
+	if cfg.Tools.PlaywrightAutoInstall == nil || !*cfg.Tools.PlaywrightAutoInstall {
+		t.Fatalf("expected default playwright auto install true, got %#v", cfg.Tools.PlaywrightAutoInstall)
+	}
+	if len(cfg.Tools.PlaywrightInstallBrowser) != 1 || cfg.Tools.PlaywrightInstallBrowser[0] != "chromium" {
+		t.Fatalf("expected default playwright install browser chromium, got %#v", cfg.Tools.PlaywrightInstallBrowser)
+	}
 	if cfg.Tools.PlaywrightTimeoutSeconds != 120 {
 		t.Fatalf("expected default playwright timeout, got %d", cfg.Tools.PlaywrightTimeoutSeconds)
 	}

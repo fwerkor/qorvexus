@@ -65,6 +65,11 @@ func runCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if msg, err := app.EnsureBrowserRuntime(ctx); err == nil && strings.TrimSpace(msg) != "" {
+		fmt.Println(msg)
+	} else if err != nil {
+		fmt.Printf("playwright runtime warning: %v\n", err)
+	}
 	var parts []types.ContentPart
 	for _, image := range images {
 		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
@@ -115,6 +120,11 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 	if err != nil {
 		return err
 	}
+	if msg, err := app.EnsureBrowserRuntime(ctx); err == nil && strings.TrimSpace(msg) != "" {
+		fmt.Println(msg)
+	} else if err != nil {
+		fmt.Printf("playwright runtime warning: %v\n", err)
+	}
 	if onboardingPrompt, err := app.EnsureOwnerOnboarding(ctx); err == nil && strings.TrimSpace(onboardingPrompt) != "" {
 		fmt.Printf("owner onboarding session: %s\n%s\n", ownerOnboardingSessionID, onboardingPrompt)
 	}
@@ -164,6 +174,11 @@ func webCommand(ctx context.Context, args []string) error {
 	app, err := newRuntime(cfg, *configPath)
 	if err != nil {
 		return err
+	}
+	if msg, err := app.EnsureBrowserRuntime(ctx); err == nil && strings.TrimSpace(msg) != "" {
+		fmt.Println(msg)
+	} else if err != nil {
+		fmt.Printf("playwright runtime warning: %v\n", err)
 	}
 	if onboardingPrompt, err := app.EnsureOwnerOnboarding(ctx); err == nil && strings.TrimSpace(onboardingPrompt) != "" {
 		fmt.Printf("owner onboarding session: %s\n%s\n", ownerOnboardingSessionID, onboardingPrompt)
