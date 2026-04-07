@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -119,9 +118,6 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 		httpReq.Header.Set(k, v)
 	}
 	key := strings.TrimSpace(c.cfg.APIKey)
-	if key == "" && c.cfg.APIKeyEnv != "" {
-		key = strings.TrimSpace(os.Getenv(c.cfg.APIKeyEnv))
-	}
 	if key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}

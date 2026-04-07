@@ -283,8 +283,6 @@ agent:
   max_turns: 12
   context_window_chars: 24000
   compression_threshold: 0.75
-  system_prompt: |
-    You are Qorvexus, a capable autonomous agent. Use tools when they help. Prefer direct, verifiable action.
   discussion:
     default_panel: [primary, summarizer]
     synthesis_model: primary

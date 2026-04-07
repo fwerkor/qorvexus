@@ -73,7 +73,7 @@ go build ./cmd/qorvexus
 If [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml) does not exist yet, Qorvexus will auto-create it with sane defaults.
 
 3. Put your API credentials into [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-The config file is the primary place for credentials and runtime settings.
+Qorvexus reads runtime credentials from the config file.
 
 4. Open the web UI:
 
