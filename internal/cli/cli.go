@@ -278,6 +278,8 @@ web:
   address: 127.0.0.1:7788
 social:
   enabled: true
+  allowed_channels:
+    - telegram
   telegram:
     bot_token: ""
 tools:

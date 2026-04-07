@@ -100,7 +100,14 @@ type SocialConfig struct {
 	InboxFile                     string         `yaml:"inbox_file"`
 	CommitmentFile                string         `yaml:"commitment_file"`
 	CommitmentScanIntervalSeconds int            `yaml:"commitment_scan_interval_seconds"`
+	Discord                       DiscordConfig  `yaml:"discord"`
 	Telegram                      TelegramConfig `yaml:"telegram"`
+}
+
+type DiscordConfig struct {
+	BotToken         string `yaml:"bot_token"`
+	APIBaseURL       string `yaml:"api_base_url"`
+	DefaultChannelID string `yaml:"default_channel_id"`
 }
 
 type TelegramConfig struct {
@@ -275,6 +282,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
+	}
+	if strings.TrimSpace(c.Social.Discord.APIBaseURL) == "" {
+		c.Social.Discord.APIBaseURL = "https://discord.com/api/v10"
 	}
 	if strings.TrimSpace(c.Social.Telegram.Mode) == "" {
 		c.Social.Telegram.Mode = "polling"

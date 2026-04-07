@@ -82,8 +82,14 @@ models:
     model: gpt-4.1
 
 social:
+  allowed_channels:
+    - telegram
+    - discord
   telegram:
     bot_token: "your-telegram-bot-token"
+  discord:
+    bot_token: "your-discord-bot-token"
+    default_channel_id: "your-channel-id"
 ```
 
 3. Start everything with one command:
@@ -169,6 +175,16 @@ Telegram uses polling by default.
 Qorvexus will call Telegram `getUpdates`, ingest new messages through the social layer, and send replies back through the Telegram Bot API. No webhook or public callback URL is required.
 
 Webhook mode still exists as an advanced option, but it is no longer the default path.
+
+## Discord
+
+Discord is available as an optional social plugin.
+
+1. Add `discord` to `social.allowed_channels`.
+2. Set `social.discord.bot_token`.
+3. Optionally set `social.discord.default_channel_id` if you want Discord sends to work without explicitly passing a channel ID each time.
+
+Current Discord support is a clean outbound plugin baseline: Qorvexus can send messages to Discord channels through the bot REST API, and future inbound support can be added without changing the core runtime/plugin boundary.
 
 Manual social-style inbound test:
 
