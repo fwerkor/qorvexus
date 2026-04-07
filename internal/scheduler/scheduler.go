@@ -78,8 +78,10 @@ func (m *Manager) Add(task Task) error {
 	if task.ID == "" {
 		task.ID = fmt.Sprintf("task-%d", task.CreatedAt.UnixNano())
 	}
-	if err := m.registerLocked(task); err != nil {
-		return err
+	if m.started {
+		if err := m.registerLocked(task); err != nil {
+			return err
+		}
 	}
 	m.tasks = append(m.tasks, task)
 	return m.saveLocked()

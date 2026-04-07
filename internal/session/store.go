@@ -38,8 +38,7 @@ func (s *Store) Load(id string) (*State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if st, ok := s.cache[id]; ok {
-		cp := *st
-		return &cp, nil
+		return cloneState(st), nil
 	}
 	path := filepath.Join(s.root, id+".json")
 	raw, err := os.ReadFile(path)
@@ -51,8 +50,7 @@ func (s *Store) Load(id string) (*State, error) {
 		return nil, fmt.Errorf("parse session: %w", err)
 	}
 	s.cache[id] = st
-	cp := *st
-	return &cp, nil
+	return cloneState(st), nil
 }
 
 func (s *Store) Save(state *State) error {
@@ -73,8 +71,7 @@ func (s *Store) Save(state *State) error {
 	if err := os.WriteFile(filepath.Join(s.root, state.ID+".json"), raw, 0o644); err != nil {
 		return err
 	}
-	cp := *state
-	s.cache[state.ID] = &cp
+	s.cache[state.ID] = cloneState(state)
 	return nil
 }
 
@@ -107,4 +104,25 @@ func (s *Store) List() ([]State, error) {
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out, nil
+}
+
+func cloneState(state *State) *State {
+	if state == nil {
+		return nil
+	}
+	out := *state
+	if len(state.Messages) > 0 {
+		out.Messages = make([]types.Message, len(state.Messages))
+		for i, message := range state.Messages {
+			msg := message
+			if len(message.Parts) > 0 {
+				msg.Parts = append([]types.ContentPart(nil), message.Parts...)
+			}
+			if len(message.ToolCalls) > 0 {
+				msg.ToolCalls = append([]types.ToolCall(nil), message.ToolCalls...)
+			}
+			out.Messages[i] = msg
+		}
+	}
+	return &out
 }
