@@ -38,4 +38,8 @@ func TestSampleConfigIsMinimalButRunnable(t *testing.T) {
 	if len(cfg.Identity.OwnerAliases) != 1 || cfg.Identity.OwnerAliases[0] != "owner" {
 		t.Fatalf("expected generic owner alias, got %#v", cfg.Identity.OwnerAliases)
 	}
+	primary := cfg.Models["primary"]
+	if primary.Provider != "openai-compatible" || primary.BaseURL != "https://api.openai.com/v1" || primary.Model != "gpt-4.1" {
+		t.Fatalf("expected loader to fill primary model defaults, got %+v", primary)
+	}
 }

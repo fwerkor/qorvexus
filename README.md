@@ -70,6 +70,9 @@ go build ./cmd/qorvexus
 models:
   primary:
     api_key: "your-key"
+
+social:
+  telegram_bot_token: "your-telegram-bot-token"
 ```
 
 3. Start everything with one command:
@@ -86,7 +89,7 @@ If [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml) does not exist yet, Qor
 http://127.0.0.1:7788
 ```
 
-From there you can edit config and inspect runtime state. Most advanced settings are optional because Qorvexus fills the rest with internal defaults.
+From there you can edit config and inspect runtime state. Provider wiring, model defaults, Telegram polling mode, owner alias defaults, data paths, and most other runtime details are filled in internally.
 
 ## Common Commands
 

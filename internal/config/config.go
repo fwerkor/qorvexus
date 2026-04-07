@@ -164,6 +164,36 @@ func (c *Config) setDefaults(path string) error {
 			Temperature: 0.2,
 		}
 	}
+	for name, modelCfg := range c.Models {
+		if strings.TrimSpace(modelCfg.Provider) == "" {
+			modelCfg.Provider = "openai-compatible"
+		}
+		if strings.TrimSpace(modelCfg.BaseURL) == "" {
+			modelCfg.BaseURL = "https://api.openai.com/v1"
+		}
+		if strings.TrimSpace(modelCfg.Model) == "" {
+			if name == "primary" {
+				modelCfg.Model = "gpt-4.1"
+			} else {
+				modelCfg.Model = "gpt-4.1-mini"
+			}
+		}
+		if modelCfg.MaxTokens <= 0 {
+			if name == "primary" {
+				modelCfg.MaxTokens = 2000
+			} else {
+				modelCfg.MaxTokens = 800
+			}
+		}
+		if modelCfg.Temperature == 0 {
+			if name == "primary" {
+				modelCfg.Temperature = 0.2
+			} else {
+				modelCfg.Temperature = 0.1
+			}
+		}
+		c.Models[name] = modelCfg
+	}
 	if c.DataDir == "" {
 		c.DataDir = filepath.Join(base, ".qorvexus")
 	}
@@ -230,6 +260,9 @@ func (c *Config) setDefaults(path string) error {
 	if c.Web.Address == "" {
 		c.Web.Address = "127.0.0.1:7788"
 	}
+	if len(c.Identity.OwnerAliases) == 0 {
+		c.Identity.OwnerAliases = []string{"owner"}
+	}
 	if c.Social.InboxFile == "" {
 		c.Social.InboxFile = filepath.Join(c.DataDir, "social_inbox.jsonl")
 	}
@@ -241,6 +274,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if strings.TrimSpace(c.Social.TelegramMode) == "" {
 		c.Social.TelegramMode = "polling"
+	}
+	if len(c.Social.AllowedChannels) == 0 && c.Social.Enabled {
+		c.Social.AllowedChannels = []string{"telegram"}
 	}
 	if c.Social.TelegramPollTimeoutSeconds <= 0 {
 		c.Social.TelegramPollTimeoutSeconds = 30

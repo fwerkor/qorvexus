@@ -267,17 +267,9 @@ func ensureConfigExists(path string) error {
 }
 
 func sampleConfig() string {
-	return `data_dir: ./.qorvexus
-models:
+	return `models:
   primary:
-    provider: openai-compatible
-    base_url: https://api.openai.com/v1
     api_key: ""
-    model: gpt-4.1
-agent:
-  default_model: primary
-tools:
-  allow_command_execution: true
 scheduler:
   enabled: true
 memory:
@@ -288,15 +280,11 @@ queue:
 web:
   enabled: true
   address: 127.0.0.1:7788
-identity:
-  owner_aliases:
-    - owner
 social:
   enabled: true
-  allowed_channels:
-    - telegram
-  telegram_mode: polling
   telegram_bot_token: ""
+tools:
+  allow_command_execution: true
 self:
   enabled: true
   allow_config_edits: true
