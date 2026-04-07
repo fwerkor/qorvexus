@@ -23,6 +23,7 @@ type Config struct {
 	Web       WebConfig              `yaml:"web"`
 	Social    SocialConfig           `yaml:"social"`
 	Self      SelfConfig             `yaml:"self"`
+	Audit     AuditConfig            `yaml:"audit"`
 }
 
 type SkillsConfig struct {
@@ -109,6 +110,11 @@ type SelfConfig struct {
 	AllowSkillWrites bool   `yaml:"allow_skill_writes"`
 }
 
+type AuditConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	File    string `yaml:"file"`
+}
+
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -183,6 +189,9 @@ func (c *Config) setDefaults(path string) error {
 		c.Self.BacklogFile = filepath.Join(c.DataDir, "self_backlog.jsonl")
 	}
 	c.Self.SkillsDir = expandPath(base, c.Self.SkillsDir)
+	if c.Audit.File == "" {
+		c.Audit.File = filepath.Join(c.DataDir, "audit.jsonl")
+	}
 	if c.Agent.DefaultModel == "" {
 		return errors.New("agent.default_model is required")
 	}

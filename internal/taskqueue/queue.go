@@ -118,6 +118,22 @@ func (q *Queue) RunNext(ctx context.Context) (bool, error) {
 	return true, q.saveLocked()
 }
 
+func (q *Queue) Retry(id string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i := range q.tasks {
+		if q.tasks[i].ID == id {
+			q.tasks[i].Status = StatusQueued
+			q.tasks[i].Error = ""
+			q.tasks[i].Result = ""
+			q.tasks[i].StartedAt = time.Time{}
+			q.tasks[i].FinishedAt = time.Time{}
+			return q.saveLocked()
+		}
+	}
+	return fmt.Errorf("task %q not found", id)
+}
+
 func (q *Queue) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(q.path), 0o755); err != nil {
 		return err

@@ -22,9 +22,12 @@ type App interface {
 	SearchMemory(query string, limit int) (string, error)
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
+	ListAudit(ctx context.Context, limit int) (string, error)
 	LoadConfigText() (string, error)
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
+	RetryQueueTask(ctx context.Context, id string) (string, error)
+	UpdateSelfImprovementStatus(ctx context.Context, id string, status string) (string, error)
 }
 
 type Status struct {
@@ -61,8 +64,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/self", s.handleSelf)
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
+	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
+	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
+	mux.HandleFunc("/api/self/status", s.handleSelfStatus)
 	return mux
 }
 
@@ -140,6 +146,16 @@ func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(raw))
 }
 
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.ListAudit(r.Context(), 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -183,6 +199,47 @@ func (s *Server) handleSocialInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"response": out})
+}
+
+func (s *Server) handleQueueRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := s.app.RetryQueueTask(r.Context(), input.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
+}
+
+func (s *Server) handleSelfStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := s.app.UpdateSelfImprovementStatus(r.Context(), input.ID, input.Status)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
@@ -292,6 +349,11 @@ const dashboardHTML = `<!doctype html>
         <pre id="social-output"></pre>
       </section>
       <section class="card">
+        <h2>Audit Log</h2>
+        <button class="secondary" onclick="loadAudit()">Refresh Audit</button>
+        <pre id="audit-output"></pre>
+      </section>
+      <section class="card">
         <h2>Status</h2>
         <button class="secondary" onclick="loadStatus()">Refresh Status</button>
         <pre id="status-output"></pre>
@@ -347,6 +409,10 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/social/recent");
       document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function loadAudit() {
+      const data = await api("/api/audit");
+      document.getElementById("audit-output").textContent = JSON.stringify(data, null, 2);
+    }
     function renderTable(rows, cols) {
       if (!rows.length) return "<p class='muted'>No data yet.</p>";
       let html = "<table><thead><tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
@@ -356,7 +422,7 @@ const dashboardHTML = `<!doctype html>
       html += "</tbody></table>";
       return html;
     }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial();
+    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadAudit();
   </script>
 </body>
 </html>`

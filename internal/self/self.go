@@ -75,6 +75,38 @@ func (m *Manager) AppendBacklog(entry BacklogEntry) error {
 func (m *Manager) ListBacklog(limit int) ([]BacklogEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	items, err := m.readAllLocked()
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items, nil
+}
+
+func (m *Manager) UpdateStatus(id string, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items, err := m.readAllLocked()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range items {
+		if items[i].ID == id {
+			items[i].Status = status
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("backlog item %q not found", id)
+	}
+	return m.writeAllLocked(items)
+}
+
+func (m *Manager) readAllLocked() ([]BacklogEntry, error) {
 	f, err := os.Open(m.backlogFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -94,8 +126,26 @@ func (m *Manager) ListBacklog(limit int) ([]BacklogEntry, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if limit > 0 && len(items) > limit {
-		items = items[len(items)-limit:]
-	}
 	return items, nil
+}
+
+func (m *Manager) writeAllLocked(items []BacklogEntry) error {
+	if err := os.MkdirAll(filepath.Dir(m.backlogFile), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(m.backlogFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for _, item := range items {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(append(raw, '\n')); err != nil {
+			return err
+		}
+	}
+	return nil
 }

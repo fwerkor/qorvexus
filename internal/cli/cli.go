@@ -271,6 +271,9 @@ self:
   backlog_file: ./.qorvexus/self_backlog.jsonl
   allow_config_edits: true
   allow_skill_writes: true
+audit:
+  enabled: true
+  file: ./.qorvexus/audit.jsonl
 `
 }
 

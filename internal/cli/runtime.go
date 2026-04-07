@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"qorvexus/internal/agent"
+	"qorvexus/internal/audit"
 	"qorvexus/internal/config"
 	"qorvexus/internal/contextx"
 	"qorvexus/internal/memory"
@@ -43,6 +44,7 @@ type appRuntime struct {
 	social     *social.Gateway
 	connectors *social.Registry
 	self       *self.Manager
+	audit      *audit.Logger
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -76,6 +78,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		startedAt:  time.Now().UTC(),
 		connectors: social.NewRegistry(),
 		self:       self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
+		audit:      audit.New(cfg.Audit.File),
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -163,6 +166,7 @@ func (a *appRuntime) AddScheduledTask(_ context.Context, name string, scheduleEx
 	if err := a.scheduler.Add(task); err != nil {
 		return "", err
 	}
+	a.logAudit("schedule_task", "ok", name, map[string]any{"schedule": scheduleExpr, "model": model})
 	return fmt.Sprintf("scheduled task %q with cron %q", name, scheduleExpr), nil
 }
 
@@ -214,6 +218,7 @@ func (a *appRuntime) EnqueueTask(_ context.Context, name string, prompt string, 
 	if err != nil {
 		return "", err
 	}
+	a.logAudit("enqueue_task", "ok", task.ID, map[string]any{"name": name, "model": model})
 	return fmt.Sprintf("queued task %q as %s", name, task.ID), nil
 }
 
@@ -295,6 +300,7 @@ func (a *appRuntime) WriteRuntimeConfig(ctx context.Context, raw string) (string
 	if err := webui.SaveConfigText(a.configPath, raw); err != nil {
 		return "", err
 	}
+	a.logAudit("write_runtime_config", "ok", a.configPath, nil)
 	return "runtime config updated", nil
 }
 
@@ -305,7 +311,12 @@ func (a *appRuntime) UpsertSkill(ctx context.Context, name string, description s
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("skill writes require owner context")
 	}
-	return a.self.UpsertSkill(name, description, body)
+	path, err := a.self.UpsertSkill(name, description, body)
+	if err != nil {
+		return "", err
+	}
+	a.logAudit("upsert_skill", "ok", path, map[string]any{"skill": name})
+	return path, nil
 }
 
 func (a *appRuntime) AddSelfImprovement(ctx context.Context, title string, description string, kind string) (string, error) {
@@ -325,6 +336,7 @@ func (a *appRuntime) AddSelfImprovement(ctx context.Context, title string, descr
 	}); err != nil {
 		return "", err
 	}
+	a.logAudit("add_self_improvement", "ok", title, map[string]any{"kind": kind})
 	return "self-improvement item recorded", nil
 }
 
@@ -363,7 +375,11 @@ func (a *appRuntime) PromoteSelfImprovement(ctx context.Context, title string, d
 		return "", fmt.Errorf("promoting self improvement requires owner context")
 	}
 	prompt := "Work on this self-improvement task for Qorvexus.\nTitle: " + title + "\nDescription: " + description + "\nMake concrete progress and use tools if needed."
-	return a.EnqueueTask(ctx, "self-improvement: "+title, prompt, modelName, "")
+	out, err := a.EnqueueTask(ctx, "self-improvement: "+title, prompt, modelName, "")
+	if err == nil {
+		a.logAudit("promote_self_improvement", "ok", title, map[string]any{"model": modelName})
+	}
+	return out, err
 }
 
 func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {
@@ -377,7 +393,7 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("outbound social messages require owner context")
 	}
-	return a.connectors.Send(ctx, channel, social.OutboundMessage{
+	out, err := a.connectors.Send(ctx, channel, social.OutboundMessage{
 		Channel:   channel,
 		ThreadID:  threadID,
 		Recipient: recipient,
@@ -389,10 +405,51 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 			ReplyAsAgent: true,
 		},
 	})
+	if err == nil {
+		a.logAudit("send_social_message", "ok", channel, map[string]any{"thread_id": threadID, "recipient": recipient})
+	}
+	return out, err
 }
 
 func (a *appRuntime) ListSocialConnectors(_ context.Context) (string, error) {
 	raw, err := json.MarshalIndent(a.connectors.List(), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) RetryQueueTask(ctx context.Context, id string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("retrying queue tasks requires owner context")
+	}
+	if err := a.queue.Retry(id); err != nil {
+		return "", err
+	}
+	a.logAudit("retry_queue_task", "ok", id, nil)
+	return "queue task retried", nil
+}
+
+func (a *appRuntime) UpdateSelfImprovementStatus(ctx context.Context, id string, status string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("updating self improvement status requires owner context")
+	}
+	if err := a.self.UpdateStatus(id, status); err != nil {
+		return "", err
+	}
+	a.logAudit("update_self_improvement_status", "ok", id, map[string]any{"status": status})
+	return "self improvement status updated", nil
+}
+
+func (a *appRuntime) ListAudit(_ context.Context, limit int) (string, error) {
+	if !a.cfg.Audit.Enabled {
+		return "[]", nil
+	}
+	items, err := a.audit.Recent(limit)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -429,4 +486,16 @@ func ownerAllowedFromContext(ctx context.Context) bool {
 		return false
 	}
 	return convo.IsOwner || convo.Trust == types.TrustOwner
+}
+
+func (a *appRuntime) logAudit(action string, status string, target string, metadata map[string]any) {
+	if !a.cfg.Audit.Enabled {
+		return
+	}
+	_ = a.audit.Append(audit.Entry{
+		Action:   action,
+		Status:   status,
+		Target:   target,
+		Metadata: metadata,
+	})
 }

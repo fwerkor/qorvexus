@@ -14,6 +14,7 @@ Current baseline includes:
 - Durable memory store and persistent async task queue
 - Social gateway foundations with owner-aware trust boundaries and inbound webhook handling
 - Self-improvement primitives for reading config, writing skills, and maintaining a self-evolution backlog
+- Audit logging for high-impact actions such as self-modification, task promotion, scheduling, and social sending
 - Session persistence plus automatic context compression through a summarizer model
 - Cron manager for recurring background runs
 
