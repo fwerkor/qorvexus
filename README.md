@@ -12,7 +12,7 @@ Current baseline includes:
 - Built-in web control panel for config editing, runtime inspection, queue/session visibility, and ad-hoc execution
 - Command policy engine with dangerous-command blocking
 - Durable memory store and persistent async task queue
-- Social gateway foundations with owner-aware trust boundaries and inbound webhook handling
+- Social gateway foundations with owner-aware trust boundaries and inbound channel handling
 - Self-improvement primitives for reading config, writing skills, and maintaining a self-evolution backlog
 - Audit logging for high-impact actions such as self-modification, task promotion, scheduling, and social sending
 - Session persistence plus automatic context compression
@@ -122,29 +122,22 @@ Inspect the queue:
 
 ## Telegram
 
-To use Telegram in webhook mode:
+Telegram uses polling by default.
 
-1. Set `social.telegram_bot_token`, `social.public_base_url`, and `social.webhook_secret` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
-2. Start Qorvexus with `./qorvexus start`.
-3. Register the webhook with Telegram:
+1. Set `social.telegram_bot_token` in [qorvexus.yaml](/root/project/qorvexus/qorvexus.yaml).
+2. Keep `social.telegram_mode: polling`.
+3. Start Qorvexus with `./qorvexus start`.
 
-```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "url": "https://your-public-domain.example/webhooks/telegram",
-    "secret_token": "change-me"
-  }'
-```
+Qorvexus will call Telegram `getUpdates`, ingest new messages through the social layer, and send replies back through the Telegram Bot API. No webhook or public callback URL is required.
 
-When Telegram sends updates to that webhook, Qorvexus will ingest them through the social adapter layer and automatically send the agent reply back through the Telegram Bot API.
+Webhook mode still exists as an advanced option, but it is no longer the default path.
 
 Manual social-style inbound test:
 
 ```bash
 curl -X POST http://127.0.0.1:7788/api/social/inbound \
   -H 'Content-Type: application/json' \
-  -d '{"channel":"telegram","thread_id":"chat-1","sender_id":"owner","sender_name":"fwerkor","text":"Summarize today and draft replies I should send."}'
+  -d '{"channel":"telegram","thread_id":"chat-1","sender_id":"owner","sender_name":"owner","text":"Summarize today and draft replies I should send."}'
 ```
 
 ## Next Expansion Paths

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -20,6 +22,15 @@ type TelegramWebhookAdapter struct {
 	webhookSecret string
 }
 
+type TelegramPoller struct {
+	token          string
+	apiBaseURL     string
+	httpClient     *http.Client
+	timeoutSeconds int
+	idleDelay      time.Duration
+	offset         int64
+}
+
 func NewTelegramConnector(token string) *TelegramConnector {
 	return &TelegramConnector{
 		token: token,
@@ -30,6 +41,24 @@ func NewTelegramConnector(token string) *TelegramConnector {
 }
 
 func (c *TelegramConnector) Name() string { return "telegram" }
+
+func NewTelegramPoller(token string, timeoutSeconds int, idleDelay time.Duration) *TelegramPoller {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 30
+	}
+	if idleDelay < 0 {
+		idleDelay = 0
+	}
+	return &TelegramPoller{
+		token:          token,
+		apiBaseURL:     "https://api.telegram.org",
+		timeoutSeconds: timeoutSeconds,
+		idleDelay:      idleDelay,
+		httpClient: &http.Client{
+			Timeout: time.Duration(timeoutSeconds+15) * time.Second,
+		},
+	}
+}
 
 func NewTelegramWebhookAdapter(path string, webhookSecret string) *TelegramWebhookAdapter {
 	return &TelegramWebhookAdapter{
@@ -101,6 +130,120 @@ func TelegramWebhookURL(baseURL string, path string) string {
 	return strings.TrimRight(baseURL, "/") + ensureLeadingSlash(path)
 }
 
+func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, Envelope) error) error {
+	if err := p.deleteWebhook(ctx); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		updates, err := p.getUpdates(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if p.idleDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(p.idleDelay):
+				}
+			}
+			continue
+		}
+
+		for _, update := range updates {
+			if update.UpdateID >= p.offset {
+				p.offset = update.UpdateID + 1
+			}
+			env, ok := TelegramEnvelope(update)
+			if !ok {
+				continue
+			}
+			if err := handle(ctx, env); err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+
+		if len(updates) == 0 && p.idleDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(p.idleDelay):
+			}
+		}
+	}
+}
+
+func (p *TelegramPoller) deleteWebhook(ctx context.Context) error {
+	form := url.Values{}
+	form.Set("drop_pending_updates", "false")
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/deleteWebhook",
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var parsed telegramAPIResponse[bool]
+	if err := json.Unmarshal(raw, &parsed); err == nil && !parsed.OK {
+		return fmt.Errorf("telegram deleteWebhook failed: %s", parsed.Description)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telegram deleteWebhook returned %s", resp.Status)
+	}
+	return nil
+}
+
+func (p *TelegramPoller) getUpdates(ctx context.Context) ([]TelegramUpdate, error) {
+	form := url.Values{}
+	form.Set("timeout", fmt.Sprintf("%d", p.timeoutSeconds))
+	form.Set("offset", fmt.Sprintf("%d", p.offset))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/getUpdates",
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("telegram getUpdates returned %s", resp.Status)
+	}
+	var parsed telegramAPIResponse[[]TelegramUpdate]
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, err
+	}
+	if !parsed.OK {
+		return nil, fmt.Errorf("telegram getUpdates failed: %s", parsed.Description)
+	}
+	return parsed.Result, nil
+}
+
 func ensureLeadingSlash(path string) string {
 	if strings.HasPrefix(path, "/") {
 		return path
@@ -113,6 +256,12 @@ type TelegramUpdate struct {
 	Message  *TelegramMessage `json:"message,omitempty"`
 	Edited   *TelegramMessage `json:"edited_message,omitempty"`
 	Channel  *TelegramMessage `json:"channel_post,omitempty"`
+}
+
+type telegramAPIResponse[T any] struct {
+	OK          bool   `json:"ok"`
+	Result      T      `json:"result"`
+	Description string `json:"description,omitempty"`
 }
 
 type TelegramMessage struct {

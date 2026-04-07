@@ -103,6 +103,9 @@ type SocialConfig struct {
 	WebhookSecret                 string   `yaml:"webhook_secret"`
 	PublicBaseURL                 string   `yaml:"public_base_url"`
 	TelegramBotToken              string   `yaml:"telegram_bot_token"`
+	TelegramMode                  string   `yaml:"telegram_mode"`
+	TelegramPollTimeoutSeconds    int      `yaml:"telegram_poll_timeout_seconds"`
+	TelegramPollIntervalSeconds   int      `yaml:"telegram_poll_interval_seconds"`
 	TelegramWebhookPath           string   `yaml:"telegram_webhook_path"`
 }
 
@@ -235,6 +238,15 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
+	}
+	if strings.TrimSpace(c.Social.TelegramMode) == "" {
+		c.Social.TelegramMode = "polling"
+	}
+	if c.Social.TelegramPollTimeoutSeconds <= 0 {
+		c.Social.TelegramPollTimeoutSeconds = 30
+	}
+	if c.Social.TelegramPollIntervalSeconds <= 0 {
+		c.Social.TelegramPollIntervalSeconds = 1
 	}
 	if c.Social.TelegramWebhookPath == "" {
 		c.Social.TelegramWebhookPath = "/webhooks/telegram"

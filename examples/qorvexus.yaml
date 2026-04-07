@@ -26,6 +26,7 @@ social:
   enabled: true
   allowed_channels:
     - telegram
+  telegram_mode: polling
   telegram_bot_token: ""
 self:
   enabled: true

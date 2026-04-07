@@ -46,6 +46,7 @@ type appRuntime struct {
 	social      *social.Gateway
 	insights    *socialinsight.Analyzer
 	connectors  *social.Registry
+	telegram    *social.TelegramPoller
 	commitments *commitment.Store
 	self        *self.Manager
 	audit       *audit.Logger
@@ -137,8 +138,17 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 			token := strings.TrimSpace(cfg.Social.TelegramBotToken)
 			if token != "" {
 				app.connectors.Register(social.NewTelegramConnector(token))
+				if strings.EqualFold(cfg.Social.TelegramMode, "polling") {
+					app.telegram = social.NewTelegramPoller(
+						token,
+						cfg.Social.TelegramPollTimeoutSeconds,
+						time.Duration(cfg.Social.TelegramPollIntervalSeconds)*time.Second,
+					)
+				}
 			}
-			app.connectors.RegisterWebhook(social.NewTelegramWebhookAdapter(cfg.Social.TelegramWebhookPath, cfg.Social.WebhookSecret))
+			if strings.EqualFold(cfg.Social.TelegramMode, "webhook") {
+				app.connectors.RegisterWebhook(social.NewTelegramWebhookAdapter(cfg.Social.TelegramWebhookPath, cfg.Social.WebhookSecret))
+			}
 			continue
 		}
 		app.connectors.Register(social.NewFileConnector(channel, filepath.Join(cfg.DataDir, "social_outbox_"+channel+".jsonl")))
@@ -156,6 +166,16 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	}
 
 	return app, nil
+}
+
+func (a *appRuntime) RunTelegramPolling(ctx context.Context) error {
+	if a.telegram == nil {
+		return nil
+	}
+	return a.telegram.Run(ctx, func(runCtx context.Context, env social.Envelope) error {
+		_, err := a.HandleSocialEnvelope(runCtx, env)
+		return err
+	})
 }
 
 func (a *appRuntime) RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error) {
