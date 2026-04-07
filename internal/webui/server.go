@@ -24,6 +24,7 @@ type App interface {
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
 	ListSocialConnectors(ctx context.Context) (string, error)
 	ListCommitments(ctx context.Context, limit int) (string, error)
+	CommitmentSummary(ctx context.Context) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
@@ -71,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
 	mux.HandleFunc("/api/social/connectors", s.handleSocialConnectors)
 	mux.HandleFunc("/api/commitments", s.handleCommitments)
+	mux.HandleFunc("/api/commitments/summary", s.handleCommitmentSummary)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
@@ -168,6 +170,16 @@ func (s *Server) handleSocialConnectors(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCommitments(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.app.ListCommitments(r.Context(), 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleCommitmentSummary(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.CommitmentSummary(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -480,7 +492,11 @@ const dashboardHTML = `<!doctype html>
       </section>
       <section class="card">
         <h2>Commitments</h2>
-        <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
+        <div class="row">
+          <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
+          <button class="secondary" onclick="loadCommitmentSummary()">Refresh Summary</button>
+        </div>
+        <pre id="commitments-summary-output"></pre>
         <pre id="commitments-output"></pre>
         <div class="row">
           <input id="commitment-id" placeholder="Commitment ID">
@@ -586,6 +602,10 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/commitments");
       document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function loadCommitmentSummary() {
+      const data = await api("/api/commitments/summary");
+      document.getElementById("commitments-summary-output").textContent = JSON.stringify(data, null, 2);
+    }
     async function simulateSocial() {
       const payload = {
         channel: document.getElementById("social-channel").value,
@@ -598,6 +618,7 @@ const dashboardHTML = `<!doctype html>
       document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
       loadSocial();
       loadCommitments();
+      loadCommitmentSummary();
       loadQueue();
       loadAudit();
     }
@@ -609,6 +630,7 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/commitments/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
       document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
       loadCommitments();
+      loadCommitmentSummary();
       loadAudit();
     }
     async function loadAudit() {
@@ -631,7 +653,7 @@ const dashboardHTML = `<!doctype html>
       html += "</tbody></table>";
       return html;
     }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadCommitments(); loadAudit();
+    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadCommitments(); loadCommitmentSummary(); loadAudit();
   </script>
 </body>
 </html>`

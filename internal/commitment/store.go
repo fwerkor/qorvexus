@@ -16,6 +16,7 @@ const (
 	StatusOpen      Status = "open"
 	StatusCompleted Status = "completed"
 	StatusCanceled  Status = "canceled"
+	StatusOverdue   Status = "overdue"
 )
 
 type Entry struct {
@@ -36,6 +37,18 @@ type Entry struct {
 type Store struct {
 	path string
 	mu   sync.Mutex
+}
+
+type Summary struct {
+	Total         int            `json:"total"`
+	Open          int            `json:"open"`
+	Completed     int            `json:"completed"`
+	Canceled      int            `json:"canceled"`
+	Overdue       int            `json:"overdue"`
+	WithDueHint   int            `json:"with_due_hint"`
+	ByChannel     map[string]int `json:"by_channel"`
+	ByTrust       map[string]int `json:"by_trust"`
+	LastUpdatedAt time.Time      `json:"last_updated_at,omitempty"`
 }
 
 func NewStore(path string) *Store {
@@ -92,6 +105,45 @@ func (s *Store) UpdateStatus(id string, status Status) error {
 		}
 	}
 	return fmt.Errorf("commitment %q not found", id)
+}
+
+func (s *Store) Summary() (Summary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return Summary{}, err
+	}
+	out := Summary{
+		ByChannel: map[string]int{},
+		ByTrust:   map[string]int{},
+	}
+	for _, item := range items {
+		out.Total++
+		switch item.Status {
+		case StatusOpen:
+			out.Open++
+		case StatusCompleted:
+			out.Completed++
+		case StatusCanceled:
+			out.Canceled++
+		case StatusOverdue:
+			out.Overdue++
+		}
+		if item.DueHint != "" {
+			out.WithDueHint++
+		}
+		if item.Channel != "" {
+			out.ByChannel[item.Channel]++
+		}
+		if item.Trust != "" {
+			out.ByTrust[item.Trust]++
+		}
+		if item.UpdatedAt.After(out.LastUpdatedAt) {
+			out.LastUpdatedAt = item.UpdatedAt
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) AttachTask(id string, taskID string) error {

@@ -520,6 +520,18 @@ func (a *appRuntime) ListCommitments(_ context.Context, limit int) (string, erro
 	return string(raw), nil
 }
 
+func (a *appRuntime) CommitmentSummary(_ context.Context) (string, error) {
+	summary, err := a.commitments.Summary()
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func (a *appRuntime) UpdateCommitmentStatus(ctx context.Context, id string, status string) (string, error) {
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("updating commitments requires owner context")
@@ -676,6 +688,36 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 		}
 	}
 	for _, suggestion := range result.Commitments {
+		relatedTaskID := followUpTaskID
+		if a.cfg.Queue.Enabled && (suggestion.DueHint != "" || relatedTaskID == "") {
+			task, err := a.queue.Add(taskqueue.Task{
+				Name: "commitment-review: " + suggestion.Summary,
+				Prompt: strings.TrimSpace(fmt.Sprintf(
+					"Review and advance this commitment for Qorvexus.\n"+
+						"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\n"+
+						"Recent inbound message: %s\nRecent agent response: %s\n"+
+						"Decide whether to prepare a deliverable, send a follow-up, ask the owner for approval, or schedule further work. Respect authority boundaries and keep the commitment moving.",
+					env.Channel,
+					env.ThreadID,
+					suggestion.Counterparty,
+					env.Context.Trust,
+					suggestion.Summary,
+					suggestion.DueHint,
+					env.Text,
+					response,
+				)),
+				Model:     a.cfg.Agent.DefaultModel,
+				SessionID: "commitment-review-" + sanitize(env.Channel+"-"+env.ThreadID+"-"+env.SenderID),
+			})
+			if err == nil {
+				relatedTaskID = task.ID
+				a.logAudit(ctx, "enqueue_commitment_review", "ok", task.ID, map[string]any{
+					"summary":      suggestion.Summary,
+					"counterparty": suggestion.Counterparty,
+					"due_hint":     suggestion.DueHint,
+				})
+			}
+		}
 		entry, err := a.commitments.Append(commitment.Entry{
 			Channel:       env.Channel,
 			ThreadID:      env.ThreadID,
@@ -684,7 +726,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 			DueHint:       suggestion.DueHint,
 			Trust:         string(env.Context.Trust),
 			Source:        "social:" + env.Channel,
-			RelatedTaskID: followUpTaskID,
+			RelatedTaskID: relatedTaskID,
 		})
 		if err == nil {
 			a.logAudit(ctx, "record_social_commitment", "ok", entry.ID, map[string]any{

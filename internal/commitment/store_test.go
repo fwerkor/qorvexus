@@ -40,3 +40,22 @@ func TestStoreAppendAndUpdateStatus(t *testing.T) {
 		t.Fatalf("unexpected stored commitment: %+v", items[0])
 	}
 }
+
+func TestStoreSummary(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "commitments.jsonl"))
+
+	_, _ = store.Append(Entry{Channel: "telegram", Summary: "Send quote", DueHint: "tomorrow", Trust: "external"})
+	_, _ = store.Append(Entry{Channel: "slack", Summary: "Share update", Trust: "trusted", Status: StatusCompleted})
+	_, _ = store.Append(Entry{Channel: "telegram", Summary: "Check back", Trust: "external", Status: StatusOverdue})
+
+	summary, err := store.Summary()
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if summary.Total != 3 || summary.Open != 1 || summary.Completed != 1 || summary.Overdue != 1 {
+		t.Fatalf("unexpected summary counts: %+v", summary)
+	}
+	if summary.WithDueHint != 1 || summary.ByChannel["telegram"] != 2 || summary.ByTrust["external"] != 2 {
+		t.Fatalf("unexpected summary breakdown: %+v", summary)
+	}
+}
