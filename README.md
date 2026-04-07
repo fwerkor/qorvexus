@@ -76,7 +76,10 @@ Stop it after the file appears, then add your keys:
 ```yaml
 models:
   primary:
+    provider: openai-compatible
+    base_url: https://api.openai.com/v1
     api_key: "your-key"
+    model: gpt-4.1
 
 social:
   telegram:

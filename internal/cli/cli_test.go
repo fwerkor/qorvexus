@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"qorvexus/internal/config"
@@ -41,5 +42,18 @@ func TestSampleConfigIsMinimalButRunnable(t *testing.T) {
 	primary := cfg.Models["primary"]
 	if primary.Provider != "openai-compatible" || primary.BaseURL != "https://api.openai.com/v1" || primary.Model != "gpt-4.1" {
 		t.Fatalf("expected loader to fill primary model defaults, got %+v", primary)
+	}
+}
+
+func TestSampleConfigKeepsModelConnectionFieldsVisible(t *testing.T) {
+	text := sampleConfig()
+	for _, needle := range []string{
+		"provider: openai-compatible",
+		"base_url: https://api.openai.com/v1",
+		"model: gpt-4.1",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("expected sample config to include %q", needle)
+		}
 	}
 }

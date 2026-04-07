@@ -262,7 +262,10 @@ func ensureConfigExists(path string) error {
 func sampleConfig() string {
 	return `models:
   primary:
+    provider: openai-compatible
+    base_url: https://api.openai.com/v1
     api_key: ""
+    model: gpt-4.1
 scheduler:
   enabled: true
 memory:
