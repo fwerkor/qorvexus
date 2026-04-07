@@ -15,11 +15,13 @@ type Config struct {
 	Skills    SkillsConfig           `yaml:"skills"`
 	Models    map[string]ModelConfig `yaml:"models"`
 	Agent     AgentConfig            `yaml:"agent"`
+	Identity  IdentityConfig         `yaml:"identity"`
 	Tools     ToolsConfig            `yaml:"tools"`
 	Scheduler SchedulerConfig        `yaml:"scheduler"`
 	Memory    MemoryConfig           `yaml:"memory"`
 	Queue     QueueConfig            `yaml:"queue"`
 	Web       WebConfig              `yaml:"web"`
+	Social    SocialConfig           `yaml:"social"`
 }
 
 type SkillsConfig struct {
@@ -63,6 +65,12 @@ type ToolsConfig struct {
 	BlockedCommands       []string `yaml:"blocked_commands"`
 }
 
+type IdentityConfig struct {
+	OwnerIDs     []string `yaml:"owner_ids"`
+	OwnerAliases []string `yaml:"owner_aliases"`
+	TrustedIDs   []string `yaml:"trusted_ids"`
+}
+
 type SchedulerConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	TaskFile string `yaml:"task_file"`
@@ -83,6 +91,13 @@ type QueueConfig struct {
 type WebConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Address string `yaml:"address"`
+}
+
+type SocialConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	AllowedChannels []string `yaml:"allowed_channels"`
+	InboxFile       string   `yaml:"inbox_file"`
+	WebhookSecret   string   `yaml:"webhook_secret"`
 }
 
 func Load(path string) (*Config, error) {
@@ -148,6 +163,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Web.Address == "" {
 		c.Web.Address = "127.0.0.1:7788"
+	}
+	if c.Social.InboxFile == "" {
+		c.Social.InboxFile = filepath.Join(c.DataDir, "social_inbox.jsonl")
 	}
 	if c.Agent.DefaultModel == "" {
 		return errors.New("agent.default_model is required")

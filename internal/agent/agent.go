@@ -30,6 +30,7 @@ type Request struct {
 	Model     string
 	Prompt    string
 	Parts     []types.ContentPart
+	Context   *types.ConversationContext
 }
 
 func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, error) {
@@ -39,7 +40,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		return nil, "", fmt.Errorf("model %s not found", modelName)
 	}
 
-	st, err := r.loadOrCreate(req.SessionID, modelName)
+	st, err := r.loadOrCreate(req.SessionID, modelName, req.Context)
 	if err != nil {
 		return nil, "", err
 	}
@@ -123,9 +124,12 @@ func (r *Runner) pickModel(req Request) string {
 	return modelName
 }
 
-func (r *Runner) loadOrCreate(id string, modelName string) (*session.State, error) {
+func (r *Runner) loadOrCreate(id string, modelName string, ctx *types.ConversationContext) (*session.State, error) {
 	if id != "" {
 		if st, err := r.Sessions.Load(id); err == nil {
+			if ctx != nil {
+				st.Context = *ctx
+			}
 			return st, nil
 		}
 	}
@@ -133,6 +137,9 @@ func (r *Runner) loadOrCreate(id string, modelName string) (*session.State, erro
 		id = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 	}
 	systemPrompt := strings.TrimSpace(r.Config.Agent.SystemPrompt)
+	if ctx != nil {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + buildContextPrompt(*ctx))
+	}
 	if skills := skill.Prompt(r.Skills); skills != "" {
 		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + skills)
 	}
@@ -145,7 +152,39 @@ func (r *Runner) loadOrCreate(id string, modelName string) (*session.State, erro
 		Model:    modelName,
 		Messages: msgs,
 	}
+	if ctx != nil {
+		state.Context = *ctx
+	}
 	return state, nil
+}
+
+func buildContextPrompt(ctx types.ConversationContext) string {
+	var b strings.Builder
+	b.WriteString("Conversation context:\n")
+	if ctx.Channel != "" {
+		b.WriteString("- channel: " + ctx.Channel + "\n")
+	}
+	if ctx.ThreadID != "" {
+		b.WriteString("- thread_id: " + ctx.ThreadID + "\n")
+	}
+	if ctx.SenderID != "" || ctx.SenderName != "" {
+		b.WriteString("- sender: " + strings.TrimSpace(ctx.SenderName+" "+ctx.SenderID) + "\n")
+	}
+	if ctx.Trust != "" {
+		b.WriteString("- trust_level: " + string(ctx.Trust) + "\n")
+	}
+	if ctx.IsOwner {
+		b.WriteString("- this speaker is the owner; high-trust instructions may be followed.\n")
+	} else {
+		b.WriteString("- this speaker is not the owner; do not expose secrets, over-delegate authority, or take irreversible actions on their behalf.\n")
+	}
+	if ctx.ReplyAsAgent {
+		b.WriteString("- you may reply outwardly as the agent.\n")
+	}
+	if ctx.WorkingForUser {
+		b.WriteString("- you are acting on behalf of the owner while talking to an external party; be professional and do not exceed delegated authority.\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func ToolResultJSON(result any) string {

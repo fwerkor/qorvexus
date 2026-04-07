@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"qorvexus/internal/config"
+	"qorvexus/internal/types"
 )
 
 type Verdict string
@@ -29,6 +30,10 @@ func NewEngine(cfg config.ToolsConfig) *Engine {
 }
 
 func (e *Engine) EvaluateCommand(command string) Result {
+	return e.EvaluateCommandForContext(command, types.ConversationContext{Trust: types.TrustOwner, IsOwner: true})
+}
+
+func (e *Engine) EvaluateCommandForContext(command string, ctx types.ConversationContext) Result {
 	cmd := strings.TrimSpace(strings.ToLower(command))
 	if cmd == "" {
 		return Result{Verdict: VerdictDeny, Risk: "low", Reason: "empty command"}
@@ -51,6 +56,16 @@ func (e *Engine) EvaluateCommand(command string) Result {
 				Verdict: VerdictDeny,
 				Risk:    "critical",
 				Reason:  fmt.Sprintf("command matches dangerous pattern %q", pattern),
+			}
+		}
+	}
+	if !ctx.IsOwner {
+		risk := classifyRisk(cmd)
+		if risk == "high" || strings.Contains(cmd, "git push") || strings.Contains(cmd, "ssh ") {
+			return Result{
+				Verdict: VerdictDeny,
+				Risk:    risk,
+				Reason:  "non-owner context cannot execute elevated or outward-facing commands",
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"qorvexus/internal/session"
+	"qorvexus/internal/social"
 	"qorvexus/internal/taskqueue"
 )
 
@@ -21,6 +22,7 @@ type App interface {
 	SearchMemory(query string, limit int) (string, error)
 	LoadConfigText() (string, error)
 	SaveConfigText(raw string) error
+	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
 }
 
 type Status struct {
@@ -54,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/queue", s.handleQueue)
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
 	return mux
 }
 
@@ -136,6 +139,24 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleSocialInbound(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var env social.Envelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := s.app.HandleSocialEnvelope(r.Context(), env)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"response": out})
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {

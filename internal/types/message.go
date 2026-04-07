@@ -43,3 +43,23 @@ type ToolResult struct {
 	Content string `json:"content"`
 	Error   bool   `json:"error"`
 }
+
+type TrustLevel string
+
+const (
+	TrustOwner    TrustLevel = "owner"
+	TrustTrusted  TrustLevel = "trusted"
+	TrustExternal TrustLevel = "external"
+	TrustSystem   TrustLevel = "system"
+)
+
+type ConversationContext struct {
+	Channel        string     `json:"channel,omitempty" yaml:"channel,omitempty"`
+	ThreadID       string     `json:"thread_id,omitempty" yaml:"thread_id,omitempty"`
+	SenderID       string     `json:"sender_id,omitempty" yaml:"sender_id,omitempty"`
+	SenderName     string     `json:"sender_name,omitempty" yaml:"sender_name,omitempty"`
+	Trust          TrustLevel `json:"trust,omitempty" yaml:"trust,omitempty"`
+	IsOwner        bool       `json:"is_owner,omitempty" yaml:"is_owner,omitempty"`
+	ReplyAsAgent   bool       `json:"reply_as_agent,omitempty" yaml:"reply_as_agent,omitempty"`
+	WorkingForUser bool       `json:"working_for_user,omitempty" yaml:"working_for_user,omitempty"`
+}

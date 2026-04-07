@@ -13,11 +13,12 @@ import (
 )
 
 type State struct {
-	ID        string          `json:"id"`
-	Model     string          `json:"model"`
-	Messages  []types.Message `json:"messages"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID        string                    `json:"id"`
+	Model     string                    `json:"model"`
+	Messages  []types.Message           `json:"messages"`
+	Context   types.ConversationContext `json:"context,omitempty"`
+	CreatedAt time.Time                 `json:"created_at"`
+	UpdatedAt time.Time                 `json:"updated_at"`
 }
 
 type Store struct {

@@ -12,6 +12,7 @@ Current baseline includes:
 - Built-in web control panel for config editing, runtime inspection, queue/session visibility, and ad-hoc execution
 - Command policy engine with dangerous-command blocking
 - Durable memory store and persistent async task queue
+- Social gateway foundations with owner-aware trust boundaries and inbound webhook handling
 - Session persistence plus automatic context compression through a summarizer model
 - Cron manager for recurring background runs
 
@@ -30,6 +31,7 @@ internal/policy        command execution safety rules
 internal/scheduler     cron-backed task manager
 internal/session       persistent session store
 internal/skill         skill discovery and prompt injection
+internal/social        social-channel envelopes and owner/trust routing
 internal/taskqueue     async work queue and worker
 internal/tool          tool registry and built-in tools
 internal/types         shared protocol types
@@ -47,6 +49,7 @@ The goal is not a single hard-coded assistant, but an agent platform:
 - Skills are loadable from disk and remain compatible with the `SKILL.md` pattern used by OpenClaw.
 - Sessions, compression, and scheduling are explicit subsystems instead of scattered logic.
 - Multi-model discussion and child agents are built as orchestration services, not prompt hacks.
+- Conversation context can encode channel, sender identity, and trust boundaries so the agent knows when it is talking to the owner versus external parties.
 
 ## Quick Start
 
@@ -88,6 +91,14 @@ go build ./cmd/qorvexus
 
 ```bash
 ./qorvexus queue --config examples/qorvexus.yaml
+```
+
+9. Send a social-style inbound message:
+
+```bash
+curl -X POST http://127.0.0.1:7788/api/social/inbound \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","thread_id":"chat-1","sender_id":"owner","sender_name":"fwerkor","text":"Summarize today and draft replies I should send."}'
 ```
 
 ## Next Expansion Paths

@@ -20,8 +20,10 @@ import (
 	"qorvexus/internal/scheduler"
 	"qorvexus/internal/session"
 	"qorvexus/internal/skill"
+	"qorvexus/internal/social"
 	"qorvexus/internal/taskqueue"
 	"qorvexus/internal/tool"
+	"qorvexus/internal/types"
 	"qorvexus/internal/webui"
 )
 
@@ -37,6 +39,7 @@ type appRuntime struct {
 	worker     *taskqueue.Worker
 	webServer  *http.Server
 	startedAt  time.Time
+	social     *social.Gateway
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -105,6 +108,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		Queue:        app.queue,
 		PollInterval: time.Duration(cfg.Queue.PollInterval) * time.Second,
 	}
+	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
 
 	if cfg.Web.Enabled {
 		panel, err := webui.NewServer(app)
@@ -226,6 +230,12 @@ func (a *appRuntime) RunPrompt(ctx context.Context, prompt string, model string,
 		SessionID: sessionID,
 		Model:     model,
 		Prompt:    prompt,
+		Context: &types.ConversationContext{
+			Channel:  "web",
+			SenderID: "owner",
+			Trust:    types.TrustOwner,
+			IsOwner:  true,
+		},
 	})
 	return out, err
 }
@@ -251,6 +261,31 @@ func (a *appRuntime) LoadConfigText() (string, error) {
 
 func (a *appRuntime) SaveConfigText(raw string) error {
 	return webui.SaveConfigText(a.configPath, raw)
+}
+
+func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {
+	if a.social == nil {
+		return a.HandleEnvelope(ctx, env)
+	}
+	return a.social.Receive(ctx, env)
+}
+
+func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (string, error) {
+	sessionID := env.Channel + "-" + env.ThreadID
+	if sessionID == "-" || sessionID == "" {
+		sessionID = env.Channel + "-" + env.SenderID
+	}
+	var parts []types.ContentPart
+	for _, image := range env.Images {
+		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
+	}
+	_, out, err := a.runner.Run(ctx, agent.Request{
+		SessionID: sessionID,
+		Prompt:    env.Text,
+		Parts:     parts,
+		Context:   &env.Context,
+	})
+	return out, err
 }
 
 func sanitize(value string) string {

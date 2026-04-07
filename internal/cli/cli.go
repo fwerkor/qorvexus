@@ -249,6 +249,22 @@ queue:
 web:
   enabled: true
   address: 127.0.0.1:7788
+identity:
+  owner_ids:
+    - owner
+  owner_aliases:
+    - fwerkor
+  trusted_ids: []
+social:
+  enabled: true
+  allowed_channels:
+    - telegram
+    - discord
+    - slack
+    - x
+    - email
+  inbox_file: ./.qorvexus/social_inbox.jsonl
+  webhook_secret: change-me
 `
 }
 
