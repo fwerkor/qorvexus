@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"qorvexus/internal/agent"
@@ -62,17 +64,29 @@ const (
 )
 
 type planStepExecutionItem struct {
-	PlanID     string    `json:"plan_id"`
-	StepID     string    `json:"step_id"`
-	Title      string    `json:"title"`
-	Mode       string    `json:"mode"`
-	Status     string    `json:"status"`
-	TaskID     string    `json:"task_id,omitempty"`
-	SessionID  string    `json:"session_id,omitempty"`
-	Result     string    `json:"result,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	ExecutedAt time.Time `json:"executed_at"`
-	Plan       plan.Plan `json:"plan"`
+	PlanID         string    `json:"plan_id"`
+	StepID         string    `json:"step_id"`
+	Title          string    `json:"title"`
+	Mode           string    `json:"mode"`
+	Status         string    `json:"status"`
+	Attempts       int       `json:"attempts,omitempty"`
+	TaskID         string    `json:"task_id,omitempty"`
+	SessionID      string    `json:"session_id,omitempty"`
+	ReviewStatus   string    `json:"review_status,omitempty"`
+	VerifyStatus   string    `json:"verify_status,omitempty"`
+	RollbackResult string    `json:"rollback_result,omitempty"`
+	DegradeResult  string    `json:"degrade_result,omitempty"`
+	Result         string    `json:"result,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	ExecutedAt     time.Time `json:"executed_at"`
+	Plan           plan.Plan `json:"plan"`
+}
+
+type planCheckVerdict struct {
+	Verdict string   `json:"verdict"`
+	Summary string   `json:"summary"`
+	Issues  []string `json:"issues,omitempty"`
+	Raw     string   `json:"-"`
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -268,6 +282,9 @@ func (a *appRuntime) CreatePlan(ctx context.Context, item plan.Plan) (string, er
 		stepIDs[step.ID] = struct{}{}
 	}
 	for _, step := range item.Steps {
+		if _, err := parseFailureStrategy(string(step.FailureStrategy)); err != nil {
+			return "", fmt.Errorf("step %q: %w", step.Title, err)
+		}
 		for _, dep := range step.DependsOn {
 			if _, ok := stepIDs[dep]; !ok {
 				return "", fmt.Errorf("dependency %q must reference an existing explicit step id", dep)
@@ -322,9 +339,10 @@ func (a *appRuntime) UpdatePlanStep(ctx context.Context, input tool.PlanStepUpda
 		return "", fmt.Errorf("plan_id and step_id are required")
 	}
 	var (
-		stepStatus    plan.StepStatus
-		executionMode plan.ExecutionMode
-		err           error
+		stepStatus      plan.StepStatus
+		executionMode   plan.ExecutionMode
+		failureStrategy plan.FailureStrategy
+		err             error
 	)
 	if strings.TrimSpace(input.Status) != "" {
 		stepStatus, err = parsePlanStepStatus(input.Status)
@@ -334,6 +352,12 @@ func (a *appRuntime) UpdatePlanStep(ctx context.Context, input tool.PlanStepUpda
 	}
 	if strings.TrimSpace(input.ExecutionMode) != "" {
 		executionMode, err = parseExecutionMode(input.ExecutionMode)
+		if err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(input.FailureStrategy) != "" {
+		failureStrategy, err = parseFailureStrategy(input.FailureStrategy)
 		if err != nil {
 			return "", err
 		}
@@ -357,12 +381,68 @@ func (a *appRuntime) UpdatePlanStep(ctx context.Context, input tool.PlanStepUpda
 		if input.DependsOn != nil {
 			step.DependsOn = append([]string(nil), input.DependsOn...)
 		}
+		if input.MaxAttempts != nil && *input.MaxAttempts > 0 {
+			step.MaxAttempts = *input.MaxAttempts
+		}
+		if input.RetryBackoffSeconds != nil && *input.RetryBackoffSeconds >= 0 {
+			step.RetryBackoffSeconds = *input.RetryBackoffSeconds
+		}
+		if input.ReviewRequired != nil {
+			step.ReviewRequired = *input.ReviewRequired
+			step.ReviewStatus = pendingCheckStatus(item, *step, true)
+		}
+		if input.ReviewPrompt != "" {
+			step.ReviewPrompt = input.ReviewPrompt
+		}
+		if input.ReviewModel != "" {
+			step.ReviewModel = input.ReviewModel
+		}
+		if input.VerifyRequired != nil {
+			step.VerifyRequired = *input.VerifyRequired
+			step.VerifyStatus = pendingCheckStatus(item, *step, false)
+		}
+		if input.VerifyPrompt != "" {
+			step.VerifyPrompt = input.VerifyPrompt
+		}
+		if input.VerifyModel != "" {
+			step.VerifyModel = input.VerifyModel
+		}
+		if input.FailureStrategy != "" {
+			step.FailureStrategy = failureStrategy
+		}
+		if input.RollbackPrompt != "" {
+			step.RollbackPrompt = input.RollbackPrompt
+		}
+		if input.RollbackModel != "" {
+			step.RollbackModel = input.RollbackModel
+		}
+		if input.DegradePrompt != "" {
+			step.DegradePrompt = input.DegradePrompt
+		}
+		if input.DegradeModel != "" {
+			step.DegradeModel = input.DegradeModel
+		}
 		if input.Status != "" {
 			step.Status = stepStatus
 			if stepStatus == plan.StepStatusPlanned {
 				step.Error = ""
 				step.Result = ""
 				step.TaskID = ""
+				step.SessionID = ""
+				step.ReviewResult = ""
+				step.ReviewSessionID = ""
+				step.ReviewedAt = time.Time{}
+				step.VerifyResult = ""
+				step.VerifySessionID = ""
+				step.VerifiedAt = time.Time{}
+				step.RollbackResult = ""
+				step.RollbackSessionID = ""
+				step.RolledBackAt = time.Time{}
+				step.DegradeResult = ""
+				step.DegradeSessionID = ""
+				step.DegradedAt = time.Time{}
+				step.ReviewStatus = pendingCheckStatus(item, *step, true)
+				step.VerifyStatus = pendingCheckStatus(item, *step, false)
 				step.FinishedAt = time.Time{}
 			}
 		}
@@ -402,7 +482,7 @@ func (a *appRuntime) AdvancePlan(ctx context.Context, planID string, limit int) 
 		return "", fmt.Errorf("plan_id is required")
 	}
 	if limit <= 0 {
-		limit = 3
+		limit = 4
 	}
 	type advanceReport struct {
 		PlanID  string                  `json:"plan_id"`
@@ -424,12 +504,43 @@ func (a *appRuntime) AdvancePlan(ctx context.Context, planID string, limit int) 
 			}
 			break
 		}
-		action, err := a.executePlanStep(ctx, planID, runnable[0].ID, "")
-		if err != nil {
-			return "", err
+		waveLimit := item.MaxParallel
+		if waveLimit <= 0 {
+			waveLimit = 1
 		}
-		report.Actions = append(report.Actions, action)
-		report.Plan = action.Plan
+		remaining := limit - len(report.Actions)
+		if waveLimit > remaining {
+			waveLimit = remaining
+		}
+		if waveLimit > len(runnable) {
+			waveLimit = len(runnable)
+		}
+		selected := runnable[:waveLimit]
+		results := make([]planStepExecutionItem, len(selected))
+		errs := make([]error, len(selected))
+		var wg sync.WaitGroup
+		for i, step := range selected {
+			i := i
+			step := step
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[i], errs[i] = a.executePlanStep(ctx, planID, step.ID, "")
+			}()
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				return "", err
+			}
+		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].StepID < results[j].StepID
+		})
+		report.Actions = append(report.Actions, results...)
+		if len(results) > 0 {
+			report.Plan = results[len(results)-1].Plan
+		}
 	}
 	if report.Plan.ID == "" {
 		item, err := a.plans.Get(planID)
@@ -497,21 +608,12 @@ func (a *appRuntime) EnqueueTask(_ context.Context, name string, prompt string, 
 }
 
 func (a *appRuntime) RunQueuedTask(ctx context.Context, task taskqueue.Task) (string, error) {
+	if task.PlanID != "" && task.StepID != "" {
+		return a.runQueuedPlanStep(ctx, task)
+	}
 	sessionID := task.SessionID
 	if sessionID == "" {
 		sessionID = "queue-" + task.ID
-	}
-	if task.PlanID != "" && task.StepID != "" {
-		if _, err := a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
-			step.Status = plan.StepStatusRunning
-			step.SessionID = sessionID
-			step.Attempts++
-			step.StartedAt = time.Now().UTC()
-			step.TaskID = task.ID
-			return nil
-		}); err != nil {
-			return "", err
-		}
 	}
 	_, out, err := a.runner.Run(a.toolExecutionContext(ctx, sessionID), agent.Request{
 		SessionID: sessionID,
@@ -519,25 +621,6 @@ func (a *appRuntime) RunQueuedTask(ctx context.Context, task taskqueue.Task) (st
 		Prompt:    task.Prompt,
 		Context:   a.conversationContextForSubagent(ctx),
 	})
-	if task.PlanID != "" && task.StepID != "" {
-		now := time.Now().UTC()
-		if err != nil {
-			_, _ = a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
-				step.Status = plan.StepStatusFailed
-				step.Error = err.Error()
-				step.FinishedAt = now
-				return nil
-			})
-		} else {
-			_, _ = a.plans.UpdateStep(task.PlanID, task.StepID, func(item *plan.Plan, step *plan.Step) error {
-				step.Status = plan.StepStatusSucceeded
-				step.Result = out
-				step.Error = ""
-				step.FinishedAt = now
-				return nil
-			})
-		}
-	}
 	return out, err
 }
 
@@ -615,95 +698,456 @@ func (a *appRuntime) queuePlanStep(ctx context.Context, item plan.Plan, step pla
 		currentStep.SessionID = sessionID
 		currentStep.Error = ""
 		currentStep.Result = ""
+		currentStep.ReviewStatus = pendingCheckStatus(current, *currentStep, true)
+		currentStep.VerifyStatus = pendingCheckStatus(current, *currentStep, false)
 		return nil
 	})
 	if err != nil {
 		return planStepExecutionItem{}, err
 	}
+	updatedStep, _ := plan.FindStep(updated, step.ID)
 	a.logAudit(ctx, "queue_plan_step", "ok", item.ID+":"+step.ID, map[string]any{
 		"task_id": task.ID,
 		"mode":    "queued",
 	})
 	return planStepExecutionItem{
-		PlanID:     item.ID,
-		StepID:     step.ID,
-		Title:      step.Title,
-		Mode:       string(plan.ExecutionQueued),
-		Status:     string(plan.StepStatusQueued),
-		TaskID:     task.ID,
-		SessionID:  sessionID,
-		ExecutedAt: time.Now().UTC(),
-		Plan:       updated,
+		PlanID:       item.ID,
+		StepID:       step.ID,
+		Title:        step.Title,
+		Mode:         string(plan.ExecutionQueued),
+		Status:       string(plan.StepStatusQueued),
+		Attempts:     updatedStep.Attempts,
+		TaskID:       task.ID,
+		SessionID:    sessionID,
+		ReviewStatus: string(updatedStep.ReviewStatus),
+		VerifyStatus: string(updatedStep.VerifyStatus),
+		ExecutedAt:   time.Now().UTC(),
+		Plan:         updated,
 	}, nil
 }
 
 func (a *appRuntime) runPlanStepWithSubAgent(ctx context.Context, item plan.Plan, step plan.Step) (planStepExecutionItem, error) {
 	sessionID := planStepSessionID(item.ID, step.ID)
-	_, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
-		currentStep.Status = plan.StepStatusRunning
-		currentStep.SessionID = sessionID
-		currentStep.TaskID = ""
-		currentStep.Error = ""
-		currentStep.Result = ""
-		currentStep.Attempts++
-		currentStep.StartedAt = time.Now().UTC()
-		return nil
-	})
+	return a.executeManagedPlanStep(ctx, item.ID, step.ID, plan.ExecutionSubAgent, sessionID, "")
+}
+
+func (a *appRuntime) runQueuedPlanStep(ctx context.Context, task taskqueue.Task) (string, error) {
+	sessionID := task.SessionID
+	if sessionID == "" {
+		sessionID = planStepSessionID(task.PlanID, task.StepID)
+	}
+	report, err := a.executeManagedPlanStep(ctx, task.PlanID, task.StepID, plan.ExecutionQueued, sessionID, task.ID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(report.DegradeResult) != "" {
+		return report.DegradeResult, nil
+	}
+	return report.Result, nil
+}
+
+func (a *appRuntime) executeManagedPlanStep(ctx context.Context, planID string, stepID string, mode plan.ExecutionMode, sessionID string, taskID string) (planStepExecutionItem, error) {
+	item, err := a.plans.Get(planID)
 	if err != nil {
 		return planStepExecutionItem{}, err
 	}
-	out, runErr := a.runSubAgentWithSession(ctx, sessionID, resolvePlanStepModel(a.cfg, step), buildPlanStepPrompt(item, step))
-	now := time.Now().UTC()
-	if runErr != nil {
-		updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
-			currentStep.Status = plan.StepStatusFailed
-			currentStep.Error = runErr.Error()
-			currentStep.FinishedAt = now
-			return nil
-		})
+	step, ok := plan.FindStep(item, stepID)
+	if !ok {
+		return planStepExecutionItem{}, fmt.Errorf("step %q not found in plan %q", stepID, planID)
+	}
+	maxAttempts := step.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = item.DefaultMaxAttempts
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 2
+	}
+
+	var lastErr error
+	var lastOut string
+	for attempt := step.Attempts + 1; attempt <= maxAttempts; attempt++ {
+		item, step, err = a.markPlanStepAttemptStart(planID, stepID, sessionID, taskID, attempt)
 		if err != nil {
 			return planStepExecutionItem{}, err
 		}
-		a.logAudit(ctx, "execute_plan_step", "error", item.ID+":"+step.ID, map[string]any{
-			"mode":  "subagent",
-			"error": runErr.Error(),
-		})
-		return planStepExecutionItem{
-			PlanID:     item.ID,
-			StepID:     step.ID,
-			Title:      step.Title,
-			Mode:       string(plan.ExecutionSubAgent),
-			Status:     string(plan.StepStatusFailed),
-			SessionID:  sessionID,
-			Error:      runErr.Error(),
-			ExecutedAt: now,
-			Plan:       updated,
-		}, nil
+		lastOut, lastErr = a.runSubAgentWithSession(ctx, sessionID, resolvePlanStepModel(a.cfg, step), buildPlanStepPrompt(item, step))
+		if lastErr == nil {
+			step, item, lastErr = a.verifyAndReviewStep(ctx, item, step, sessionID, lastOut)
+			if lastErr == nil {
+				updated, err := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+					currentStep.Status = plan.StepStatusSucceeded
+					currentStep.Result = lastOut
+					currentStep.Error = ""
+					currentStep.FinishedAt = time.Now().UTC()
+					currentStep.ReviewStatus = step.ReviewStatus
+					currentStep.ReviewResult = step.ReviewResult
+					currentStep.ReviewSessionID = step.ReviewSessionID
+					currentStep.ReviewedAt = step.ReviewedAt
+					currentStep.VerifyStatus = step.VerifyStatus
+					currentStep.VerifyResult = step.VerifyResult
+					currentStep.VerifySessionID = step.VerifySessionID
+					currentStep.VerifiedAt = step.VerifiedAt
+					return nil
+				})
+				if err != nil {
+					return planStepExecutionItem{}, err
+				}
+				a.logAudit(ctx, "execute_plan_step", "ok", planID+":"+stepID, map[string]any{
+					"mode":          string(mode),
+					"attempts":      step.Attempts,
+					"review_status": step.ReviewStatus,
+					"verify_status": step.VerifyStatus,
+				})
+				return planStepExecutionItem{
+					PlanID:       planID,
+					StepID:       stepID,
+					Title:        step.Title,
+					Mode:         string(mode),
+					Status:       string(plan.StepStatusSucceeded),
+					Attempts:     step.Attempts,
+					TaskID:       taskID,
+					SessionID:    sessionID,
+					Result:       lastOut,
+					ReviewStatus: string(step.ReviewStatus),
+					VerifyStatus: string(step.VerifyStatus),
+					ExecutedAt:   time.Now().UTC(),
+					Plan:         updated,
+				}, nil
+			}
+		}
+
+		if attempt < maxAttempts {
+			if _, noteErr := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+				currentStep.Status = plan.StepStatusPlanned
+				currentStep.Error = ""
+				currentStep.TaskID = taskID
+				currentStep.SessionID = sessionID
+				currentStep.Notes = append(currentStep.Notes, fmt.Sprintf("attempt %d/%d failed, retrying automatically: %s", attempt, maxAttempts, truncateText(lastErr.Error(), 240)))
+				current.Notes = append(current.Notes, fmt.Sprintf("%s retry %d/%d: %s", currentStep.ID, attempt, maxAttempts, truncateText(lastErr.Error(), 200)))
+				return nil
+			}); noteErr != nil {
+				return planStepExecutionItem{}, noteErr
+			}
+			if step.RetryBackoffSeconds > 0 {
+				select {
+				case <-ctx.Done():
+					return planStepExecutionItem{}, ctx.Err()
+				case <-time.After(time.Duration(step.RetryBackoffSeconds) * time.Second):
+				}
+			}
+			continue
+		}
 	}
-	updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
-		currentStep.Status = plan.StepStatusSucceeded
-		currentStep.Result = out
+
+	return a.finalizeFailedPlanStep(ctx, planID, stepID, mode, sessionID, taskID, lastOut, lastErr)
+}
+
+func pendingCheckStatus(item *plan.Plan, step plan.Step, review bool) plan.CheckStatus {
+	if item == nil {
+		return plan.CheckStatusSkipped
+	}
+	if review {
+		if step.ReviewRequired || item.AutoReview {
+			return plan.CheckStatusPending
+		}
+		return plan.CheckStatusSkipped
+	}
+	if step.VerifyRequired || item.AutoVerify {
+		return plan.CheckStatusPending
+	}
+	return plan.CheckStatusSkipped
+}
+
+func (a *appRuntime) markPlanStepAttemptStart(planID string, stepID string, sessionID string, taskID string, attempt int) (plan.Plan, plan.Step, error) {
+	updated, err := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = plan.StepStatusRunning
+		currentStep.SessionID = sessionID
+		currentStep.TaskID = taskID
+		currentStep.Attempts = attempt
 		currentStep.Error = ""
-		currentStep.FinishedAt = now
+		currentStep.Result = ""
+		currentStep.StartedAt = time.Now().UTC()
+		currentStep.FinishedAt = time.Time{}
+		currentStep.ReviewStatus = pendingCheckStatus(current, *currentStep, true)
+		currentStep.ReviewResult = ""
+		currentStep.ReviewSessionID = ""
+		currentStep.ReviewedAt = time.Time{}
+		currentStep.VerifyStatus = pendingCheckStatus(current, *currentStep, false)
+		currentStep.VerifyResult = ""
+		currentStep.VerifySessionID = ""
+		currentStep.VerifiedAt = time.Time{}
+		currentStep.RollbackResult = ""
+		currentStep.RollbackSessionID = ""
+		currentStep.RolledBackAt = time.Time{}
+		currentStep.DegradeResult = ""
+		currentStep.DegradeSessionID = ""
+		currentStep.DegradedAt = time.Time{}
+		return nil
+	})
+	if err != nil {
+		return plan.Plan{}, plan.Step{}, err
+	}
+	step, ok := plan.FindStep(updated, stepID)
+	if !ok {
+		return plan.Plan{}, plan.Step{}, fmt.Errorf("step %q not found in plan %q after update", stepID, planID)
+	}
+	return updated, step, nil
+}
+
+func (a *appRuntime) verifyAndReviewStep(ctx context.Context, item plan.Plan, step plan.Step, sessionID string, out string) (plan.Step, plan.Plan, error) {
+	currentPlan := item
+	currentStep := step
+	if pendingCheckStatus(&currentPlan, currentStep, false) == plan.CheckStatusPending {
+		verifySession := auxiliaryPlanSessionID(item.ID, step.ID, "verify", currentStep.Attempts)
+		var err error
+		currentPlan, currentStep, err = a.runPlanCheck(
+			ctx,
+			currentPlan,
+			currentStep,
+			plan.StepStatusVerifying,
+			buildPlanVerifierPrompt(currentPlan, currentStep, out),
+			resolvePlanVerifyModel(a.cfg, currentPlan, currentStep),
+			verifySession,
+			false,
+		)
+		if err != nil {
+			return currentStep, currentPlan, err
+		}
+	}
+	if pendingCheckStatus(&currentPlan, currentStep, true) == plan.CheckStatusPending {
+		reviewSession := auxiliaryPlanSessionID(item.ID, step.ID, "review", currentStep.Attempts)
+		var err error
+		currentPlan, currentStep, err = a.runPlanCheck(
+			ctx,
+			currentPlan,
+			currentStep,
+			plan.StepStatusReviewing,
+			buildPlanReviewerPrompt(currentPlan, currentStep, out),
+			resolvePlanReviewModel(a.cfg, currentPlan, currentStep),
+			reviewSession,
+			true,
+		)
+		if err != nil {
+			return currentStep, currentPlan, err
+		}
+	}
+	return currentStep, currentPlan, nil
+}
+
+func (a *appRuntime) runPlanCheck(ctx context.Context, item plan.Plan, step plan.Step, stage plan.StepStatus, prompt string, modelName string, sessionID string, review bool) (plan.Plan, plan.Step, error) {
+	updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = stage
+		if review {
+			currentStep.ReviewStatus = plan.CheckStatusPending
+			currentStep.ReviewSessionID = sessionID
+		} else {
+			currentStep.VerifyStatus = plan.CheckStatusPending
+			currentStep.VerifySessionID = sessionID
+		}
+		return nil
+	})
+	if err != nil {
+		return plan.Plan{}, plan.Step{}, err
+	}
+	step, ok := plan.FindStep(updated, step.ID)
+	if !ok {
+		return plan.Plan{}, plan.Step{}, fmt.Errorf("step %q not found in plan %q after %s start", step.ID, item.ID, stage)
+	}
+
+	raw, runErr := a.runSubAgentWithSession(ctx, sessionID, modelName, prompt)
+	verdict := parsePlanCheckVerdict(raw)
+	if runErr == nil && verdict.Verdict == "" {
+		runErr = fmt.Errorf("%s returned an unreadable verdict", stage)
+	}
+
+	now := time.Now().UTC()
+	updated, err = a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = plan.StepStatusRunning
+		if review {
+			currentStep.ReviewSessionID = sessionID
+			currentStep.ReviewedAt = now
+			if runErr != nil {
+				currentStep.ReviewStatus = plan.CheckStatusFailed
+				currentStep.ReviewResult = runErr.Error()
+			} else {
+				currentStep.ReviewStatus = verdict.status()
+				currentStep.ReviewResult = verdict.display()
+			}
+		} else {
+			currentStep.VerifySessionID = sessionID
+			currentStep.VerifiedAt = now
+			if runErr != nil {
+				currentStep.VerifyStatus = plan.CheckStatusFailed
+				currentStep.VerifyResult = runErr.Error()
+			} else {
+				currentStep.VerifyStatus = verdict.status()
+				currentStep.VerifyResult = verdict.display()
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return plan.Plan{}, plan.Step{}, err
+	}
+	step, ok = plan.FindStep(updated, step.ID)
+	if !ok {
+		return plan.Plan{}, plan.Step{}, fmt.Errorf("step %q not found in plan %q after %s completion", step.ID, item.ID, stage)
+	}
+	if runErr != nil {
+		return updated, step, runErr
+	}
+	if verdict.status() != plan.CheckStatusPassed {
+		label := "verification"
+		if review {
+			label = "review"
+		}
+		return updated, step, fmt.Errorf("%s failed: %s", label, verdict.summary())
+	}
+	return updated, step, nil
+}
+
+func (a *appRuntime) finalizeFailedPlanStep(ctx context.Context, planID string, stepID string, mode plan.ExecutionMode, sessionID string, taskID string, lastOut string, lastErr error) (planStepExecutionItem, error) {
+	item, err := a.plans.Get(planID)
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	step, ok := plan.FindStep(item, stepID)
+	if !ok {
+		return planStepExecutionItem{}, fmt.Errorf("step %q not found in plan %q", stepID, planID)
+	}
+	failureMessage := "step failed"
+	if lastErr != nil && strings.TrimSpace(lastErr.Error()) != "" {
+		failureMessage = strings.TrimSpace(lastErr.Error())
+	}
+
+	rollbackResult := ""
+	if step.FailureStrategy == plan.FailureStrategyRollback || step.FailureStrategy == plan.FailureStrategyRollbackThenDegrade {
+		if strings.TrimSpace(step.RollbackPrompt) != "" {
+			rollbackSession := auxiliaryPlanSessionID(planID, stepID, "rollback", step.Attempts)
+			rollbackResult, err = a.runSubAgentWithSession(ctx, rollbackSession, resolvePlanRecoveryModel(a.cfg, step, step.RollbackModel), buildPlanRollbackPrompt(item, step, lastOut, failureMessage))
+			updateErr := a.recordPlanRecovery(planID, stepID, rollbackSession, rollbackResult, err, true)
+			if updateErr != nil {
+				return planStepExecutionItem{}, updateErr
+			}
+		}
+	}
+
+	degradeResult := ""
+	degraded := false
+	if step.FailureStrategy == plan.FailureStrategyDegrade || step.FailureStrategy == plan.FailureStrategyRollbackThenDegrade {
+		if strings.TrimSpace(step.DegradePrompt) != "" {
+			degradeSession := auxiliaryPlanSessionID(planID, stepID, "degrade", step.Attempts)
+			degradeResult, err = a.runSubAgentWithSession(ctx, degradeSession, resolvePlanRecoveryModel(a.cfg, step, step.DegradeModel), buildPlanDegradePrompt(item, step, lastOut, failureMessage))
+			if err == nil && strings.TrimSpace(degradeResult) != "" {
+				degraded = true
+			}
+			updateErr := a.recordPlanRecovery(planID, stepID, degradeSession, degradeResult, err, false)
+			if updateErr != nil {
+				return planStepExecutionItem{}, updateErr
+			}
+		}
+	}
+
+	finalStatus := plan.StepStatusFailed
+	finalError := failureMessage
+	finalResult := lastOut
+	if degraded {
+		finalStatus = plan.StepStatusDegraded
+		finalError = ""
+		finalResult = degradeResult
+	}
+
+	updated, err := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+		currentStep.Status = finalStatus
+		currentStep.Error = finalError
+		currentStep.Result = finalResult
+		currentStep.TaskID = taskID
+		currentStep.SessionID = sessionID
+		currentStep.FinishedAt = time.Now().UTC()
+		if degraded {
+			currentStep.DegradedAt = time.Now().UTC()
+			currentStep.Notes = append(currentStep.Notes, "degraded fallback completed")
+			current.Notes = append(current.Notes, fmt.Sprintf("%s degraded after failure: %s", currentStep.ID, truncateText(failureMessage, 180)))
+		} else {
+			currentStep.Notes = append(currentStep.Notes, "step failed after automatic retries")
+			current.Notes = append(current.Notes, fmt.Sprintf("%s failed after %d attempts: %s", currentStep.ID, currentStep.Attempts, truncateText(failureMessage, 180)))
+		}
 		return nil
 	})
 	if err != nil {
 		return planStepExecutionItem{}, err
 	}
-	a.logAudit(ctx, "execute_plan_step", "ok", item.ID+":"+step.ID, map[string]any{
-		"mode": "subagent",
+	finalStep, ok := plan.FindStep(updated, stepID)
+	if !ok {
+		return planStepExecutionItem{}, fmt.Errorf("step %q not found in plan %q after finalization", stepID, planID)
+	}
+	a.logAudit(ctx, "execute_plan_step", "ok", planID+":"+stepID, map[string]any{
+		"mode":             string(mode),
+		"attempts":         finalStep.Attempts,
+		"status":           finalStep.Status,
+		"review_status":    finalStep.ReviewStatus,
+		"verify_status":    finalStep.VerifyStatus,
+		"rollback_applied": strings.TrimSpace(finalStep.RollbackResult) != "",
+		"degraded":         finalStep.Status == plan.StepStatusDegraded,
 	})
-	return planStepExecutionItem{
-		PlanID:     item.ID,
-		StepID:     step.ID,
-		Title:      step.Title,
-		Mode:       string(plan.ExecutionSubAgent),
-		Status:     string(plan.StepStatusSucceeded),
-		SessionID:  sessionID,
-		Result:     out,
-		ExecutedAt: now,
-		Plan:       updated,
-	}, nil
+	report := planStepExecutionItem{
+		PlanID:         planID,
+		StepID:         stepID,
+		Title:          finalStep.Title,
+		Mode:           string(mode),
+		Status:         string(finalStep.Status),
+		Attempts:       finalStep.Attempts,
+		TaskID:         taskID,
+		SessionID:      sessionID,
+		ReviewStatus:   string(finalStep.ReviewStatus),
+		VerifyStatus:   string(finalStep.VerifyStatus),
+		RollbackResult: finalStep.RollbackResult,
+		DegradeResult:  finalStep.DegradeResult,
+		Result:         finalStep.Result,
+		Error:          finalStep.Error,
+		ExecutedAt:     time.Now().UTC(),
+		Plan:           updated,
+	}
+	if degraded {
+		return report, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf(finalError)
+	}
+	return report, lastErr
+}
+
+func (a *appRuntime) recordPlanRecovery(planID string, stepID string, sessionID string, out string, recoveryErr error, rollback bool) error {
+	_, err := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+		now := time.Now().UTC()
+		if rollback {
+			currentStep.RollbackSessionID = sessionID
+			currentStep.RolledBackAt = now
+			if recoveryErr != nil {
+				currentStep.RollbackResult = "rollback failed: " + recoveryErr.Error()
+			} else {
+				currentStep.RollbackResult = strings.TrimSpace(out)
+			}
+		} else {
+			currentStep.DegradeSessionID = sessionID
+			currentStep.DegradedAt = now
+			if recoveryErr != nil {
+				currentStep.DegradeResult = "degrade failed: " + recoveryErr.Error()
+			} else {
+				currentStep.DegradeResult = strings.TrimSpace(out)
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+func auxiliaryPlanSessionID(planID string, stepID string, kind string, attempt int) string {
+	base := planStepSessionID(planID, stepID)
+	if attempt <= 0 {
+		return fmt.Sprintf("%s-%s", base, sanitize(kind))
+	}
+	return fmt.Sprintf("%s-%s-%d", base, sanitize(kind), attempt)
 }
 
 func buildPlanStepPrompt(item plan.Plan, step plan.Step) string {
@@ -762,7 +1206,153 @@ func buildPlanStepPrompt(item plan.Plan, step plan.Step) string {
 	return strings.TrimSpace(b.String())
 }
 
+func buildPlanVerifierPrompt(item plan.Plan, step plan.Step, executionOutput string) string {
+	var b strings.Builder
+	b.WriteString("You are the verifier for a durable plan step in Qorvexus.\n")
+	b.WriteString("Plan goal: ")
+	b.WriteString(strings.TrimSpace(item.Goal))
+	b.WriteString("\n")
+	b.WriteString("Step: ")
+	b.WriteString(strings.TrimSpace(step.Title))
+	b.WriteString("\n")
+	if details := strings.TrimSpace(step.Details); details != "" {
+		b.WriteString("Step details: ")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	if instruction := strings.TrimSpace(step.VerifyPrompt); instruction != "" {
+		b.WriteString("Verification focus: ")
+		b.WriteString(instruction)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("Verification focus: confirm the step result actually satisfies the requested work, dependency expectations, and does not leave a hidden blocker.\n")
+	}
+	b.WriteString("Execution output:\n")
+	b.WriteString(executionOutput)
+	b.WriteString("\n")
+	b.WriteString("Return JSON only with keys verdict, summary, and issues. verdict must be pass or fail.\n")
+	b.WriteString(`Example: {"verdict":"pass","summary":"Result is complete and usable.","issues":[]}`)
+	return strings.TrimSpace(b.String())
+}
+
+func buildPlanReviewerPrompt(item plan.Plan, step plan.Step, executionOutput string) string {
+	var b strings.Builder
+	b.WriteString("You are the reviewer for a durable plan step in Qorvexus.\n")
+	b.WriteString("Plan goal: ")
+	b.WriteString(strings.TrimSpace(item.Goal))
+	b.WriteString("\n")
+	b.WriteString("Step: ")
+	b.WriteString(strings.TrimSpace(step.Title))
+	b.WriteString("\n")
+	if details := strings.TrimSpace(step.Details); details != "" {
+		b.WriteString("Step details: ")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	if instruction := strings.TrimSpace(step.ReviewPrompt); instruction != "" {
+		b.WriteString("Review focus: ")
+		b.WriteString(instruction)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("Review focus: find quality issues, missing follow-through, safety concerns, or regression risk in the step result.\n")
+	}
+	b.WriteString("Execution output:\n")
+	b.WriteString(executionOutput)
+	b.WriteString("\n")
+	b.WriteString("Return JSON only with keys verdict, summary, and issues. verdict must be pass or fail.\n")
+	b.WriteString(`Example: {"verdict":"fail","summary":"The step did not prove the fix works.","issues":["No validation evidence was included."]}`)
+	return strings.TrimSpace(b.String())
+}
+
+func buildPlanRollbackPrompt(item plan.Plan, step plan.Step, executionOutput string, failureMessage string) string {
+	var b strings.Builder
+	b.WriteString("A durable plan step failed and needs a rollback.\n")
+	b.WriteString("Plan goal: ")
+	b.WriteString(strings.TrimSpace(item.Goal))
+	b.WriteString("\n")
+	b.WriteString("Step: ")
+	b.WriteString(strings.TrimSpace(step.Title))
+	b.WriteString("\n")
+	if details := strings.TrimSpace(step.Details); details != "" {
+		b.WriteString("Step details: ")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	b.WriteString("Failure: ")
+	b.WriteString(strings.TrimSpace(failureMessage))
+	b.WriteString("\n")
+	if result := strings.TrimSpace(executionOutput); result != "" {
+		b.WriteString("Failed execution output:\n")
+		b.WriteString(result)
+		b.WriteString("\n")
+	}
+	b.WriteString("Rollback instruction: ")
+	b.WriteString(strings.TrimSpace(step.RollbackPrompt))
+	b.WriteString("\n")
+	b.WriteString("Perform the rollback directly. Return a concise report of what you restored, cleaned up, or disabled.\n")
+	return strings.TrimSpace(b.String())
+}
+
+func buildPlanDegradePrompt(item plan.Plan, step plan.Step, executionOutput string, failureMessage string) string {
+	var b strings.Builder
+	b.WriteString("A durable plan step failed and now needs a degraded fallback.\n")
+	b.WriteString("Plan goal: ")
+	b.WriteString(strings.TrimSpace(item.Goal))
+	b.WriteString("\n")
+	b.WriteString("Step: ")
+	b.WriteString(strings.TrimSpace(step.Title))
+	b.WriteString("\n")
+	if details := strings.TrimSpace(step.Details); details != "" {
+		b.WriteString("Step details: ")
+		b.WriteString(details)
+		b.WriteString("\n")
+	}
+	b.WriteString("Failure: ")
+	b.WriteString(strings.TrimSpace(failureMessage))
+	b.WriteString("\n")
+	if result := strings.TrimSpace(executionOutput); result != "" {
+		b.WriteString("Failed execution output:\n")
+		b.WriteString(result)
+		b.WriteString("\n")
+	}
+	b.WriteString("Fallback instruction: ")
+	b.WriteString(strings.TrimSpace(step.DegradePrompt))
+	b.WriteString("\n")
+	b.WriteString("Produce the best safe fallback you can. Return the degraded result and explain what remains incomplete.\n")
+	return strings.TrimSpace(b.String())
+}
+
 func resolvePlanStepModel(cfg *config.Config, step plan.Step) string {
+	if strings.TrimSpace(step.Model) != "" {
+		return step.Model
+	}
+	return cfg.Agent.DefaultModel
+}
+
+func resolvePlanReviewModel(cfg *config.Config, item plan.Plan, step plan.Step) string {
+	if strings.TrimSpace(step.ReviewModel) != "" {
+		return step.ReviewModel
+	}
+	if strings.TrimSpace(item.ReviewModel) != "" {
+		return item.ReviewModel
+	}
+	return resolvePlanStepModel(cfg, step)
+}
+
+func resolvePlanVerifyModel(cfg *config.Config, item plan.Plan, step plan.Step) string {
+	if strings.TrimSpace(step.VerifyModel) != "" {
+		return step.VerifyModel
+	}
+	if strings.TrimSpace(item.VerifyModel) != "" {
+		return item.VerifyModel
+	}
+	return resolvePlanStepModel(cfg, step)
+}
+
+func resolvePlanRecoveryModel(cfg *config.Config, step plan.Step, preferred string) string {
+	if strings.TrimSpace(preferred) != "" {
+		return preferred
+	}
 	if strings.TrimSpace(step.Model) != "" {
 		return step.Model
 	}
@@ -789,6 +1379,65 @@ func truncateText(value string, limit int) string {
 	return string(runes[:limit]) + "..."
 }
 
+func (v planCheckVerdict) status() plan.CheckStatus {
+	switch strings.ToLower(strings.TrimSpace(v.Verdict)) {
+	case "pass", "passed", "ok", "approve", "approved":
+		return plan.CheckStatusPassed
+	case "skip", "skipped":
+		return plan.CheckStatusSkipped
+	case "fail", "failed", "reject", "rejected":
+		return plan.CheckStatusFailed
+	default:
+		return ""
+	}
+}
+
+func (v planCheckVerdict) summary() string {
+	if trimmed := strings.TrimSpace(v.Summary); trimmed != "" {
+		return trimmed
+	}
+	if len(v.Issues) > 0 {
+		return strings.TrimSpace(v.Issues[0])
+	}
+	return truncateText(v.Raw, 180)
+}
+
+func (v planCheckVerdict) display() string {
+	if strings.TrimSpace(v.Raw) != "" {
+		return strings.TrimSpace(v.Raw)
+	}
+	out := map[string]any{
+		"verdict": strings.ToLower(strings.TrimSpace(v.Verdict)),
+		"summary": v.Summary,
+	}
+	if len(v.Issues) > 0 {
+		out["issues"] = v.Issues
+	}
+	raw, _ := json.Marshal(out)
+	return string(raw)
+}
+
+func parsePlanCheckVerdict(raw string) planCheckVerdict {
+	result := planCheckVerdict{Raw: strings.TrimSpace(raw)}
+	if result.Raw == "" {
+		return result
+	}
+	if err := json.Unmarshal([]byte(result.Raw), &result); err == nil && result.status() != "" {
+		result.Verdict = strings.ToLower(strings.TrimSpace(result.Verdict))
+		result.Summary = strings.TrimSpace(result.Summary)
+		return result
+	}
+	lower := strings.ToLower(result.Raw)
+	switch {
+	case strings.Contains(lower, `"verdict":"pass"`), strings.HasPrefix(lower, "pass"), strings.Contains(lower, " looks good"), strings.Contains(lower, "approved"):
+		result.Verdict = "pass"
+	case strings.Contains(lower, `"verdict":"fail"`), strings.HasPrefix(lower, "fail"), strings.Contains(lower, "issue"), strings.Contains(lower, "missing"), strings.Contains(lower, "risk"):
+		result.Verdict = "fail"
+	}
+	result.Summary = truncateText(result.Raw, 200)
+	return result
+}
+
 func parsePlanStepStatus(value string) (plan.StepStatus, error) {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case string(plan.StepStatusPlanned):
@@ -797,8 +1446,14 @@ func parsePlanStepStatus(value string) (plan.StepStatus, error) {
 		return plan.StepStatusQueued, nil
 	case string(plan.StepStatusRunning):
 		return plan.StepStatusRunning, nil
+	case string(plan.StepStatusVerifying):
+		return plan.StepStatusVerifying, nil
+	case string(plan.StepStatusReviewing):
+		return plan.StepStatusReviewing, nil
 	case string(plan.StepStatusSucceeded):
 		return plan.StepStatusSucceeded, nil
+	case string(plan.StepStatusDegraded):
+		return plan.StepStatusDegraded, nil
 	case string(plan.StepStatusFailed):
 		return plan.StepStatusFailed, nil
 	case string(plan.StepStatusBlocked):
@@ -818,6 +1473,21 @@ func parseExecutionMode(value string) (plan.ExecutionMode, error) {
 		return plan.ExecutionQueued, nil
 	default:
 		return "", fmt.Errorf("unsupported execution mode %q", value)
+	}
+}
+
+func parseFailureStrategy(value string) (plan.FailureStrategy, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", string(plan.FailureStrategyFail):
+		return plan.FailureStrategyFail, nil
+	case string(plan.FailureStrategyRollback):
+		return plan.FailureStrategyRollback, nil
+	case string(plan.FailureStrategyDegrade):
+		return plan.FailureStrategyDegrade, nil
+	case string(plan.FailureStrategyRollbackThenDegrade):
+		return plan.FailureStrategyRollbackThenDegrade, nil
+	default:
+		return "", fmt.Errorf("unsupported failure strategy %q", value)
 	}
 }
 

@@ -14,18 +14,31 @@ import (
 type ThinkTool struct{}
 
 type PlanStepUpdateInput struct {
-	PlanID        string
-	StepID        string
-	Status        string
-	Title         string
-	Details       string
-	Prompt        string
-	Model         string
-	ExecutionMode string
-	DependsOn     []string
-	Note          string
-	Result        string
-	Error         string
+	PlanID              string
+	StepID              string
+	Status              string
+	Title               string
+	Details             string
+	Prompt              string
+	Model               string
+	ExecutionMode       string
+	DependsOn           []string
+	MaxAttempts         *int
+	RetryBackoffSeconds *int
+	ReviewRequired      *bool
+	ReviewPrompt        string
+	ReviewModel         string
+	VerifyRequired      *bool
+	VerifyPrompt        string
+	VerifyModel         string
+	FailureStrategy     string
+	RollbackPrompt      string
+	RollbackModel       string
+	DegradePrompt       string
+	DegradeModel        string
+	Note                string
+	Result              string
+	Error               string
 }
 
 type Runtime interface {
@@ -194,25 +207,44 @@ func NewCreatePlanTool(rt Runtime) *CreatePlanTool { return &CreatePlanTool{rt: 
 func (t *CreatePlanTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "create_plan",
-		Description: "Create a durable multi-step execution plan with dependencies that can be resumed and advanced later.",
+		Description: "Create a durable multi-step execution plan with dependencies, retries, reviewer/verifier gates, and recovery strategies.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"goal":       map[string]any{"type": "string"},
-				"summary":    map[string]any{"type": "string"},
-				"session_id": map[string]any{"type": "string"},
+				"goal":                 map[string]any{"type": "string"},
+				"summary":              map[string]any{"type": "string"},
+				"session_id":           map[string]any{"type": "string"},
+				"max_parallel":         map[string]any{"type": "integer"},
+				"default_max_attempts": map[string]any{"type": "integer"},
+				"auto_review":          map[string]any{"type": "boolean"},
+				"auto_verify":          map[string]any{"type": "boolean"},
+				"review_model":         map[string]any{"type": "string"},
+				"verify_model":         map[string]any{"type": "string"},
 				"steps": map[string]any{
 					"type": "array",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":             map[string]any{"type": "string"},
-							"title":          map[string]any{"type": "string"},
-							"details":        map[string]any{"type": "string"},
-							"prompt":         map[string]any{"type": "string"},
-							"model":          map[string]any{"type": "string"},
-							"depends_on":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-							"execution_mode": map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+							"id":                    map[string]any{"type": "string"},
+							"title":                 map[string]any{"type": "string"},
+							"details":               map[string]any{"type": "string"},
+							"prompt":                map[string]any{"type": "string"},
+							"model":                 map[string]any{"type": "string"},
+							"depends_on":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"execution_mode":        map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+							"max_attempts":          map[string]any{"type": "integer"},
+							"retry_backoff_seconds": map[string]any{"type": "integer"},
+							"review_required":       map[string]any{"type": "boolean"},
+							"review_prompt":         map[string]any{"type": "string"},
+							"review_model":          map[string]any{"type": "string"},
+							"verify_required":       map[string]any{"type": "boolean"},
+							"verify_prompt":         map[string]any{"type": "string"},
+							"verify_model":          map[string]any{"type": "string"},
+							"failure_strategy":      map[string]any{"type": "string", "enum": []string{"fail", "rollback", "degrade", "rollback_then_degrade"}},
+							"rollback_prompt":       map[string]any{"type": "string"},
+							"rollback_model":        map[string]any{"type": "string"},
+							"degrade_prompt":        map[string]any{"type": "string"},
+							"degrade_model":         map[string]any{"type": "string"},
 						},
 						"required": []string{"title"},
 					},
@@ -225,17 +257,36 @@ func (t *CreatePlanTool) Definition() types.ToolDefinition {
 
 func (t *CreatePlanTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
 	var input struct {
-		Goal      string `json:"goal"`
-		Summary   string `json:"summary"`
-		SessionID string `json:"session_id"`
-		Steps     []struct {
-			ID            string   `json:"id"`
-			Title         string   `json:"title"`
-			Details       string   `json:"details"`
-			Prompt        string   `json:"prompt"`
-			Model         string   `json:"model"`
-			DependsOn     []string `json:"depends_on"`
-			ExecutionMode string   `json:"execution_mode"`
+		Goal               string `json:"goal"`
+		Summary            string `json:"summary"`
+		SessionID          string `json:"session_id"`
+		MaxParallel        int    `json:"max_parallel"`
+		DefaultMaxAttempts int    `json:"default_max_attempts"`
+		AutoReview         bool   `json:"auto_review"`
+		AutoVerify         bool   `json:"auto_verify"`
+		ReviewModel        string `json:"review_model"`
+		VerifyModel        string `json:"verify_model"`
+		Steps              []struct {
+			ID                  string   `json:"id"`
+			Title               string   `json:"title"`
+			Details             string   `json:"details"`
+			Prompt              string   `json:"prompt"`
+			Model               string   `json:"model"`
+			DependsOn           []string `json:"depends_on"`
+			ExecutionMode       string   `json:"execution_mode"`
+			MaxAttempts         int      `json:"max_attempts"`
+			RetryBackoffSeconds int      `json:"retry_backoff_seconds"`
+			ReviewRequired      bool     `json:"review_required"`
+			ReviewPrompt        string   `json:"review_prompt"`
+			ReviewModel         string   `json:"review_model"`
+			VerifyRequired      bool     `json:"verify_required"`
+			VerifyPrompt        string   `json:"verify_prompt"`
+			VerifyModel         string   `json:"verify_model"`
+			FailureStrategy     string   `json:"failure_strategy"`
+			RollbackPrompt      string   `json:"rollback_prompt"`
+			RollbackModel       string   `json:"rollback_model"`
+			DegradePrompt       string   `json:"degrade_prompt"`
+			DegradeModel        string   `json:"degrade_model"`
 		} `json:"steps"`
 	}
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -244,20 +295,39 @@ func (t *CreatePlanTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 	steps := make([]plan.Step, 0, len(input.Steps))
 	for _, item := range input.Steps {
 		steps = append(steps, plan.Step{
-			ID:            item.ID,
-			Title:         item.Title,
-			Details:       item.Details,
-			Prompt:        item.Prompt,
-			Model:         item.Model,
-			DependsOn:     item.DependsOn,
-			ExecutionMode: plan.ExecutionMode(item.ExecutionMode),
+			ID:                  item.ID,
+			Title:               item.Title,
+			Details:             item.Details,
+			Prompt:              item.Prompt,
+			Model:               item.Model,
+			DependsOn:           item.DependsOn,
+			ExecutionMode:       plan.ExecutionMode(item.ExecutionMode),
+			MaxAttempts:         item.MaxAttempts,
+			RetryBackoffSeconds: item.RetryBackoffSeconds,
+			ReviewRequired:      item.ReviewRequired,
+			ReviewPrompt:        item.ReviewPrompt,
+			ReviewModel:         item.ReviewModel,
+			VerifyRequired:      item.VerifyRequired,
+			VerifyPrompt:        item.VerifyPrompt,
+			VerifyModel:         item.VerifyModel,
+			FailureStrategy:     plan.FailureStrategy(item.FailureStrategy),
+			RollbackPrompt:      item.RollbackPrompt,
+			RollbackModel:       item.RollbackModel,
+			DegradePrompt:       item.DegradePrompt,
+			DegradeModel:        item.DegradeModel,
 		})
 	}
 	return t.rt.CreatePlan(ctx, plan.Plan{
-		Goal:      input.Goal,
-		Summary:   input.Summary,
-		SessionID: input.SessionID,
-		Steps:     steps,
+		Goal:               input.Goal,
+		Summary:            input.Summary,
+		SessionID:          input.SessionID,
+		MaxParallel:        input.MaxParallel,
+		DefaultMaxAttempts: input.DefaultMaxAttempts,
+		AutoReview:         input.AutoReview,
+		AutoVerify:         input.AutoVerify,
+		ReviewModel:        input.ReviewModel,
+		VerifyModel:        input.VerifyModel,
+		Steps:              steps,
 	})
 }
 
@@ -331,22 +401,35 @@ func NewUpdatePlanStepTool(rt Runtime) *UpdatePlanStepTool { return &UpdatePlanS
 func (t *UpdatePlanStepTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "update_plan_step",
-		Description: "Revise a plan step, record a note, or update its status and result.",
+		Description: "Revise a plan step, including retry policy, reviewer/verifier gates, recovery behavior, notes, status, and result.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"plan_id":        map[string]any{"type": "string"},
-				"step_id":        map[string]any{"type": "string"},
-				"status":         map[string]any{"type": "string"},
-				"title":          map[string]any{"type": "string"},
-				"details":        map[string]any{"type": "string"},
-				"prompt":         map[string]any{"type": "string"},
-				"model":          map[string]any{"type": "string"},
-				"execution_mode": map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
-				"depends_on":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"note":           map[string]any{"type": "string"},
-				"result":         map[string]any{"type": "string"},
-				"error":          map[string]any{"type": "string"},
+				"plan_id":               map[string]any{"type": "string"},
+				"step_id":               map[string]any{"type": "string"},
+				"status":                map[string]any{"type": "string"},
+				"title":                 map[string]any{"type": "string"},
+				"details":               map[string]any{"type": "string"},
+				"prompt":                map[string]any{"type": "string"},
+				"model":                 map[string]any{"type": "string"},
+				"execution_mode":        map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
+				"depends_on":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"max_attempts":          map[string]any{"type": "integer"},
+				"retry_backoff_seconds": map[string]any{"type": "integer"},
+				"review_required":       map[string]any{"type": "boolean"},
+				"review_prompt":         map[string]any{"type": "string"},
+				"review_model":          map[string]any{"type": "string"},
+				"verify_required":       map[string]any{"type": "boolean"},
+				"verify_prompt":         map[string]any{"type": "string"},
+				"verify_model":          map[string]any{"type": "string"},
+				"failure_strategy":      map[string]any{"type": "string", "enum": []string{"fail", "rollback", "degrade", "rollback_then_degrade"}},
+				"rollback_prompt":       map[string]any{"type": "string"},
+				"rollback_model":        map[string]any{"type": "string"},
+				"degrade_prompt":        map[string]any{"type": "string"},
+				"degrade_model":         map[string]any{"type": "string"},
+				"note":                  map[string]any{"type": "string"},
+				"result":                map[string]any{"type": "string"},
+				"error":                 map[string]any{"type": "string"},
 			},
 			"required": []string{"plan_id", "step_id"},
 		},
@@ -355,35 +438,61 @@ func (t *UpdatePlanStepTool) Definition() types.ToolDefinition {
 
 func (t *UpdatePlanStepTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
 	var input struct {
-		PlanID        string   `json:"plan_id"`
-		StepID        string   `json:"step_id"`
-		Status        string   `json:"status"`
-		Title         string   `json:"title"`
-		Details       string   `json:"details"`
-		Prompt        string   `json:"prompt"`
-		Model         string   `json:"model"`
-		ExecutionMode string   `json:"execution_mode"`
-		DependsOn     []string `json:"depends_on"`
-		Note          string   `json:"note"`
-		Result        string   `json:"result"`
-		Error         string   `json:"error"`
+		PlanID              string   `json:"plan_id"`
+		StepID              string   `json:"step_id"`
+		Status              string   `json:"status"`
+		Title               string   `json:"title"`
+		Details             string   `json:"details"`
+		Prompt              string   `json:"prompt"`
+		Model               string   `json:"model"`
+		ExecutionMode       string   `json:"execution_mode"`
+		DependsOn           []string `json:"depends_on"`
+		MaxAttempts         *int     `json:"max_attempts"`
+		RetryBackoffSeconds *int     `json:"retry_backoff_seconds"`
+		ReviewRequired      *bool    `json:"review_required"`
+		ReviewPrompt        string   `json:"review_prompt"`
+		ReviewModel         string   `json:"review_model"`
+		VerifyRequired      *bool    `json:"verify_required"`
+		VerifyPrompt        string   `json:"verify_prompt"`
+		VerifyModel         string   `json:"verify_model"`
+		FailureStrategy     string   `json:"failure_strategy"`
+		RollbackPrompt      string   `json:"rollback_prompt"`
+		RollbackModel       string   `json:"rollback_model"`
+		DegradePrompt       string   `json:"degrade_prompt"`
+		DegradeModel        string   `json:"degrade_model"`
+		Note                string   `json:"note"`
+		Result              string   `json:"result"`
+		Error               string   `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return "", err
 	}
 	return t.rt.UpdatePlanStep(ctx, PlanStepUpdateInput{
-		PlanID:        input.PlanID,
-		StepID:        input.StepID,
-		Status:        input.Status,
-		Title:         input.Title,
-		Details:       input.Details,
-		Prompt:        input.Prompt,
-		Model:         input.Model,
-		ExecutionMode: input.ExecutionMode,
-		DependsOn:     input.DependsOn,
-		Note:          input.Note,
-		Result:        input.Result,
-		Error:         input.Error,
+		PlanID:              input.PlanID,
+		StepID:              input.StepID,
+		Status:              input.Status,
+		Title:               input.Title,
+		Details:             input.Details,
+		Prompt:              input.Prompt,
+		Model:               input.Model,
+		ExecutionMode:       input.ExecutionMode,
+		DependsOn:           input.DependsOn,
+		MaxAttempts:         input.MaxAttempts,
+		RetryBackoffSeconds: input.RetryBackoffSeconds,
+		ReviewRequired:      input.ReviewRequired,
+		ReviewPrompt:        input.ReviewPrompt,
+		ReviewModel:         input.ReviewModel,
+		VerifyRequired:      input.VerifyRequired,
+		VerifyPrompt:        input.VerifyPrompt,
+		VerifyModel:         input.VerifyModel,
+		FailureStrategy:     input.FailureStrategy,
+		RollbackPrompt:      input.RollbackPrompt,
+		RollbackModel:       input.RollbackModel,
+		DegradePrompt:       input.DegradePrompt,
+		DegradeModel:        input.DegradeModel,
+		Note:                input.Note,
+		Result:              input.Result,
+		Error:               input.Error,
 	})
 }
 
@@ -396,7 +505,7 @@ func NewExecutePlanStepTool(rt Runtime) *ExecutePlanStepTool { return &ExecutePl
 func (t *ExecutePlanStepTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "execute_plan_step",
-		Description: "Execute one specific step from a saved plan via a subagent or background queue.",
+		Description: "Execute one specific step from a saved plan, including retries plus any verifier/reviewer checks and recovery strategy.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -430,7 +539,7 @@ func NewAdvancePlanTool(rt Runtime) *AdvancePlanTool { return &AdvancePlanTool{r
 func (t *AdvancePlanTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "advance_plan",
-		Description: "Advance a saved plan by executing or queueing runnable steps in dependency order.",
+		Description: "Advance a saved plan by executing or queueing runnable steps in dependency order, with parallel waves, retries, review, verification, and recovery.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -3,6 +3,7 @@ package plan
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStoreCreateUpdateAndReload(t *testing.T) {
@@ -100,4 +101,80 @@ func TestActiveForSessionIgnoresCompletedPlans(t *testing.T) {
 	if active[0].Goal != "Open" {
 		t.Fatalf("expected open plan, got %#v", active[0])
 	}
+}
+
+func TestCreateAppliesRetryAndRecoveryDefaults(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "plans.json"))
+	created, err := store.Create(Plan{
+		Goal:               "Ship stronger orchestration",
+		DefaultMaxAttempts: 4,
+		MaxParallel:        3,
+		AutoReview:         true,
+		Steps: []Step{
+			{
+				ID:            "prepare",
+				Title:         "Prepare rollout",
+				DegradePrompt: "Produce a reduced fallback path.",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.MaxParallel != 3 {
+		t.Fatalf("expected max parallel 3, got %d", created.MaxParallel)
+	}
+	step, ok := FindStep(created, "prepare")
+	if !ok {
+		t.Fatal("expected prepare step")
+	}
+	if step.MaxAttempts != 4 {
+		t.Fatalf("expected step max attempts to inherit plan default, got %d", step.MaxAttempts)
+	}
+	if step.FailureStrategy != FailureStrategyDegrade {
+		t.Fatalf("expected degrade failure strategy, got %s", step.FailureStrategy)
+	}
+	if step.ReviewStatus != CheckStatusPending {
+		t.Fatalf("expected auto review to mark step pending, got %s", step.ReviewStatus)
+	}
+	if step.VerifyStatus != CheckStatusSkipped {
+		t.Fatalf("expected verify to be skipped by default, got %s", step.VerifyStatus)
+	}
+}
+
+func TestRunnableStepsTreatDegradedDependenciesAsSatisfied(t *testing.T) {
+	item := Plan{
+		ID:     "plan-1",
+		Goal:   "Recover gracefully",
+		Status: StatusActive,
+		Steps: []Step{
+			{ID: "fallback", Title: "Fallback", Status: StepStatusDegraded},
+			{ID: "follow-up", Title: "Follow up", Status: StepStatusPlanned, DependsOn: []string{"fallback"}},
+		},
+	}
+	now := createdTime()
+	normalizePlan(&item, now)
+	runnable := RunnableSteps(item)
+	if len(runnable) != 1 || runnable[0].ID != "follow-up" {
+		t.Fatalf("expected follow-up to be runnable after degraded dependency, got %#v", runnable)
+	}
+}
+
+func TestCompletedPlanAllowsDegradedSteps(t *testing.T) {
+	item := Plan{
+		ID:   "plan-2",
+		Goal: "Complete with fallback",
+		Steps: []Step{
+			{ID: "primary", Title: "Primary", Status: StepStatusSucceeded},
+			{ID: "fallback", Title: "Fallback", Status: StepStatusDegraded},
+		},
+	}
+	normalizePlan(&item, createdTime())
+	if item.Status != StatusCompleted {
+		t.Fatalf("expected completed status with degraded terminal step, got %s", item.Status)
+	}
+}
+
+func createdTime() time.Time {
+	return time.Unix(1_700_000_000, 0).UTC()
 }

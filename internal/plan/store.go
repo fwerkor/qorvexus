@@ -28,7 +28,10 @@ const (
 	StepStatusPlanned   StepStatus = "planned"
 	StepStatusQueued    StepStatus = "queued"
 	StepStatusRunning   StepStatus = "running"
+	StepStatusVerifying StepStatus = "verifying"
+	StepStatusReviewing StepStatus = "reviewing"
 	StepStatusSucceeded StepStatus = "succeeded"
+	StepStatusDegraded  StepStatus = "degraded"
 	StepStatusFailed    StepStatus = "failed"
 	StepStatusBlocked   StepStatus = "blocked"
 	StepStatusCancelled StepStatus = "cancelled"
@@ -41,39 +44,90 @@ const (
 	ExecutionQueued   ExecutionMode = "queued"
 )
 
+type CheckStatus string
+
+const (
+	CheckStatusPending CheckStatus = "pending"
+	CheckStatusPassed  CheckStatus = "passed"
+	CheckStatusFailed  CheckStatus = "failed"
+	CheckStatusSkipped CheckStatus = "skipped"
+)
+
+type FailureStrategy string
+
+const (
+	FailureStrategyFail                FailureStrategy = "fail"
+	FailureStrategyRollback            FailureStrategy = "rollback"
+	FailureStrategyDegrade             FailureStrategy = "degrade"
+	FailureStrategyRollbackThenDegrade FailureStrategy = "rollback_then_degrade"
+)
+
 type Step struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	Details       string        `json:"details,omitempty"`
-	Prompt        string        `json:"prompt,omitempty"`
-	Model         string        `json:"model,omitempty"`
-	DependsOn     []string      `json:"depends_on,omitempty"`
-	ExecutionMode ExecutionMode `json:"execution_mode,omitempty"`
-	Status        StepStatus    `json:"status"`
-	SessionID     string        `json:"session_id,omitempty"`
-	TaskID        string        `json:"task_id,omitempty"`
-	Notes         []string      `json:"notes,omitempty"`
-	Result        string        `json:"result,omitempty"`
-	Error         string        `json:"error,omitempty"`
-	Attempts      int           `json:"attempts,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
-	StartedAt     time.Time     `json:"started_at,omitempty"`
-	FinishedAt    time.Time     `json:"finished_at,omitempty"`
+	ID                  string          `json:"id"`
+	Title               string          `json:"title"`
+	Details             string          `json:"details,omitempty"`
+	Prompt              string          `json:"prompt,omitempty"`
+	Model               string          `json:"model,omitempty"`
+	DependsOn           []string        `json:"depends_on,omitempty"`
+	ExecutionMode       ExecutionMode   `json:"execution_mode,omitempty"`
+	Status              StepStatus      `json:"status"`
+	SessionID           string          `json:"session_id,omitempty"`
+	TaskID              string          `json:"task_id,omitempty"`
+	Notes               []string        `json:"notes,omitempty"`
+	Result              string          `json:"result,omitempty"`
+	Error               string          `json:"error,omitempty"`
+	Attempts            int             `json:"attempts,omitempty"`
+	MaxAttempts         int             `json:"max_attempts,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	ReviewRequired      bool            `json:"review_required,omitempty"`
+	ReviewPrompt        string          `json:"review_prompt,omitempty"`
+	ReviewModel         string          `json:"review_model,omitempty"`
+	ReviewStatus        CheckStatus     `json:"review_status,omitempty"`
+	ReviewResult        string          `json:"review_result,omitempty"`
+	ReviewSessionID     string          `json:"review_session_id,omitempty"`
+	ReviewedAt          time.Time       `json:"reviewed_at,omitempty"`
+	VerifyRequired      bool            `json:"verify_required,omitempty"`
+	VerifyPrompt        string          `json:"verify_prompt,omitempty"`
+	VerifyModel         string          `json:"verify_model,omitempty"`
+	VerifyStatus        CheckStatus     `json:"verify_status,omitempty"`
+	VerifyResult        string          `json:"verify_result,omitempty"`
+	VerifySessionID     string          `json:"verify_session_id,omitempty"`
+	VerifiedAt          time.Time       `json:"verified_at,omitempty"`
+	FailureStrategy     FailureStrategy `json:"failure_strategy,omitempty"`
+	RollbackPrompt      string          `json:"rollback_prompt,omitempty"`
+	RollbackModel       string          `json:"rollback_model,omitempty"`
+	RollbackSessionID   string          `json:"rollback_session_id,omitempty"`
+	RollbackResult      string          `json:"rollback_result,omitempty"`
+	RolledBackAt        time.Time       `json:"rolled_back_at,omitempty"`
+	DegradePrompt       string          `json:"degrade_prompt,omitempty"`
+	DegradeModel        string          `json:"degrade_model,omitempty"`
+	DegradeSessionID    string          `json:"degrade_session_id,omitempty"`
+	DegradeResult       string          `json:"degrade_result,omitempty"`
+	DegradedAt          time.Time       `json:"degraded_at,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+	StartedAt           time.Time       `json:"started_at,omitempty"`
+	FinishedAt          time.Time       `json:"finished_at,omitempty"`
 }
 
 type Plan struct {
-	ID         string    `json:"id"`
-	Goal       string    `json:"goal"`
-	Summary    string    `json:"summary,omitempty"`
-	SessionID  string    `json:"session_id,omitempty"`
-	Status     Status    `json:"status"`
-	Notes      []string  `json:"notes,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	StartedAt  time.Time `json:"started_at,omitempty"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Steps      []Step    `json:"steps,omitempty"`
+	ID                 string    `json:"id"`
+	Goal               string    `json:"goal"`
+	Summary            string    `json:"summary,omitempty"`
+	SessionID          string    `json:"session_id,omitempty"`
+	Status             Status    `json:"status"`
+	MaxParallel        int       `json:"max_parallel,omitempty"`
+	DefaultMaxAttempts int       `json:"default_max_attempts,omitempty"`
+	AutoReview         bool      `json:"auto_review,omitempty"`
+	AutoVerify         bool      `json:"auto_verify,omitempty"`
+	ReviewModel        string    `json:"review_model,omitempty"`
+	VerifyModel        string    `json:"verify_model,omitempty"`
+	Notes              []string  `json:"notes,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	StartedAt          time.Time `json:"started_at,omitempty"`
+	FinishedAt         time.Time `json:"finished_at,omitempty"`
+	Steps              []Step    `json:"steps,omitempty"`
 }
 
 type Store struct {
@@ -227,19 +281,36 @@ func dependenciesSatisfied(plan Plan, step Step) bool {
 	}
 	for _, dep := range step.DependsOn {
 		depStep, ok := FindStep(plan, dep)
-		if !ok || depStep.Status != StepStatusSucceeded {
+		if !ok || !dependencySatisfiedStatus(depStep.Status) {
 			return false
 		}
 	}
 	return true
 }
 
+func dependencySatisfiedStatus(status StepStatus) bool {
+	switch status {
+	case StepStatusSucceeded, StepStatusDegraded:
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizePlan(plan *Plan, now time.Time) {
 	plan.Goal = strings.TrimSpace(plan.Goal)
 	plan.Summary = strings.TrimSpace(plan.Summary)
 	plan.SessionID = strings.TrimSpace(plan.SessionID)
+	plan.ReviewModel = strings.TrimSpace(plan.ReviewModel)
+	plan.VerifyModel = strings.TrimSpace(plan.VerifyModel)
 	if plan.ID == "" {
 		plan.ID = fmt.Sprintf("plan-%d", now.UnixNano())
+	}
+	if plan.MaxParallel <= 0 {
+		plan.MaxParallel = 2
+	}
+	if plan.DefaultMaxAttempts <= 0 {
+		plan.DefaultMaxAttempts = 2
 	}
 	if plan.CreatedAt.IsZero() {
 		plan.CreatedAt = now
@@ -248,7 +319,7 @@ func normalizePlan(plan *Plan, now time.Time) {
 		plan.StartedAt = now
 	}
 	for i := range plan.Steps {
-		normalizeStep(&plan.Steps[i], i, now)
+		normalizeStep(plan, &plan.Steps[i], i, now)
 	}
 	plan.Status = derivePlanStatus(*plan)
 	plan.UpdatedAt = now
@@ -261,21 +332,54 @@ func normalizePlan(plan *Plan, now time.Time) {
 	}
 }
 
-func normalizeStep(step *Step, index int, now time.Time) {
+func normalizeStep(plan *Plan, step *Step, index int, now time.Time) {
 	step.Title = strings.TrimSpace(step.Title)
 	step.Details = strings.TrimSpace(step.Details)
 	step.Prompt = strings.TrimSpace(step.Prompt)
 	step.Model = strings.TrimSpace(step.Model)
 	step.SessionID = strings.TrimSpace(step.SessionID)
 	step.TaskID = strings.TrimSpace(step.TaskID)
+	step.ReviewPrompt = strings.TrimSpace(step.ReviewPrompt)
+	step.ReviewModel = strings.TrimSpace(step.ReviewModel)
+	step.VerifyPrompt = strings.TrimSpace(step.VerifyPrompt)
+	step.VerifyModel = strings.TrimSpace(step.VerifyModel)
+	step.RollbackPrompt = strings.TrimSpace(step.RollbackPrompt)
+	step.RollbackModel = strings.TrimSpace(step.RollbackModel)
+	step.DegradePrompt = strings.TrimSpace(step.DegradePrompt)
+	step.DegradeModel = strings.TrimSpace(step.DegradeModel)
+	step.ReviewSessionID = strings.TrimSpace(step.ReviewSessionID)
+	step.VerifySessionID = strings.TrimSpace(step.VerifySessionID)
+	step.RollbackSessionID = strings.TrimSpace(step.RollbackSessionID)
+	step.DegradeSessionID = strings.TrimSpace(step.DegradeSessionID)
 	if step.ID == "" {
 		step.ID = fmt.Sprintf("step-%d", index+1)
 	}
 	if step.ExecutionMode == "" {
 		step.ExecutionMode = ExecutionSubAgent
 	}
+	if step.MaxAttempts <= 0 {
+		step.MaxAttempts = plan.DefaultMaxAttempts
+		if step.MaxAttempts <= 0 {
+			step.MaxAttempts = 2
+		}
+	}
+	if step.RetryBackoffSeconds < 0 {
+		step.RetryBackoffSeconds = 0
+	}
 	if step.Status == "" {
 		step.Status = StepStatusPlanned
+	}
+	if step.FailureStrategy == "" {
+		switch {
+		case step.RollbackPrompt != "" && step.DegradePrompt != "":
+			step.FailureStrategy = FailureStrategyRollbackThenDegrade
+		case step.RollbackPrompt != "":
+			step.FailureStrategy = FailureStrategyRollback
+		case step.DegradePrompt != "":
+			step.FailureStrategy = FailureStrategyDegrade
+		default:
+			step.FailureStrategy = FailureStrategyFail
+		}
 	}
 	if step.CreatedAt.IsZero() {
 		step.CreatedAt = now
@@ -283,6 +387,20 @@ func normalizeStep(step *Step, index int, now time.Time) {
 	step.UpdatedAt = now
 	if step.Status == StepStatusRunning && step.StartedAt.IsZero() {
 		step.StartedAt = now
+	}
+	if step.ReviewRequired || plan.AutoReview {
+		if step.ReviewStatus == "" && !isTerminalCheckStatus(step.ReviewStatus) {
+			step.ReviewStatus = CheckStatusPending
+		}
+	} else if step.ReviewStatus == "" {
+		step.ReviewStatus = CheckStatusSkipped
+	}
+	if step.VerifyRequired || plan.AutoVerify {
+		if step.VerifyStatus == "" && !isTerminalCheckStatus(step.VerifyStatus) {
+			step.VerifyStatus = CheckStatusPending
+		}
+	} else if step.VerifyStatus == "" {
+		step.VerifyStatus = CheckStatusSkipped
 	}
 	if isTerminalStepStatus(step.Status) {
 		if step.FinishedAt.IsZero() {
@@ -304,11 +422,11 @@ func derivePlanStatus(plan Plan) Status {
 	hasBlocked := false
 	for _, step := range plan.Steps {
 		switch step.Status {
-		case StepStatusQueued, StepStatusRunning:
+		case StepStatusQueued, StepStatusRunning, StepStatusVerifying, StepStatusReviewing:
 			hasQueuedOrRunning = true
 			allCancelled = false
 			allComplete = false
-		case StepStatusSucceeded:
+		case StepStatusSucceeded, StepStatusDegraded:
 			allCancelled = false
 		case StepStatusCancelled:
 		case StepStatusFailed:
@@ -322,7 +440,7 @@ func derivePlanStatus(plan Plan) Status {
 			allCancelled = false
 			allComplete = false
 		}
-		if step.Status != StepStatusSucceeded && step.Status != StepStatusCancelled {
+		if step.Status != StepStatusSucceeded && step.Status != StepStatusCancelled && step.Status != StepStatusDegraded {
 			allComplete = false
 		}
 	}
@@ -343,7 +461,7 @@ func derivePlanStatus(plan Plan) Status {
 
 func hasStartedStep(steps []Step) bool {
 	for _, step := range steps {
-		if !step.StartedAt.IsZero() || step.Status == StepStatusRunning || step.Status == StepStatusSucceeded || step.Status == StepStatusFailed {
+		if !step.StartedAt.IsZero() || step.Status == StepStatusRunning || step.Status == StepStatusVerifying || step.Status == StepStatusReviewing || step.Status == StepStatusSucceeded || step.Status == StepStatusDegraded || step.Status == StepStatusFailed {
 			return true
 		}
 	}
@@ -370,7 +488,16 @@ func isTerminalStatus(status Status) bool {
 
 func isTerminalStepStatus(status StepStatus) bool {
 	switch status {
-	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled:
+	case StepStatusSucceeded, StepStatusDegraded, StepStatusFailed, StepStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalCheckStatus(status CheckStatus) bool {
+	switch status {
+	case CheckStatusPassed, CheckStatusFailed, CheckStatusSkipped:
 		return true
 	default:
 		return false

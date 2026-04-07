@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type App interface {
 	CommitmentSummary(ctx context.Context) (string, error)
 	ScanCommitments(ctx context.Context) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
+	ListPlans(ctx context.Context, limit int, status string) (string, error)
+	GetPlan(ctx context.Context, planID string) (string, error)
+	AdvancePlan(ctx context.Context, planID string, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
 	LoadConfigText() (string, error)
@@ -84,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/commitments/summary", s.handleCommitmentSummary)
 	mux.HandleFunc("/api/commitments/scan", s.handleCommitmentScan)
 	mux.HandleFunc("/api/audit", s.handleAudit)
+	mux.HandleFunc("/api/plans", s.handlePlans)
+	mux.HandleFunc("/api/plans/view", s.handlePlanView)
+	mux.HandleFunc("/api/plans/advance", s.handlePlanAdvance)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
 	mux.HandleFunc("/api/config", s.handleConfig)
@@ -222,6 +229,62 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.app.ListAudit(ownerContext(r.Context()), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handlePlans(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	raw, err := s.app.ListPlans(ownerContext(r.Context()), limit, strings.TrimSpace(r.URL.Query().Get("status")))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handlePlanView(w http.ResponseWriter, r *http.Request) {
+	planID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if planID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	raw, err := s.app.GetPlan(ownerContext(r.Context()), planID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handlePlanAdvance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		ID    string `json:"id"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	raw, err := s.app.AdvancePlan(ownerContext(r.Context()), input.ID, input.Limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -756,6 +819,86 @@ const dashboardHTML = `<!doctype html>
       color:var(--muted);
     }
     .stack { display:grid; gap:14px; }
+    .plan-board, .plan-detail {
+      display:grid;
+      gap:14px;
+    }
+    .plan-board {
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }
+    .plan-tile, .step-card {
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.78);
+      padding:16px;
+    }
+    .step-card {
+      position:relative;
+      overflow:hidden;
+    }
+    .step-card::before {
+      content:"";
+      position:absolute;
+      inset:0 auto 0 0;
+      width:5px;
+      background:var(--line);
+    }
+    .step-card.status-running::before,
+    .step-card.status-verifying::before,
+    .step-card.status-reviewing::before { background:var(--accent); }
+    .step-card.status-succeeded::before { background:#2d7a46; }
+    .step-card.status-degraded::before { background:var(--gold); }
+    .step-card.status-failed::before { background:var(--danger); }
+    .plan-tile h3, .step-card h3 { margin-bottom:6px; }
+    .plan-meta, .step-meta, .pill-row {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:10px;
+    }
+    .status-pill {
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      padding:6px 10px;
+      font-size:12px;
+      font-weight:700;
+      background:rgba(102,113,120,.12);
+      color:var(--ink);
+    }
+    .status-pill.status-active,
+    .status-pill.status-running,
+    .status-pill.status-verifying,
+    .status-pill.status-reviewing { background:var(--accent-soft); color:var(--accent-strong); }
+    .status-pill.status-completed,
+    .status-pill.status-succeeded,
+    .status-pill.status-passed { background:rgba(45,122,70,.12); color:#2d7a46; }
+    .status-pill.status-degraded { background:var(--gold-soft); color:#7c560f; }
+    .status-pill.status-failed { background:rgba(154,59,43,.12); color:var(--danger); }
+    .status-pill.status-blocked,
+    .status-pill.status-cancelled,
+    .status-pill.status-skipped { background:rgba(102,113,120,.12); color:var(--muted); }
+    .plan-kv {
+      display:grid;
+      gap:6px;
+      margin-top:12px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .plan-kv strong { color:var(--ink); }
+    .step-grid {
+      display:grid;
+      gap:14px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      margin-top:14px;
+    }
+    .empty-state {
+      border:1px dashed var(--line);
+      border-radius:18px;
+      padding:24px;
+      color:var(--muted);
+      background:rgba(255,255,255,.55);
+    }
     .hidden { display:none; }
     @media (max-width: 1080px) {
       .hero, .layout { grid-template-columns: 1fr; }
@@ -922,6 +1065,52 @@ const dashboardHTML = `<!doctype html>
 
         <section id="tab-operations" class="tab-pane">
           <div class="ops-grid">
+            <article class="panel card span-6">
+              <div class="card-head">
+                <div>
+                  <h2 data-i18n="plan_orchestrator">Plan Orchestrator</h2>
+                </div>
+              </div>
+              <div class="split-row">
+                <div>
+                  <label for="plan-id" data-i18n="plan_id">Plan ID</label>
+                  <input id="plan-id" placeholder="plan-..." data-i18n-placeholder="plan_id_placeholder">
+                </div>
+                <div>
+                  <label for="plan-limit" data-i18n="advance_limit">Advance Limit</label>
+                  <input id="plan-limit" value="4" placeholder="4">
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary" onclick="loadPlans()" data-i18n="refresh_plans">Refresh Plans</button>
+                <button class="secondary" onclick="viewPlan()" data-i18n="view_plan">View Plan</button>
+                <button onclick="advancePlan()" data-i18n="advance_plan">Advance Plan</button>
+              </div>
+              <pre id="plan-actions-output" class="compact" data-i18n="plan_actions_ready">Plan execution updates will appear here.</pre>
+            </article>
+
+            <article class="panel card span-6">
+              <div class="card-head">
+                <div>
+                  <h2 data-i18n="plan_board">Plan Board</h2>
+                </div>
+              </div>
+              <div id="plans-board" class="plan-board">
+                <div class="empty-state" data-i18n="plans_loading">Loading plans...</div>
+              </div>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2 data-i18n="plan_detail">Plan Detail</h2>
+                </div>
+              </div>
+              <div id="plan-detail" class="plan-detail">
+                <div class="empty-state" data-i18n="plan_detail_empty">Select a plan to inspect its execution graph.</div>
+              </div>
+            </article>
+
             <article class="panel card span-6">
               <div class="card-head">
                 <div>
@@ -1200,6 +1389,34 @@ const dashboardHTML = `<!doctype html>
         sessions: "Sessions",
         queue: "Queue",
         raw_status: "Raw Status",
+        plan_orchestrator: "Plan Orchestrator",
+        plan_id: "Plan ID",
+        plan_id_placeholder: "plan-...",
+        advance_limit: "Advance Limit",
+        refresh_plans: "Refresh Plans",
+        view_plan: "View Plan",
+        advance_plan: "Advance Plan",
+        plan_actions_ready: "Plan execution updates will appear here.",
+        plan_board: "Plan Board",
+        plans_loading: "Loading plans...",
+        no_plans: "No plans yet.",
+        plan_detail: "Plan Detail",
+        plan_detail_empty: "Select a plan to inspect its execution graph.",
+        plan_goal: "Goal",
+        plan_summary: "Summary",
+        plan_steps: "Steps",
+        plan_parallel: "Parallel",
+        plan_attempts: "Attempts",
+        plan_review: "Review",
+        plan_verify: "Verify",
+        plan_depends_on: "Depends On",
+        plan_recovery: "Recovery",
+        plan_result: "Result",
+        plan_error: "Error",
+        plan_recovery_none: "No fallback",
+        plan_recovery_rollback: "Rollback",
+        plan_recovery_degrade: "Degrade",
+        plan_recovery_both: "Rollback + Degrade",
         queue_recovery: "Queue Recovery",
         queue_recovery_desc: "Retry a failed task without digging through raw queue output first.",
         queue_task_id: "Queue Task ID",
@@ -1326,6 +1543,34 @@ const dashboardHTML = `<!doctype html>
         sessions: "会话",
         queue: "队列",
         raw_status: "原始状态",
+        plan_orchestrator: "计划编排器",
+        plan_id: "计划 ID",
+        plan_id_placeholder: "plan-...",
+        advance_limit: "推进数量",
+        refresh_plans: "刷新计划",
+        view_plan: "查看计划",
+        advance_plan: "推进计划",
+        plan_actions_ready: "计划执行更新会显示在这里。",
+        plan_board: "计划看板",
+        plans_loading: "正在加载计划……",
+        no_plans: "还没有计划。",
+        plan_detail: "计划详情",
+        plan_detail_empty: "选择一个计划以查看它的执行图。",
+        plan_goal: "目标",
+        plan_summary: "摘要",
+        plan_steps: "步骤",
+        plan_parallel: "并行度",
+        plan_attempts: "尝试次数",
+        plan_review: "评审",
+        plan_verify: "验证",
+        plan_depends_on: "依赖",
+        plan_recovery: "恢复策略",
+        plan_result: "结果",
+        plan_error: "错误",
+        plan_recovery_none: "无降级",
+        plan_recovery_rollback: "回滚",
+        plan_recovery_degrade: "降级",
+        plan_recovery_both: "回滚 + 降级",
         queue_recovery: "队列恢复",
         queue_recovery_desc: "无需先看完整队列输出，就可以重试失败任务。",
         queue_task_id: "队列任务 ID",
@@ -1403,6 +1648,8 @@ const dashboardHTML = `<!doctype html>
     };
 
     let currentLanguage = "en";
+    let cachedPlans = [];
+    let currentPlanID = "";
 
     async function api(path, options) {
       const res = await fetch(path, options);
@@ -1435,7 +1682,112 @@ const dashboardHTML = `<!doctype html>
       return String(value)
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function statusPill(value) {
+      const text = escapeHTML(value || "unknown");
+      return "<span class='status-pill status-" + text.toLowerCase().replace(/[^a-z0-9_-]+/g, "-") + "'>" + text + "</span>";
+    }
+
+    function planRecoveryLabel(step) {
+      const strategy = (step.failure_strategy || "").trim();
+      switch (strategy) {
+        case "rollback":
+          return t("plan_recovery_rollback");
+        case "degrade":
+          return t("plan_recovery_degrade");
+        case "rollback_then_degrade":
+          return t("plan_recovery_both");
+        default:
+          return t("plan_recovery_none");
+      }
+    }
+
+    function formatPreview(value, limit = 180) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      return text.length > limit ? text.slice(0, limit) + "..." : text;
+    }
+
+    function renderPlansBoard(plans) {
+      const root = document.getElementById("plans-board");
+      if (!root) return;
+      if (!Array.isArray(plans) || !plans.length) {
+        root.innerHTML = "<div class='empty-state'>" + escapeHTML(t("no_plans")) + "</div>";
+        return;
+      }
+      root.innerHTML = plans.map(plan => {
+        const completed = Array.isArray(plan.steps) ? plan.steps.filter(step => ["succeeded", "degraded", "cancelled"].includes(step.status)).length : 0;
+        return (
+          "<article class='plan-tile'>" +
+            "<h3>" + escapeHTML(plan.goal || plan.id || "Plan") + "</h3>" +
+            "<div class='pill-row'>" +
+              statusPill(plan.status || "active") +
+              "<span class='status-pill'>" + escapeHTML((plan.steps || []).length + " " + t("plan_steps")) + "</span>" +
+              "<span class='status-pill'>" + escapeHTML(t("plan_parallel") + ": " + (plan.max_parallel || 1)) + "</span>" +
+            "</div>" +
+            "<div class='plan-kv'>" +
+              "<div><strong>" + escapeHTML(t("plan_id")) + ":</strong> <span class='mono'>" + escapeHTML(plan.id || "") + "</span></div>" +
+              "<div><strong>" + escapeHTML(t("plan_summary")) + ":</strong> " + escapeHTML(formatPreview(plan.summary || "", 120) || "-") + "</div>" +
+              "<div><strong>" + escapeHTML(t("plan_steps")) + ":</strong> " + completed + "/" + (plan.steps || []).length + "</div>" +
+            "</div>" +
+            "<div class='button-row'>" +
+              "<button class='secondary' data-plan-id='" + escapeHTML(plan.id || "") + "' onclick='viewPlanByID(this.dataset.planId)'>" + escapeHTML(t("view_plan")) + "</button>" +
+              "<button data-plan-id='" + escapeHTML(plan.id || "") + "' onclick='advancePlanByID(this.dataset.planId)'>" + escapeHTML(t("advance_plan")) + "</button>" +
+            "</div>" +
+          "</article>"
+        );
+      }).join("");
+    }
+
+    function renderPlanDetail(plan) {
+      const root = document.getElementById("plan-detail");
+      if (!root) return;
+      if (!plan || !plan.id) {
+        root.innerHTML = "<div class='empty-state'>" + escapeHTML(t("plan_detail_empty")) + "</div>";
+        return;
+      }
+      const steps = Array.isArray(plan.steps) ? plan.steps : [];
+      const stepHTML = steps.map(step => {
+        return (
+          "<article class='step-card status-" + escapeHTML((step.status || "planned").toLowerCase()) + "'>" +
+            "<h3>" + escapeHTML(step.title || step.id || "Step") + "</h3>" +
+            "<div class='pill-row'>" +
+              statusPill(step.status || "planned") +
+              "<span class='status-pill'>" + escapeHTML(step.execution_mode || "subagent") + "</span>" +
+              "<span class='status-pill'>" + escapeHTML((step.attempts || 0) + "/" + (step.max_attempts || 1) + " " + t("plan_attempts")) + "</span>" +
+            "</div>" +
+            "<div class='step-meta'>" +
+              statusPill(step.verify_status || "skipped") +
+              statusPill(step.review_status || "skipped") +
+              "<span class='status-pill'>" + escapeHTML(t("plan_recovery") + ": " + planRecoveryLabel(step)) + "</span>" +
+            "</div>" +
+            "<div class='plan-kv'>" +
+              "<div><strong>" + escapeHTML(t("plan_depends_on")) + ":</strong> " + escapeHTML((step.depends_on || []).join(", ") || "-") + "</div>" +
+              "<div><strong>" + escapeHTML(t("plan_result")) + ":</strong> " + escapeHTML(formatPreview(step.degrade_result || step.result || "", 140) || "-") + "</div>" +
+              "<div><strong>" + escapeHTML(t("plan_error")) + ":</strong> " + escapeHTML(formatPreview(step.error || step.verify_result || step.review_result || "", 140) || "-") + "</div>" +
+            "</div>" +
+          "</article>"
+        );
+      }).join("");
+      root.innerHTML =
+        "<article class='plan-tile'>" +
+          "<h3>" + escapeHTML(plan.goal || plan.id) + "</h3>" +
+          "<div class='pill-row'>" +
+            statusPill(plan.status || "active") +
+            "<span class='status-pill'>" + escapeHTML(t("plan_parallel") + ": " + (plan.max_parallel || 1)) + "</span>" +
+            "<span class='status-pill'>" + escapeHTML(t("plan_attempts") + ": " + (plan.default_max_attempts || 1)) + "</span>" +
+          "</div>" +
+          "<div class='plan-kv'>" +
+            "<div><strong>" + escapeHTML(t("plan_id")) + ":</strong> <span class='mono'>" + escapeHTML(plan.id || "") + "</span></div>" +
+            "<div><strong>" + escapeHTML(t("plan_goal")) + ":</strong> " + escapeHTML(plan.goal || "") + "</div>" +
+            "<div><strong>" + escapeHTML(t("plan_summary")) + ":</strong> " + escapeHTML(plan.summary || "-") + "</div>" +
+          "</div>" +
+          "<div class='step-grid'>" + stepHTML + "</div>" +
+        "</article>";
     }
 
     function t(key) {
@@ -1493,6 +1845,9 @@ const dashboardHTML = `<!doctype html>
       setText("current-tab-label", t("tab_" + name));
       if (name === "config") {
         loadConfig();
+      }
+      if (name === "operations") {
+        loadPlans();
       }
     }
 
@@ -1567,6 +1922,65 @@ const dashboardHTML = `<!doctype html>
     async function loadQueue() {
       const data = await api(apiPath("api/queue"));
       document.getElementById("queue").innerHTML = renderTable(data, ["id","status","name","created_at"]);
+    }
+
+    function currentPlanLimit() {
+      const raw = parseInt(document.getElementById("plan-limit").value || "4", 10);
+      return Number.isFinite(raw) && raw > 0 ? raw : 4;
+    }
+
+    async function loadPlans() {
+      const data = await api(apiPath("api/plans?limit=" + encodeURIComponent(currentPlanLimit())));
+      cachedPlans = Array.isArray(data) ? data : [];
+      renderPlansBoard(cachedPlans);
+      if (currentPlanID) {
+        const cached = cachedPlans.find(plan => plan.id === currentPlanID);
+        if (cached) {
+          renderPlanDetail(cached);
+        }
+      }
+    }
+
+    async function viewPlanByID(id) {
+      document.getElementById("plan-id").value = id || "";
+      return viewPlan();
+    }
+
+    async function viewPlan() {
+      const planID = document.getElementById("plan-id").value.trim();
+      if (!planID) {
+        renderPlanDetail(null);
+        return;
+      }
+      const data = await api(apiPath("api/plans/view?id=" + encodeURIComponent(planID)));
+      currentPlanID = data.id || planID;
+      renderPlanDetail(data);
+      return data;
+    }
+
+    async function advancePlanByID(id) {
+      document.getElementById("plan-id").value = id || "";
+      return advancePlan();
+    }
+
+    async function advancePlan() {
+      const payload = {
+        id: document.getElementById("plan-id").value.trim(),
+        limit: currentPlanLimit(),
+      };
+      const data = await api(apiPath("api/plans/advance"), {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      currentPlanID = payload.id;
+      setText("plan-actions-output", data);
+      if (data.plan) {
+        renderPlanDetail(data.plan);
+      }
+      await loadPlans();
+      loadQueue();
+      loadAudit();
     }
 
     async function loadMemory() {
@@ -1708,6 +2122,7 @@ const dashboardHTML = `<!doctype html>
     loadStatus();
     loadSessions();
     loadQueue();
+    loadPlans();
     loadSelf();
     loadSocial();
     loadConnectors();
