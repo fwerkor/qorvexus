@@ -133,7 +133,7 @@ func NewBrowserWorkflowTool(cfg config.ToolsConfig, manager *PlaywrightManager) 
 func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "browser_workflow",
-		Description: "Run a structured browser workflow with retries, persistent login state, screenshots, PDFs, download indexing, and table extraction.",
+		Description: "Run a structured browser workflow with retries, persistent login state, multi-tab control, uploads, form autofill, pagination extraction, screenshots, PDFs, and download indexing.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -147,7 +147,8 @@ func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 				"timeout_seconds":    map[string]any{"type": "integer"},
 				"retry_count":        map[string]any{"type": "integer"},
 				"actions": map[string]any{
-					"type": "array",
+					"type":        "array",
+					"description": "Structured browser actions such as goto, open_tab, switch_tab, close_tab, upload_files, fill_form, paginate_extract, check_login_state, screenshot, save_pdf, and download.",
 					"items": map[string]any{
 						"type":                 "object",
 						"additionalProperties": true,

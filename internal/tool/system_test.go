@@ -153,6 +153,70 @@ echo "}"
 	}
 }
 
+func TestBrowserWorkflowToolPreservesAdvancedActionPayloads(t *testing.T) {
+	tempDir := t.TempDir()
+	runnerPath := filepath.Join(tempDir, "runner.sh")
+	runner := `#!/bin/sh
+cat "$QORVEXUS_PLAYWRIGHT_ACTIONS_FILE"
+`
+	if err := os.WriteFile(runnerPath, []byte(runner), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	headless := true
+	tool := NewBrowserWorkflowTool(config.ToolsConfig{
+		CommandShell:             "bash",
+		PlaywrightCommand:        fmt.Sprintf("%q", runnerPath),
+		PlaywrightBrowser:        "chromium",
+		PlaywrightProfileDir:     filepath.Join(tempDir, "profiles"),
+		PlaywrightStateDir:       filepath.Join(tempDir, "state"),
+		PlaywrightArtifactsDir:   filepath.Join(tempDir, "artifacts"),
+		PlaywrightTimeoutSeconds: 30,
+		PlaywrightHeadless:       &headless,
+		MaxCommandBytes:          16 * 1024,
+	}, nil)
+
+	out, err := invokeTool(t, tool, context.Background(), map[string]any{
+		"profile":       "Assistant Main",
+		"storage_state": "Assistant State",
+		"retry_count":   3,
+		"actions": []map[string]any{
+			{"type": "open_tab", "url": "https://example.com/docs"},
+			{"type": "fill_form", "fields": map[string]any{"Email": "owner@example.com", "Remember me": true}, "submit_text": "Continue"},
+			{"type": "upload_files", "selector": "input[type=file]", "files": []any{"./fixtures/resume.pdf"}},
+			{"type": "paginate_extract", "item_selector": ".item", "fields": map[string]any{"title": ".title", "href": "a@href"}, "next_selector": ".next", "max_pages": 4},
+			{"type": "check_login_state", "logged_in_selector": "[data-auth=ready]", "logged_out_text": "Sign in", "require_authenticated": false},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatal(err)
+	}
+	output, ok := payload["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected decoded output map, got %#v", payload["output"])
+	}
+	actions, ok := output["actions"].([]any)
+	if !ok || len(actions) != 5 {
+		t.Fatalf("expected 5 actions, got %#v", output["actions"])
+	}
+	fillForm, ok := actions[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fill_form action map, got %#v", actions[1])
+	}
+	fields, ok := fillForm["fields"].(map[string]any)
+	if !ok || fields["Email"] != "owner@example.com" {
+		t.Fatalf("expected nested fill_form fields, got %#v", fillForm["fields"])
+	}
+	paginate, ok := actions[3].(map[string]any)
+	if !ok || paginate["max_pages"] != float64(4) {
+		t.Fatalf("expected paginate_extract max_pages, got %#v", actions[3])
+	}
+}
+
 func TestPlaywrightManagerAutoInstallsRuntime(t *testing.T) {
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
