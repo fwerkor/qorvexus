@@ -12,7 +12,6 @@ import (
 	"qorvexus/internal/agent"
 	"qorvexus/internal/config"
 	"qorvexus/internal/skill"
-	"qorvexus/internal/social"
 	"qorvexus/internal/types"
 )
 
@@ -126,7 +125,7 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 			_ = app.RunCommitmentWatchdog(ctx)
 		}()
 		go func() {
-			_ = app.RunTelegramPolling(ctx)
+			_ = app.RunSocialBackground(ctx)
 		}()
 	}
 	if cfg.Queue.Enabled && cfg.Queue.WorkerEnabled {
@@ -139,12 +138,6 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 			_ = app.webServer.ListenAndServe()
 		}()
 		fmt.Printf("web panel listening on http://%s\n", cfg.Web.Address)
-	}
-	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.Telegram.Mode, "webhook") && cfg.Social.Telegram.PublicBaseURL != "" {
-		fmt.Printf("telegram webhook endpoint: %s\n", social.TelegramWebhookURL(cfg.Social.Telegram.PublicBaseURL, cfg.Social.Telegram.WebhookPath))
-	}
-	if cfg.Social.Enabled && strings.Contains(strings.Join(cfg.Social.AllowedChannels, ","), "telegram") && strings.EqualFold(cfg.Social.Telegram.Mode, "polling") {
-		fmt.Println("telegram polling is enabled")
 	}
 	fmt.Println("qorvexus service is running")
 	<-ctx.Done()
@@ -182,7 +175,7 @@ func webCommand(ctx context.Context, args []string) error {
 			_ = app.RunCommitmentWatchdog(ctx)
 		}()
 		go func() {
-			_ = app.RunTelegramPolling(ctx)
+			_ = app.RunSocialBackground(ctx)
 		}()
 	}
 	fmt.Printf("qorvexus web panel listening on http://%s\n", cfg.Web.Address)

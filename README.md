@@ -35,6 +35,7 @@ internal/self          self-improvement backlog and skill management
 internal/session       persistent session store
 internal/skill         skill discovery and prompt injection
 internal/social        social-channel envelopes and owner/trust routing
+internal/socialplugin  optional social-channel plugins
 internal/taskqueue     async work queue and worker
 internal/tool          tool registry and built-in tools
 internal/types         shared protocol types
@@ -49,6 +50,7 @@ The goal is not a single hard-coded assistant, but an agent platform:
 - Model adapters are isolated so new protocols and distilled-logging interceptors can be added without touching the core loop.
 - Tools are first-class and model-visible, so the model can decide when to act.
 - Social integrations follow a connector/tool/skill layering similar in spirit to OpenClaw: adapters/connectors handle channel mechanics, tools expose capability, and skills teach the model how to use them.
+- Social channels can be attached as optional plugins, so Telegram is not treated as a special core pathway and future Slack/Discord-style channels can be added with the same boundary.
 - Skills are loadable from disk and remain compatible with the `SKILL.md` pattern used by OpenClaw.
 - Sessions, compression, and scheduling are explicit subsystems instead of scattered logic.
 - Multi-model discussion and child agents are built as orchestration services, not prompt hacks.

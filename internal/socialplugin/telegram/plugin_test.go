@@ -1,4 +1,4 @@
-package social
+package telegram
 
 import (
 	"context"
@@ -8,9 +8,88 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"qorvexus/internal/config"
+	"qorvexus/internal/social"
 )
 
-func TestTelegramPollerConsumesUpdates(t *testing.T) {
+func TestPluginRegistersWebhookAdapterInWebhookMode(t *testing.T) {
+	plugin := New()
+	registry := social.NewRegistry()
+	cfg := config.SocialConfig{
+		Enabled:         true,
+		AllowedChannels: []string{"telegram"},
+		Telegram: config.TelegramConfig{
+			Mode:          "webhook",
+			WebhookPath:   "/webhooks/telegram",
+			WebhookSecret: "secret",
+		},
+	}
+
+	runners, err := plugin.Setup(cfg, registry, func(context.Context, social.Envelope) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runners) != 0 {
+		t.Fatalf("expected no background runners, got %d", len(runners))
+	}
+	webhooks := registry.Webhooks()
+	if len(webhooks) != 1 || webhooks[0].Path() != "/webhooks/telegram" {
+		t.Fatalf("unexpected webhook registry contents: %+v", webhooks)
+	}
+}
+
+func TestWebhookAdapterParsesTelegramUpdate(t *testing.T) {
+	adapter := NewWebhookAdapter("/webhooks/telegram", "secret")
+	req := httptest.NewRequest("POST", "/webhooks/telegram", strings.NewReader(`{
+		"update_id": 1,
+		"message": {
+			"message_id": 2,
+			"text": "hello",
+			"chat": {"id": 123, "type": "private"},
+			"from": {"id": 456, "first_name": "Ada", "last_name": "Lovelace"}
+		}
+	}`))
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "secret")
+
+	env, ok, err := adapter.ParseWebhook(req)
+	if err != nil {
+		t.Fatalf("parse webhook: %v", err)
+	}
+	if !ok || env.Channel != "telegram" || env.ThreadID != "123" || env.SenderID != "456" {
+		t.Fatalf("unexpected parsed envelope: %+v", env)
+	}
+}
+
+func TestEnvelope(t *testing.T) {
+	env, ok := Envelope(Update{
+		UpdateID: 100,
+		Message: &Message{
+			MessageID: 10,
+			Text:      "hello",
+			Chat: Chat{
+				ID:   12345,
+				Type: "private",
+			},
+			From: &User{
+				ID:        999,
+				FirstName: "Ada",
+				LastName:  "Lovelace",
+			},
+		},
+	})
+	if !ok {
+		t.Fatalf("expected telegram update to produce envelope")
+	}
+	if env.Channel != "telegram" || env.ThreadID != "12345" || env.SenderID != "999" {
+		t.Fatalf("unexpected telegram envelope: %+v", env)
+	}
+	if env.SenderName != "Ada Lovelace" || env.Text != "hello" {
+		t.Fatalf("unexpected sender/text mapping: %+v", env)
+	}
+}
+
+func TestPollerConsumesUpdates(t *testing.T) {
 	var deleteWebhookCalls int
 	var getUpdatesCalls int
 
@@ -34,16 +113,16 @@ func TestTelegramPollerConsumesUpdates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	poller := NewTelegramPoller("test-token", 1, 10*time.Millisecond)
+	poller := NewPoller("test-token", 1, 10*time.Millisecond)
 	poller.apiBaseURL = srv.URL
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	received := make(chan Envelope, 1)
+	received := make(chan social.Envelope, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- poller.Run(ctx, func(_ context.Context, env Envelope) error {
+		errCh <- poller.Run(ctx, func(_ context.Context, env social.Envelope) error {
 			received <- env
 			cancel()
 			return nil
@@ -79,13 +158,13 @@ func TestTelegramPollerConsumesUpdates(t *testing.T) {
 	}
 }
 
-func TestTelegramPollerDeleteWebhookFailure(t *testing.T) {
+func TestPollerDeleteWebhookFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":false,"description":"failed"}`))
 	}))
 	defer srv.Close()
 
-	poller := NewTelegramPoller("test-token", 1, 0)
+	poller := NewPoller("test-token", 1, 0)
 	poller.apiBaseURL = srv.URL
 
 	err := poller.deleteWebhook(context.Background())
@@ -94,15 +173,15 @@ func TestTelegramPollerDeleteWebhookFailure(t *testing.T) {
 	}
 }
 
-func TestTelegramWebhookURL(t *testing.T) {
-	got := TelegramWebhookURL("https://example.com/base/", "webhooks/telegram")
+func TestWebhookURL(t *testing.T) {
+	got := WebhookURL("https://example.com/base/", "webhooks/telegram")
 	want := "https://example.com/base/webhooks/telegram"
 	if got != want {
 		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
 
-func TestTelegramPollerUsesBotPath(t *testing.T) {
+func TestPollerUsesBotPath(t *testing.T) {
 	sawPath := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
@@ -110,7 +189,7 @@ func TestTelegramPollerUsesBotPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	poller := NewTelegramPoller("abc", 1, 0)
+	poller := NewPoller("abc", 1, 0)
 	poller.apiBaseURL = srv.URL
 	if err := poller.deleteWebhook(context.Background()); err != nil {
 		t.Fatal(err)

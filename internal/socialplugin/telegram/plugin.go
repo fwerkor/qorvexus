@@ -1,4 +1,4 @@
-package social
+package telegram
 
 import (
 	"bytes"
@@ -10,19 +10,25 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"qorvexus/internal/config"
+	"qorvexus/internal/social"
+	"qorvexus/internal/socialplugin"
 )
 
-type TelegramConnector struct {
+type Plugin struct{}
+
+type Connector struct {
 	token      string
 	httpClient *http.Client
 }
 
-type TelegramWebhookAdapter struct {
+type WebhookAdapter struct {
 	path          string
 	webhookSecret string
 }
 
-type TelegramPoller struct {
+type Poller struct {
 	token          string
 	apiBaseURL     string
 	httpClient     *http.Client
@@ -31,8 +37,40 @@ type TelegramPoller struct {
 	offset         int64
 }
 
-func NewTelegramConnector(token string) *TelegramConnector {
-	return &TelegramConnector{
+type pollingRunner struct {
+	poller *Poller
+	handle func(context.Context, social.Envelope) error
+}
+
+func New() *Plugin { return &Plugin{} }
+
+func (p *Plugin) Channel() string { return "telegram" }
+
+func (p *Plugin) Setup(cfg config.SocialConfig, registry *social.Registry, handle func(context.Context, social.Envelope) error) ([]socialplugin.BackgroundRunner, error) {
+	token := strings.TrimSpace(cfg.Telegram.BotToken)
+	if token != "" {
+		registry.Register(NewConnector(token))
+	}
+
+	var runners []socialplugin.BackgroundRunner
+	switch strings.ToLower(strings.TrimSpace(cfg.Telegram.Mode)) {
+	case "", "polling":
+		if token != "" {
+			runners = append(runners, &pollingRunner{
+				poller: NewPoller(token, cfg.Telegram.PollTimeoutSeconds, time.Duration(cfg.Telegram.PollIntervalSeconds)*time.Second),
+				handle: handle,
+			})
+		}
+	case "webhook":
+		registry.RegisterWebhook(NewWebhookAdapter(cfg.Telegram.WebhookPath, cfg.Telegram.WebhookSecret))
+	default:
+		return nil, fmt.Errorf("unsupported telegram mode %q", cfg.Telegram.Mode)
+	}
+	return runners, nil
+}
+
+func NewConnector(token string) *Connector {
+	return &Connector{
 		token: token,
 		httpClient: &http.Client{
 			Timeout: 20 * time.Second,
@@ -40,16 +78,16 @@ func NewTelegramConnector(token string) *TelegramConnector {
 	}
 }
 
-func (c *TelegramConnector) Name() string { return "telegram" }
+func (c *Connector) Name() string { return "telegram" }
 
-func NewTelegramPoller(token string, timeoutSeconds int, idleDelay time.Duration) *TelegramPoller {
+func NewPoller(token string, timeoutSeconds int, idleDelay time.Duration) *Poller {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 30
 	}
 	if idleDelay < 0 {
 		idleDelay = 0
 	}
-	return &TelegramPoller{
+	return &Poller{
 		token:          token,
 		apiBaseURL:     "https://api.telegram.org",
 		timeoutSeconds: timeoutSeconds,
@@ -60,36 +98,42 @@ func NewTelegramPoller(token string, timeoutSeconds int, idleDelay time.Duration
 	}
 }
 
-func NewTelegramWebhookAdapter(path string, webhookSecret string) *TelegramWebhookAdapter {
-	return &TelegramWebhookAdapter{
+func (r *pollingRunner) Name() string { return "telegram-polling" }
+
+func (r *pollingRunner) Run(ctx context.Context) error {
+	return r.poller.Run(ctx, r.handle)
+}
+
+func NewWebhookAdapter(path string, webhookSecret string) *WebhookAdapter {
+	return &WebhookAdapter{
 		path:          ensureLeadingSlash(path),
 		webhookSecret: strings.TrimSpace(webhookSecret),
 	}
 }
 
-func (a *TelegramWebhookAdapter) Name() string { return "telegram" }
+func (a *WebhookAdapter) Name() string { return "telegram" }
 
-func (a *TelegramWebhookAdapter) Path() string { return a.path }
+func (a *WebhookAdapter) Path() string { return a.path }
 
-func (a *TelegramWebhookAdapter) ParseWebhook(r *http.Request) (Envelope, bool, error) {
+func (a *WebhookAdapter) ParseWebhook(r *http.Request) (social.Envelope, bool, error) {
 	if r.Method != http.MethodPost {
-		return Envelope{}, false, fmt.Errorf("method not allowed")
+		return social.Envelope{}, false, fmt.Errorf("method not allowed")
 	}
 	if a.webhookSecret != "" {
 		secret := strings.TrimSpace(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"))
 		if secret == "" || secret != a.webhookSecret {
-			return Envelope{}, false, fmt.Errorf("invalid telegram secret token")
+			return social.Envelope{}, false, fmt.Errorf("invalid telegram secret token")
 		}
 	}
-	var update TelegramUpdate
+	var update Update
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-		return Envelope{}, false, err
+		return social.Envelope{}, false, err
 	}
-	env, ok := TelegramEnvelope(update)
+	env, ok := Envelope(update)
 	return env, ok, nil
 }
 
-func (c *TelegramConnector) Send(ctx context.Context, msg OutboundMessage) (string, error) {
+func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (string, error) {
 	chatID := strings.TrimSpace(msg.ThreadID)
 	if chatID == "" {
 		chatID = strings.TrimSpace(msg.Recipient)
@@ -105,12 +149,7 @@ func (c *TelegramConnector) Send(ctx context.Context, msg OutboundMessage) (stri
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		"https://api.telegram.org/bot"+c.token+"/sendMessage",
-		bytes.NewReader(raw),
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+c.token+"/sendMessage", bytes.NewReader(raw))
 	if err != nil {
 		return "", err
 	}
@@ -126,11 +165,11 @@ func (c *TelegramConnector) Send(ctx context.Context, msg OutboundMessage) (stri
 	return fmt.Sprintf("sent telegram message to %s", chatID), nil
 }
 
-func TelegramWebhookURL(baseURL string, path string) string {
+func WebhookURL(baseURL string, path string) string {
 	return strings.TrimRight(baseURL, "/") + ensureLeadingSlash(path)
 }
 
-func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, Envelope) error) error {
+func (p *Poller) Run(ctx context.Context, handle func(context.Context, social.Envelope) error) error {
 	if err := p.deleteWebhook(ctx); err != nil {
 		return err
 	}
@@ -140,7 +179,6 @@ func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, E
 			return ctx.Err()
 		default:
 		}
-
 		updates, err := p.getUpdates(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -155,12 +193,11 @@ func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, E
 			}
 			continue
 		}
-
 		for _, update := range updates {
 			if update.UpdateID >= p.offset {
 				p.offset = update.UpdateID + 1
 			}
-			env, ok := TelegramEnvelope(update)
+			env, ok := Envelope(update)
 			if !ok {
 				continue
 			}
@@ -168,7 +205,6 @@ func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, E
 				return ctx.Err()
 			}
 		}
-
 		if len(updates) == 0 && p.idleDelay > 0 {
 			select {
 			case <-ctx.Done():
@@ -179,15 +215,10 @@ func (p *TelegramPoller) Run(ctx context.Context, handle func(context.Context, E
 	}
 }
 
-func (p *TelegramPoller) deleteWebhook(ctx context.Context) error {
+func (p *Poller) deleteWebhook(ctx context.Context) error {
 	form := url.Values{}
 	form.Set("drop_pending_updates", "false")
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/deleteWebhook",
-		strings.NewReader(form.Encode()),
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/deleteWebhook", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
@@ -198,7 +229,7 @@ func (p *TelegramPoller) deleteWebhook(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	var parsed telegramAPIResponse[bool]
+	var parsed apiResponse[bool]
 	if err := json.Unmarshal(raw, &parsed); err == nil && !parsed.OK {
 		return fmt.Errorf("telegram deleteWebhook failed: %s", parsed.Description)
 	}
@@ -208,16 +239,11 @@ func (p *TelegramPoller) deleteWebhook(ctx context.Context) error {
 	return nil
 }
 
-func (p *TelegramPoller) getUpdates(ctx context.Context) ([]TelegramUpdate, error) {
+func (p *Poller) getUpdates(ctx context.Context) ([]Update, error) {
 	form := url.Values{}
 	form.Set("timeout", fmt.Sprintf("%d", p.timeoutSeconds))
 	form.Set("offset", fmt.Sprintf("%d", p.offset))
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/getUpdates",
-		strings.NewReader(form.Encode()),
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.apiBaseURL, "/")+"/bot"+p.token+"/getUpdates", strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +260,7 @@ func (p *TelegramPoller) getUpdates(ctx context.Context) ([]TelegramUpdate, erro
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("telegram getUpdates returned %s", resp.Status)
 	}
-	var parsed telegramAPIResponse[[]TelegramUpdate]
+	var parsed apiResponse[[]Update]
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, err
 	}
@@ -251,40 +277,40 @@ func ensureLeadingSlash(path string) string {
 	return "/" + path
 }
 
-type TelegramUpdate struct {
-	UpdateID int64            `json:"update_id"`
-	Message  *TelegramMessage `json:"message,omitempty"`
-	Edited   *TelegramMessage `json:"edited_message,omitempty"`
-	Channel  *TelegramMessage `json:"channel_post,omitempty"`
+type Update struct {
+	UpdateID int64    `json:"update_id"`
+	Message  *Message `json:"message,omitempty"`
+	Edited   *Message `json:"edited_message,omitempty"`
+	Channel  *Message `json:"channel_post,omitempty"`
 }
 
-type telegramAPIResponse[T any] struct {
+type apiResponse[T any] struct {
 	OK          bool   `json:"ok"`
 	Result      T      `json:"result"`
 	Description string `json:"description,omitempty"`
 }
 
-type TelegramMessage struct {
-	MessageID int64         `json:"message_id"`
-	Text      string        `json:"text,omitempty"`
-	Chat      TelegramChat  `json:"chat"`
-	From      *TelegramUser `json:"from,omitempty"`
+type Message struct {
+	MessageID int64  `json:"message_id"`
+	Text      string `json:"text,omitempty"`
+	Chat      Chat   `json:"chat"`
+	From      *User  `json:"from,omitempty"`
 }
 
-type TelegramChat struct {
+type Chat struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title,omitempty"`
 	Type  string `json:"type,omitempty"`
 }
 
-type TelegramUser struct {
+type User struct {
 	ID        int64  `json:"id"`
 	Username  string `json:"username,omitempty"`
 	FirstName string `json:"first_name,omitempty"`
 	LastName  string `json:"last_name,omitempty"`
 }
 
-func TelegramEnvelope(update TelegramUpdate) (Envelope, bool) {
+func Envelope(update Update) (social.Envelope, bool) {
 	message := update.Message
 	if message == nil {
 		message = update.Edited
@@ -293,7 +319,7 @@ func TelegramEnvelope(update TelegramUpdate) (Envelope, bool) {
 		message = update.Channel
 	}
 	if message == nil || strings.TrimSpace(message.Text) == "" {
-		return Envelope{}, false
+		return social.Envelope{}, false
 	}
 	senderID := ""
 	senderName := strings.TrimSpace(message.Chat.Title)
@@ -310,7 +336,7 @@ func TelegramEnvelope(update TelegramUpdate) (Envelope, bool) {
 	if senderName == "" {
 		senderName = fmt.Sprintf("chat:%d", message.Chat.ID)
 	}
-	return Envelope{
+	return social.Envelope{
 		ID:         fmt.Sprintf("telegram-%d-%d", update.UpdateID, message.MessageID),
 		Channel:    "telegram",
 		ThreadID:   fmt.Sprintf("%d", message.Chat.ID),
