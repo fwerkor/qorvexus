@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,19 +28,35 @@ type Connector interface {
 	Send(ctx context.Context, msg OutboundMessage) (string, error)
 }
 
+type WebhookAdapter interface {
+	Name() string
+	Path() string
+	ParseWebhook(r *http.Request) (Envelope, bool, error)
+}
+
 type Registry struct {
 	mu         sync.RWMutex
 	connectors map[string]Connector
+	webhooks   map[string]WebhookAdapter
 }
 
 func NewRegistry() *Registry {
-	return &Registry{connectors: map[string]Connector{}}
+	return &Registry{
+		connectors: map[string]Connector{},
+		webhooks:   map[string]WebhookAdapter{},
+	}
 }
 
 func (r *Registry) Register(connector Connector) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.connectors[connector.Name()] = connector
+}
+
+func (r *Registry) RegisterWebhook(adapter WebhookAdapter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.webhooks[adapter.Path()] = adapter
 }
 
 func (r *Registry) Send(ctx context.Context, channel string, msg OutboundMessage) (string, error) {
@@ -58,6 +75,16 @@ func (r *Registry) List() []string {
 	out := make([]string, 0, len(r.connectors))
 	for name := range r.connectors {
 		out = append(out, name)
+	}
+	return out
+}
+
+func (r *Registry) Webhooks() []WebhookAdapter {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]WebhookAdapter, 0, len(r.webhooks))
+	for _, adapter := range r.webhooks {
+		out = append(out, adapter)
 	}
 	return out
 }

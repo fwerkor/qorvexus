@@ -137,8 +137,9 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 			token := strings.TrimSpace(os.Getenv(cfg.Social.TelegramBotTokenEnv))
 			if token != "" {
 				app.connectors.Register(social.NewTelegramConnector(token))
-				continue
 			}
+			app.connectors.RegisterWebhook(social.NewTelegramWebhookAdapter(cfg.Social.TelegramWebhookPath, cfg.Social.WebhookSecret))
+			continue
 		}
 		app.connectors.Register(social.NewFileConnector(channel, filepath.Join(cfg.DataDir, "social_outbox_"+channel+".jsonl")))
 	}
@@ -296,8 +297,8 @@ func (a *appRuntime) LoadConfigText() (string, error) {
 	return webui.LoadConfigText(a.configPath)
 }
 
-func (a *appRuntime) TelegramWebhookPath() string {
-	return a.cfg.Social.TelegramWebhookPath
+func (a *appRuntime) SocialWebhookAdapters() []social.WebhookAdapter {
+	return a.connectors.Webhooks()
 }
 
 func (a *appRuntime) SaveConfigText(raw string) error {

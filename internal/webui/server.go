@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"qorvexus/internal/session"
 	"qorvexus/internal/social"
 	"qorvexus/internal/taskqueue"
@@ -35,7 +33,7 @@ type App interface {
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
 	LoadConfigText() (string, error)
-	TelegramWebhookPath() string
+	SocialWebhookAdapters() []social.WebhookAdapter
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
 	RetryQueueTask(ctx context.Context, id string) (string, error)
@@ -89,7 +87,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
 	mux.HandleFunc("/api/commitments/status", s.handleCommitmentStatus)
 	mux.HandleFunc("/api/self/status", s.handleSelfStatus)
-	mux.HandleFunc(s.app.TelegramWebhookPath(), s.handleTelegramWebhook)
+	for _, adapter := range s.app.SocialWebhookAdapters() {
+		adapter := adapter
+		mux.HandleFunc(adapter.Path(), func(w http.ResponseWriter, r *http.Request) {
+			s.handleSocialWebhook(w, r, adapter)
+		})
+	}
 	return mux
 }
 
@@ -300,49 +303,35 @@ func (s *Server) handleSocialInbound(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"response": out})
 }
 
-func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	secret := strings.TrimSpace(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"))
-	if secret == "" {
-		http.Error(w, "missing telegram secret token", http.StatusForbidden)
-		return
-	}
-	cfgRaw, err := s.app.LoadConfigText()
+func (s *Server) handleSocialWebhook(w http.ResponseWriter, r *http.Request, adapter social.WebhookAdapter) {
+	env, ok, err := adapter.ParseWebhook(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		switch {
+		case strings.Contains(err.Error(), "method not allowed"):
+			http.Error(w, err.Error(), http.StatusMethodNotAllowed)
+		case strings.Contains(err.Error(), "secret token"):
+			http.Error(w, err.Error(), http.StatusForbidden)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
-	var cfg struct {
-		Social struct {
-			WebhookSecret string `yaml:"webhook_secret"`
-		} `yaml:"social"`
-	}
-	if err := yaml.Unmarshal([]byte(cfgRaw), &cfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if cfg.Social.WebhookSecret == "" || cfg.Social.WebhookSecret != secret {
-		http.Error(w, "invalid telegram secret token", http.StatusForbidden)
-		return
-	}
-	var update social.TelegramUpdate
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	env, ok := social.TelegramEnvelope(update)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"ignored": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ignored": true, "channel": adapter.Name()})
 		return
 	}
 	if _, err := s.app.HandleSocialEnvelope(r.Context(), env); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": adapter.Name()})
+}
+
+func SaveConfigText(path string, raw string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("config path is empty")
+	}
+	return os.WriteFile(path, []byte(raw), 0o644)
 }
 
 func (s *Server) handleQueueRetry(w http.ResponseWriter, r *http.Request) {
@@ -751,11 +740,4 @@ func LoadConfigText(path string) (string, error) {
 		return "", err
 	}
 	return string(raw), nil
-}
-
-func SaveConfigText(path string, raw string) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("config path is empty")
-	}
-	return os.WriteFile(path, []byte(raw), 0o644)
 }

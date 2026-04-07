@@ -15,6 +15,11 @@ type TelegramConnector struct {
 	httpClient *http.Client
 }
 
+type TelegramWebhookAdapter struct {
+	path          string
+	webhookSecret string
+}
+
 func NewTelegramConnector(token string) *TelegramConnector {
 	return &TelegramConnector{
 		token: token,
@@ -25,6 +30,35 @@ func NewTelegramConnector(token string) *TelegramConnector {
 }
 
 func (c *TelegramConnector) Name() string { return "telegram" }
+
+func NewTelegramWebhookAdapter(path string, webhookSecret string) *TelegramWebhookAdapter {
+	return &TelegramWebhookAdapter{
+		path:          ensureLeadingSlash(path),
+		webhookSecret: strings.TrimSpace(webhookSecret),
+	}
+}
+
+func (a *TelegramWebhookAdapter) Name() string { return "telegram" }
+
+func (a *TelegramWebhookAdapter) Path() string { return a.path }
+
+func (a *TelegramWebhookAdapter) ParseWebhook(r *http.Request) (Envelope, bool, error) {
+	if r.Method != http.MethodPost {
+		return Envelope{}, false, fmt.Errorf("method not allowed")
+	}
+	if a.webhookSecret != "" {
+		secret := strings.TrimSpace(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"))
+		if secret == "" || secret != a.webhookSecret {
+			return Envelope{}, false, fmt.Errorf("invalid telegram secret token")
+		}
+	}
+	var update TelegramUpdate
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		return Envelope{}, false, err
+	}
+	env, ok := TelegramEnvelope(update)
+	return env, ok, nil
+}
 
 func (c *TelegramConnector) Send(ctx context.Context, msg OutboundMessage) (string, error) {
 	chatID := strings.TrimSpace(msg.ThreadID)
