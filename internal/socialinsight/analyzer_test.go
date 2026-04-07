@@ -26,6 +26,12 @@ func TestAnalyzerCapturesMemoryAndFollowUpForExternalWorkInquiry(t *testing.T) {
 	if len(result.Tasks) != 1 {
 		t.Fatalf("expected 1 follow-up task, got %d", len(result.Tasks))
 	}
+	if len(result.Commitments) != 1 {
+		t.Fatalf("expected 1 commitment, got %d", len(result.Commitments))
+	}
+	if result.Commitments[0].DueHint != "next week" {
+		t.Fatalf("expected next week due hint, got %+v", result.Commitments[0])
+	}
 }
 
 func TestAnalyzerSkipsFollowUpForOwnerSmallTalk(t *testing.T) {

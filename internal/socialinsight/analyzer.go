@@ -19,9 +19,16 @@ type TaskSuggestion struct {
 	Prompt string
 }
 
+type CommitmentSuggestion struct {
+	Summary      string
+	DueHint      string
+	Counterparty string
+}
+
 type Result struct {
-	Memories []MemoryNote
-	Tasks    []TaskSuggestion
+	Memories    []MemoryNote
+	Tasks       []TaskSuggestion
+	Commitments []CommitmentSuggestion
 }
 
 type Analyzer struct{}
@@ -38,6 +45,9 @@ func (a *Analyzer) Analyze(env social.Envelope, response string) Result {
 
 	if env.Context.Trust == types.TrustExternal || env.Context.Trust == types.TrustTrusted {
 		result.Memories = append(result.Memories, a.contactMemory(env, response))
+	}
+	if commitment, ok := a.extractCommitment(env, response); ok {
+		result.Commitments = append(result.Commitments, commitment)
 	}
 
 	if shouldCreateFollowUp(env) {
@@ -58,6 +68,27 @@ func (a *Analyzer) Analyze(env social.Envelope, response string) Result {
 	}
 
 	return result
+}
+
+func (a *Analyzer) extractCommitment(env social.Envelope, response string) (CommitmentSuggestion, bool) {
+	if env.Context.Trust != types.TrustExternal && env.Context.Trust != types.TrustTrusted {
+		return CommitmentSuggestion{}, false
+	}
+	responseLower := strings.ToLower(response)
+	if !containsAny(responseLower, []string{
+		"i will", "we will", "i can", "we can", "i'll", "we'll", "let me", "i can help", "happy to", "sure, i can",
+	}) {
+		return CommitmentSuggestion{}, false
+	}
+	summary := inferCommitmentSummary(env.Text, response)
+	if summary == "" {
+		return CommitmentSuggestion{}, false
+	}
+	return CommitmentSuggestion{
+		Summary:      summary,
+		DueHint:      inferDueHint(env.Text),
+		Counterparty: displayName(env),
+	}, true
 }
 
 func (a *Analyzer) contactMemory(env social.Envelope, response string) MemoryNote {
@@ -120,6 +151,50 @@ func shouldCreateFollowUp(env social.Envelope) bool {
 	return strings.Contains(haystack, "?") && len(haystack) > 40
 }
 
+func inferCommitmentSummary(inbound string, response string) string {
+	text := strings.ToLower(inbound + " " + response)
+	switch {
+	case containsAny(text, []string{"proposal", "quote"}):
+		return "Prepare and send a proposal or quote"
+	case containsAny(text, []string{"meeting", "call", "schedule"}):
+		return "Coordinate a meeting or call"
+	case containsAny(text, []string{"contract", "agreement"}):
+		return "Review or prepare contract-related next steps"
+	case containsAny(text, []string{"invoice", "payment"}):
+		return "Follow up on invoice or payment coordination"
+	case containsAny(text, []string{"follow up", "follow-up", "update"}):
+		return "Send a follow-up update"
+	default:
+		if strings.TrimSpace(response) != "" {
+			return "Follow through on the promised next step"
+		}
+		return ""
+	}
+}
+
+func inferDueHint(text string) string {
+	lower := strings.ToLower(text)
+	for _, hint := range []string{
+		"today",
+		"tomorrow",
+		"this week",
+		"next week",
+		"this month",
+		"monday",
+		"tuesday",
+		"wednesday",
+		"thursday",
+		"friday",
+		"saturday",
+		"sunday",
+	} {
+		if strings.Contains(lower, hint) {
+			return hint
+		}
+	}
+	return ""
+}
+
 func displayName(env social.Envelope) string {
 	if strings.TrimSpace(env.SenderName) != "" {
 		if strings.TrimSpace(env.SenderID) != "" {
@@ -139,4 +214,13 @@ func compact(value string, limit int) string {
 		return value
 	}
 	return strings.TrimSpace(value[:limit-3]) + "..."
+}
+
+func containsAny(haystack string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(haystack, needle) {
+			return true
+		}
+	}
+	return false
 }

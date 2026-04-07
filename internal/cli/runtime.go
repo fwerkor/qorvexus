@@ -12,6 +12,7 @@ import (
 
 	"qorvexus/internal/agent"
 	"qorvexus/internal/audit"
+	"qorvexus/internal/commitment"
 	"qorvexus/internal/config"
 	"qorvexus/internal/contextx"
 	"qorvexus/internal/memory"
@@ -31,22 +32,23 @@ import (
 )
 
 type appRuntime struct {
-	cfg        *config.Config
-	configPath string
-	runner     *agent.Runner
-	discussion *orchestrator.Discussion
-	scheduler  *scheduler.Manager
-	sessions   *session.Store
-	memory     *memory.Store
-	queue      *taskqueue.Queue
-	worker     *taskqueue.Worker
-	webServer  *http.Server
-	startedAt  time.Time
-	social     *social.Gateway
-	insights   *socialinsight.Analyzer
-	connectors *social.Registry
-	self       *self.Manager
-	audit      *audit.Logger
+	cfg         *config.Config
+	configPath  string
+	runner      *agent.Runner
+	discussion  *orchestrator.Discussion
+	scheduler   *scheduler.Manager
+	sessions    *session.Store
+	memory      *memory.Store
+	queue       *taskqueue.Queue
+	worker      *taskqueue.Worker
+	webServer   *http.Server
+	startedAt   time.Time
+	social      *social.Gateway
+	insights    *socialinsight.Analyzer
+	connectors  *social.Registry
+	commitments *commitment.Store
+	self        *self.Manager
+	audit       *audit.Logger
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
@@ -72,16 +74,17 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	discussion := &orchestrator.Discussion{Registry: registry}
 	policyEngine := policy.NewEngine(cfg.Tools)
 	app := &appRuntime{
-		cfg:        cfg,
-		configPath: configPath,
-		discussion: discussion,
-		sessions:   store,
-		memory:     memory.NewStore(cfg.Memory.File),
-		startedAt:  time.Now().UTC(),
-		connectors: social.NewRegistry(),
-		insights:   socialinsight.NewAnalyzer(),
-		self:       self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
-		audit:      audit.New(cfg.Audit.File),
+		cfg:         cfg,
+		configPath:  configPath,
+		discussion:  discussion,
+		sessions:    store,
+		memory:      memory.NewStore(cfg.Memory.File),
+		startedAt:   time.Now().UTC(),
+		connectors:  social.NewRegistry(),
+		insights:    socialinsight.NewAnalyzer(),
+		commitments: commitment.NewStore(cfg.Social.CommitmentFile),
+		self:        self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
+		audit:       audit.New(cfg.Audit.File),
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -505,6 +508,29 @@ func (a *appRuntime) ListSocialConnectors(_ context.Context) (string, error) {
 	return string(raw), nil
 }
 
+func (a *appRuntime) ListCommitments(_ context.Context, limit int) (string, error) {
+	items, err := a.commitments.List(limit)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) UpdateCommitmentStatus(ctx context.Context, id string, status string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("updating commitments requires owner context")
+	}
+	if err := a.commitments.UpdateStatus(id, commitment.Status(status)); err != nil {
+		return "", err
+	}
+	a.logAudit(ctx, "update_commitment_status", "ok", id, map[string]any{"status": status})
+	return "commitment status updated", nil
+}
+
 func (a *appRuntime) RetryQueueTask(ctx context.Context, id string) (string, error) {
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("retrying queue tasks requires owner context")
@@ -614,6 +640,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 		return
 	}
 	result := a.insights.Analyze(env, response)
+	var followUpTaskID string
 	for _, note := range result.Memories {
 		if a.cfg.Memory.Enabled {
 			if err := a.memory.Append(memory.Entry{
@@ -637,12 +664,34 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 				SessionID: "social-followup-" + sanitize(env.Channel+"-"+env.ThreadID+"-"+env.SenderID),
 			})
 			if err == nil {
+				if followUpTaskID == "" {
+					followUpTaskID = task.ID
+				}
 				a.logAudit(ctx, "enqueue_social_followup", "ok", task.ID, map[string]any{
 					"name":      suggestion.Name,
 					"sender_id": env.SenderID,
 					"thread_id": env.ThreadID,
 				})
 			}
+		}
+	}
+	for _, suggestion := range result.Commitments {
+		entry, err := a.commitments.Append(commitment.Entry{
+			Channel:       env.Channel,
+			ThreadID:      env.ThreadID,
+			Counterparty:  suggestion.Counterparty,
+			Summary:       suggestion.Summary,
+			DueHint:       suggestion.DueHint,
+			Trust:         string(env.Context.Trust),
+			Source:        "social:" + env.Channel,
+			RelatedTaskID: followUpTaskID,
+		})
+		if err == nil {
+			a.logAudit(ctx, "record_social_commitment", "ok", entry.ID, map[string]any{
+				"summary":      suggestion.Summary,
+				"counterparty": suggestion.Counterparty,
+				"due_hint":     suggestion.DueHint,
+			})
 		}
 	}
 }

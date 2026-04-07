@@ -1,0 +1,153 @@
+package commitment
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+type Status string
+
+const (
+	StatusOpen      Status = "open"
+	StatusCompleted Status = "completed"
+	StatusCanceled  Status = "canceled"
+)
+
+type Entry struct {
+	ID            string    `json:"id"`
+	Channel       string    `json:"channel,omitempty"`
+	ThreadID      string    `json:"thread_id,omitempty"`
+	Counterparty  string    `json:"counterparty,omitempty"`
+	Summary       string    `json:"summary"`
+	DueHint       string    `json:"due_hint,omitempty"`
+	Trust         string    `json:"trust,omitempty"`
+	Status        Status    `json:"status"`
+	Source        string    `json:"source,omitempty"`
+	RelatedTaskID string    `json:"related_task_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type Store struct {
+	path string
+	mu   sync.Mutex
+}
+
+func NewStore(path string) *Store {
+	return &Store{path: path}
+}
+
+func (s *Store) Append(entry Entry) (Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return Entry{}, err
+	}
+	if entry.ID == "" {
+		entry.ID = fmt.Sprintf("commit-%d", time.Now().UTC().UnixNano())
+	}
+	if entry.Status == "" {
+		entry.Status = StatusOpen
+	}
+	now := time.Now().UTC()
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = now
+	}
+	entry.UpdatedAt = now
+	items = append(items, entry)
+	return entry, s.saveLocked(items)
+}
+
+func (s *Store) List(limit int) ([]Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items, nil
+}
+
+func (s *Store) UpdateStatus(id string, status Status) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].ID == id {
+			items[i].Status = status
+			items[i].UpdatedAt = time.Now().UTC()
+			return s.saveLocked(items)
+		}
+	}
+	return fmt.Errorf("commitment %q not found", id)
+}
+
+func (s *Store) AttachTask(id string, taskID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].ID == id {
+			items[i].RelatedTaskID = taskID
+			items[i].UpdatedAt = time.Now().UTC()
+			return s.saveLocked(items)
+		}
+	}
+	return fmt.Errorf("commitment %q not found", id)
+}
+
+func (s *Store) loadLocked() ([]Entry, error) {
+	f, err := os.Open(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	var items []Entry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var entry Entry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err == nil {
+			items = append(items, entry)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Store) saveLocked(items []Entry) error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(s.path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, entry := range items {
+		if err := enc.Encode(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -23,6 +23,7 @@ type App interface {
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
 	ListSocialConnectors(ctx context.Context) (string, error)
+	ListCommitments(ctx context.Context, limit int) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
@@ -30,6 +31,7 @@ type App interface {
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
 	RetryQueueTask(ctx context.Context, id string) (string, error)
+	UpdateCommitmentStatus(ctx context.Context, id string, status string) (string, error)
 	UpdateSelfImprovementStatus(ctx context.Context, id string, status string) (string, error)
 }
 
@@ -68,12 +70,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/self", s.handleSelf)
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
 	mux.HandleFunc("/api/social/connectors", s.handleSocialConnectors)
+	mux.HandleFunc("/api/commitments", s.handleCommitments)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
 	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
 	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
+	mux.HandleFunc("/api/commitments/status", s.handleCommitmentStatus)
 	mux.HandleFunc("/api/self/status", s.handleSelfStatus)
 	return mux
 }
@@ -154,6 +158,16 @@ func (s *Server) handleSocialRecent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSocialConnectors(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.app.ListSocialConnectors(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleCommitments(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.app.ListCommitments(r.Context(), 100)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -264,6 +278,27 @@ func (s *Server) handleQueueRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.app.RetryQueueTask(r.Context(), input.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
+}
+
+func (s *Server) handleCommitmentStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := s.app.UpdateCommitmentStatus(r.Context(), input.ID, input.Status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -444,6 +479,17 @@ const dashboardHTML = `<!doctype html>
         <button onclick="simulateSocial()">Simulate Inbound Social</button>
       </section>
       <section class="card">
+        <h2>Commitments</h2>
+        <button class="secondary" onclick="loadCommitments()">Refresh Commitments</button>
+        <pre id="commitments-output"></pre>
+        <div class="row">
+          <input id="commitment-id" placeholder="Commitment ID">
+          <input id="commitment-status" placeholder="New status">
+        </div>
+        <p></p>
+        <button onclick="updateCommitmentStatus()">Update Commitment</button>
+      </section>
+      <section class="card">
         <h2>Audit Log</h2>
         <button class="secondary" onclick="loadAudit()">Refresh Audit</button>
         <pre id="audit-output"></pre>
@@ -536,6 +582,10 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/social/connectors");
       document.getElementById("social-connectors-output").textContent = JSON.stringify(data, null, 2);
     }
+    async function loadCommitments() {
+      const data = await api("/api/commitments");
+      document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
+    }
     async function simulateSocial() {
       const payload = {
         channel: document.getElementById("social-channel").value,
@@ -547,6 +597,18 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/social/inbound", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
       document.getElementById("social-output").textContent = JSON.stringify(data, null, 2);
       loadSocial();
+      loadCommitments();
+      loadQueue();
+      loadAudit();
+    }
+    async function updateCommitmentStatus() {
+      const payload = {
+        id: document.getElementById("commitment-id").value,
+        status: document.getElementById("commitment-status").value,
+      };
+      const data = await api("/api/commitments/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      document.getElementById("commitments-output").textContent = JSON.stringify(data, null, 2);
+      loadCommitments();
       loadAudit();
     }
     async function loadAudit() {
@@ -569,7 +631,7 @@ const dashboardHTML = `<!doctype html>
       html += "</tbody></table>";
       return html;
     }
-    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadAudit();
+    loadConfig(); loadStatus(); loadSessions(); loadQueue(); loadSelf(); loadSocial(); loadConnectors(); loadCommitments(); loadAudit();
   </script>
 </body>
 </html>`

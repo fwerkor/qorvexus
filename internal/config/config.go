@@ -99,6 +99,7 @@ type SocialConfig struct {
 	Enabled         bool     `yaml:"enabled"`
 	AllowedChannels []string `yaml:"allowed_channels"`
 	InboxFile       string   `yaml:"inbox_file"`
+	CommitmentFile  string   `yaml:"commitment_file"`
 	WebhookSecret   string   `yaml:"webhook_secret"`
 }
 
@@ -181,6 +182,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if c.Social.InboxFile == "" {
 		c.Social.InboxFile = filepath.Join(c.DataDir, "social_inbox.jsonl")
+	}
+	if c.Social.CommitmentFile == "" {
+		c.Social.CommitmentFile = filepath.Join(c.DataDir, "social_commitments.jsonl")
 	}
 	if c.Self.SkillsDir == "" {
 		c.Self.SkillsDir = filepath.Join(base, "skills")

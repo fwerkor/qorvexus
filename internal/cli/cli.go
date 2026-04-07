@@ -264,6 +264,7 @@ social:
     - x
     - email
   inbox_file: ./.qorvexus/social_inbox.jsonl
+  commitment_file: ./.qorvexus/social_commitments.jsonl
   webhook_secret: change-me
 self:
   enabled: true
