@@ -101,6 +101,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewSelfBacklogListTool(app))
 	toolRegistry.Register(tool.NewPromoteSelfImprovementTool(app))
 	toolRegistry.Register(tool.NewMineSelfImprovementsTool(app))
+	toolRegistry.Register(tool.NewCaptureSelfImprovementTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -167,7 +168,7 @@ func (a *appRuntime) AddScheduledTask(_ context.Context, name string, scheduleEx
 	if err := a.scheduler.Add(task); err != nil {
 		return "", err
 	}
-	a.logAudit("schedule_task", "ok", name, map[string]any{"schedule": scheduleExpr, "model": model})
+	a.logAudit(context.Background(), "schedule_task", "ok", name, map[string]any{"schedule": scheduleExpr, "model": model})
 	return fmt.Sprintf("scheduled task %q with cron %q", name, scheduleExpr), nil
 }
 
@@ -219,7 +220,7 @@ func (a *appRuntime) EnqueueTask(_ context.Context, name string, prompt string, 
 	if err != nil {
 		return "", err
 	}
-	a.logAudit("enqueue_task", "ok", task.ID, map[string]any{"name": name, "model": model})
+	a.logAudit(context.Background(), "enqueue_task", "ok", task.ID, map[string]any{"name": name, "model": model})
 	return fmt.Sprintf("queued task %q as %s", name, task.ID), nil
 }
 
@@ -301,7 +302,7 @@ func (a *appRuntime) WriteRuntimeConfig(ctx context.Context, raw string) (string
 	if err := webui.SaveConfigText(a.configPath, raw); err != nil {
 		return "", err
 	}
-	a.logAudit("write_runtime_config", "ok", a.configPath, nil)
+	a.logAudit(ctx, "write_runtime_config", "ok", a.configPath, nil)
 	return "runtime config updated", nil
 }
 
@@ -316,7 +317,7 @@ func (a *appRuntime) UpsertSkill(ctx context.Context, name string, description s
 	if err != nil {
 		return "", err
 	}
-	a.logAudit("upsert_skill", "ok", path, map[string]any{"skill": name})
+	a.logAudit(ctx, "upsert_skill", "ok", path, map[string]any{"skill": name})
 	return path, nil
 }
 
@@ -337,7 +338,7 @@ func (a *appRuntime) AddSelfImprovement(ctx context.Context, title string, descr
 	}); err != nil {
 		return "", err
 	}
-	a.logAudit("add_self_improvement", "ok", title, map[string]any{"kind": kind})
+	a.logAudit(ctx, "add_self_improvement", "ok", title, map[string]any{"kind": kind})
 	return "self-improvement item recorded", nil
 }
 
@@ -378,7 +379,7 @@ func (a *appRuntime) PromoteSelfImprovement(ctx context.Context, title string, d
 	prompt := "Work on this self-improvement task for Qorvexus.\nTitle: " + title + "\nDescription: " + description + "\nMake concrete progress and use tools if needed."
 	out, err := a.EnqueueTask(ctx, "self-improvement: "+title, prompt, modelName, "")
 	if err == nil {
-		a.logAudit("promote_self_improvement", "ok", title, map[string]any{"model": modelName})
+		a.logAudit(ctx, "promote_self_improvement", "ok", title, map[string]any{"model": modelName})
 	}
 	return out, err
 }
@@ -441,6 +442,21 @@ func (a *appRuntime) MineSelfImprovements(ctx context.Context, limit int) (strin
 	return string(raw), nil
 }
 
+func (a *appRuntime) CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, modelName string) (string, error) {
+	out, err := a.AddSelfImprovement(ctx, title, description, kind)
+	if err != nil {
+		return "", err
+	}
+	if !promote {
+		return out, nil
+	}
+	promoted, err := a.PromoteSelfImprovement(ctx, title, description, modelName)
+	if err != nil {
+		return out + "\n" + err.Error(), nil
+	}
+	return out + "\n" + promoted, nil
+}
+
 func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error) {
 	if a.social == nil {
 		return a.HandleEnvelope(ctx, env)
@@ -465,7 +481,7 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 		},
 	})
 	if err == nil {
-		a.logAudit("send_social_message", "ok", channel, map[string]any{"thread_id": threadID, "recipient": recipient})
+		a.logAudit(ctx, "send_social_message", "ok", channel, map[string]any{"thread_id": threadID, "recipient": recipient})
 	}
 	return out, err
 }
@@ -485,7 +501,7 @@ func (a *appRuntime) RetryQueueTask(ctx context.Context, id string) (string, err
 	if err := a.queue.Retry(id); err != nil {
 		return "", err
 	}
-	a.logAudit("retry_queue_task", "ok", id, nil)
+	a.logAudit(ctx, "retry_queue_task", "ok", id, nil)
 	return "queue task retried", nil
 }
 
@@ -496,7 +512,7 @@ func (a *appRuntime) UpdateSelfImprovementStatus(ctx context.Context, id string,
 	if err := a.self.UpdateStatus(id, status); err != nil {
 		return "", err
 	}
-	a.logAudit("update_self_improvement_status", "ok", id, map[string]any{"status": status})
+	a.logAudit(ctx, "update_self_improvement_status", "ok", id, map[string]any{"status": status})
 	return "self improvement status updated", nil
 }
 
@@ -547,12 +563,21 @@ func ownerAllowedFromContext(ctx context.Context) bool {
 	return convo.IsOwner || convo.Trust == types.TrustOwner
 }
 
-func (a *appRuntime) logAudit(action string, status string, target string, metadata map[string]any) {
+func (a *appRuntime) logAudit(ctx context.Context, action string, status string, target string, metadata map[string]any) {
 	if !a.cfg.Audit.Enabled {
 		return
 	}
+	var actor, channel, trust string
+	if convo, ok := tool.ConversationContextFrom(ctx); ok {
+		actor = convo.SenderID
+		channel = convo.Channel
+		trust = string(convo.Trust)
+	}
 	_ = a.audit.Append(audit.Entry{
 		Action:   action,
+		Actor:    actor,
+		Channel:  channel,
+		Trust:    trust,
 		Status:   status,
 		Target:   target,
 		Metadata: metadata,

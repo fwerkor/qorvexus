@@ -27,6 +27,7 @@ type Runtime interface {
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
 	PromoteSelfImprovement(ctx context.Context, title string, description string, model string) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
+	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -524,4 +525,42 @@ func (t *MineSelfImprovementsTool) Invoke(ctx context.Context, raw json.RawMessa
 		}
 	}
 	return t.rt.MineSelfImprovements(ctx, input.Limit)
+}
+
+type CaptureSelfImprovementTool struct{ rt Runtime }
+
+func NewCaptureSelfImprovementTool(rt Runtime) *CaptureSelfImprovementTool {
+	return &CaptureSelfImprovementTool{rt: rt}
+}
+
+func (t *CaptureSelfImprovementTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "capture_self_improvement",
+		Description: "Capture a mined improvement into the backlog and optionally promote it into an execution task.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"kind":        map[string]any{"type": "string"},
+				"promote":     map[string]any{"type": "boolean"},
+				"model":       map[string]any{"type": "string"},
+			},
+			"required": []string{"title", "description"},
+		},
+	}
+}
+
+func (t *CaptureSelfImprovementTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+		Promote     bool   `json:"promote"`
+		Model       string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.CaptureSelfImprovement(ctx, input.Title, input.Description, input.Kind, input.Promote, input.Model)
 }

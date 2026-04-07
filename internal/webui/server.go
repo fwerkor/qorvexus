@@ -24,6 +24,7 @@ type App interface {
 	ListRecentSocial(ctx context.Context, limit int) (string, error)
 	ListAudit(ctx context.Context, limit int) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
+	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
 	LoadConfigText() (string, error)
 	SaveConfigText(raw string) error
 	HandleSocialEnvelope(ctx context.Context, env social.Envelope) (string, error)
@@ -67,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/social/recent", s.handleSocialRecent)
 	mux.HandleFunc("/api/audit", s.handleAudit)
 	mux.HandleFunc("/api/self/mine", s.handleSelfMine)
+	mux.HandleFunc("/api/self/capture", s.handleSelfCapture)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/social/inbound", s.handleSocialInbound)
 	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
@@ -166,6 +168,30 @@ func (s *Server) handleSelfMine(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(raw))
+}
+
+func (s *Server) handleSelfCapture(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+		Promote     bool   `json:"promote"`
+		Model       string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := s.app.CaptureSelfImprovement(r.Context(), input.Title, input.Description, input.Kind, input.Promote, input.Model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -369,6 +395,19 @@ const dashboardHTML = `<!doctype html>
         <p></p>
         <button onclick="updateSelfStatus()">Update Self Status</button>
         <pre id="self-mine-output"></pre>
+        <div class="row">
+          <input id="capture-title" placeholder="Captured idea title">
+          <input id="capture-kind" placeholder="Kind">
+        </div>
+        <p></p>
+        <textarea id="capture-description" placeholder="Captured idea description"></textarea>
+        <p></p>
+        <div class="row">
+          <input id="capture-model" placeholder="Model for promotion (optional)">
+          <button onclick="captureSelf(false)">Capture Idea</button>
+        </div>
+        <p></p>
+        <button onclick="captureSelf(true)">Capture And Promote</button>
       </section>
       <section class="card">
         <h2>Social Inbox</h2>
@@ -444,6 +483,20 @@ const dashboardHTML = `<!doctype html>
       const data = await api("/api/self/status", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
       document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
       loadSelf();
+      loadAudit();
+    }
+    async function captureSelf(promote) {
+      const payload = {
+        title: document.getElementById("capture-title").value,
+        description: document.getElementById("capture-description").value,
+        kind: document.getElementById("capture-kind").value,
+        promote,
+        model: document.getElementById("capture-model").value,
+      };
+      const data = await api("/api/self/capture", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      document.getElementById("self-mine-output").textContent = JSON.stringify(data, null, 2);
+      loadSelf();
+      loadQueue();
       loadAudit();
     }
     async function loadSocial() {

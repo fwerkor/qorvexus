@@ -14,6 +14,8 @@ type Entry struct {
 	ID        string         `json:"id"`
 	Action    string         `json:"action"`
 	Actor     string         `json:"actor,omitempty"`
+	Channel   string         `json:"channel,omitempty"`
+	Trust     string         `json:"trust,omitempty"`
 	Target    string         `json:"target,omitempty"`
 	Status    string         `json:"status,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
