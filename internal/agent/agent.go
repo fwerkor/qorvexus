@@ -204,6 +204,7 @@ func buildContextPrompt(ctx types.ConversationContext) string {
 	}
 	if ctx.ReplyAsAgent {
 		b.WriteString("- you may reply outwardly as the agent.\n")
+		b.WriteString("- if no outward response is needed, answer exactly [[NO_REPLY]].\n")
 	}
 	if ctx.WorkingForUser {
 		b.WriteString("- you are acting on behalf of the owner while talking to an external party; be professional and do not exceed delegated authority.\n")

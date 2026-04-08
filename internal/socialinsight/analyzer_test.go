@@ -26,11 +26,17 @@ func TestAnalyzerCapturesMemoryAndFollowUpForExternalWorkInquiry(t *testing.T) {
 	if len(result.Tasks) != 1 {
 		t.Fatalf("expected 1 follow-up task, got %d", len(result.Tasks))
 	}
+	if len(result.FollowUps) != 1 {
+		t.Fatalf("expected 1 follow-up strategy, got %d", len(result.FollowUps))
+	}
 	if len(result.Commitments) != 1 {
 		t.Fatalf("expected 1 commitment, got %d", len(result.Commitments))
 	}
 	if result.Commitments[0].DueHint != "next week" {
 		t.Fatalf("expected next week due hint, got %+v", result.Commitments[0])
+	}
+	if result.FollowUps[0].RecommendedAction != "coordinate_meeting" {
+		t.Fatalf("expected meeting follow-up action, got %+v", result.FollowUps[0])
 	}
 }
 

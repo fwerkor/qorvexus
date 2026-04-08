@@ -25,10 +25,20 @@ type CommitmentSuggestion struct {
 	Counterparty string
 }
 
+type FollowUpSuggestion struct {
+	Summary           string
+	RecommendedAction string
+	Reason            string
+	DueHint           string
+	Priority          string
+	Disposition       string
+}
+
 type Result struct {
 	Memories    []MemoryNote
 	Tasks       []TaskSuggestion
 	Commitments []CommitmentSuggestion
+	FollowUps   []FollowUpSuggestion
 }
 
 type Analyzer struct{}
@@ -51,23 +61,62 @@ func (a *Analyzer) Analyze(env social.Envelope, response string) Result {
 	}
 
 	if shouldCreateFollowUp(env) {
+		result.FollowUps = append(result.FollowUps, inferFollowUp(env, response))
 		result.Tasks = append(result.Tasks, TaskSuggestion{
 			Name: fmt.Sprintf("social-follow-up: %s", displayName(env)),
 			Prompt: strings.TrimSpace(fmt.Sprintf(
-				"Review this social conversation and decide whether Qorvexus should prepare a follow-up, summary, draft, or next action for the owner.\n"+
+				"Review this social conversation and decide whether Qorvexus should prepare a follow-up, summary, held outbox message, or next action.\n"+
 					"Channel: %s\nThread: %s\nSender: %s\nTrust: %s\nInbound message: %s\nAgent response: %s\n"+
-					"If a concrete follow-up is needed, produce it or queue the next step. Respect owner authority boundaries.",
+					"If a concrete follow-up is needed, produce it or queue the next step. Respect delegated authority boundaries.",
 				env.Channel,
 				env.ThreadID,
 				displayName(env),
 				env.Context.Trust,
 				env.Text,
 				response,
-			)),
+			)) + "\nIf no outward reply is needed, it is valid for Qorvexus to stay silent and just update internal follow-up state.",
 		})
 	}
 
 	return result
+}
+
+func inferFollowUp(env social.Envelope, response string) FollowUpSuggestion {
+	text := strings.ToLower(env.Text + "\n" + response)
+	suggestion := FollowUpSuggestion{
+		Summary:     inferCommitmentSummary(env.Text, response),
+		DueHint:     inferDueHint(env.Text),
+		Priority:    "medium",
+		Disposition: "internal_prep",
+	}
+	if suggestion.Summary == "" {
+		suggestion.Summary = "Review the conversation and decide the next outbound step"
+	}
+	switch {
+	case containsAny(text, []string{"proposal", "quote"}):
+		suggestion.RecommendedAction = "prepare_proposal_followup"
+		suggestion.Reason = "The conversation points toward a proposal or quote workflow."
+		suggestion.Priority = "high"
+		suggestion.Disposition = "autonomous_send"
+	case containsAny(text, []string{"meeting", "call", "schedule"}):
+		suggestion.RecommendedAction = "coordinate_meeting"
+		suggestion.Reason = "The conversation needs scheduling follow-through."
+		suggestion.Priority = "high"
+		suggestion.Disposition = "autonomous_send"
+	case containsAny(text, []string{"contract", "agreement", "invoice", "payment"}):
+		suggestion.RecommendedAction = "gather_business_terms_context"
+		suggestion.Reason = "The thread touches business terms or obligations."
+		suggestion.Priority = "high"
+		suggestion.Disposition = "needs_owner_input"
+	case strings.Contains(strings.ToLower(env.Text), "?"):
+		suggestion.RecommendedAction = "prepare_reply_or_answer"
+		suggestion.Reason = "The contact asked an open question that may need a deliberate response."
+		suggestion.Disposition = "autonomous_send"
+	default:
+		suggestion.RecommendedAction = "review_next_step"
+		suggestion.Reason = "The conversation looks meaningful enough to keep an explicit follow-up strategy."
+	}
+	return suggestion
 }
 
 func (a *Analyzer) extractCommitment(env social.Envelope, response string) (CommitmentSuggestion, bool) {

@@ -97,3 +97,39 @@ func NextEscalationLevel(entry Entry, now time.Time) int {
 	}
 	return level
 }
+
+func ReminderCooldown(entry Entry, defaultCooldown time.Duration) time.Duration {
+	if defaultCooldown <= 0 {
+		defaultCooldown = 48 * time.Hour
+	}
+	switch {
+	case entry.Status == StatusOverdue:
+		if defaultCooldown > 24*time.Hour {
+			return 24 * time.Hour
+		}
+		return defaultCooldown
+	case entry.DueHint != "":
+		if defaultCooldown > 36*time.Hour {
+			return 36 * time.Hour
+		}
+		return defaultCooldown
+	default:
+		if defaultCooldown > 72*time.Hour {
+			return 72 * time.Hour
+		}
+		return defaultCooldown
+	}
+}
+
+func ShouldCreateReminder(entry Entry, now time.Time, defaultCooldown time.Duration) bool {
+	if entry.Status != StatusOpen && entry.Status != StatusOverdue {
+		return false
+	}
+	if !IsStale(entry, now) && !ShouldMarkOverdue(entry, now) && entry.Status != StatusOverdue {
+		return false
+	}
+	if entry.LastReminderAt.IsZero() {
+		return true
+	}
+	return now.Sub(entry.LastReminderAt) >= ReminderCooldown(entry, defaultCooldown)
+}

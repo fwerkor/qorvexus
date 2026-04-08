@@ -114,7 +114,13 @@ type SocialConfig struct {
 	AllowedChannels               []string       `yaml:"allowed_channels"`
 	InboxFile                     string         `yaml:"inbox_file"`
 	CommitmentFile                string         `yaml:"commitment_file"`
+	DraftFile                     string         `yaml:"draft_file"`
+	FollowUpFile                  string         `yaml:"followup_file"`
+	GraphFile                     string         `yaml:"graph_file"`
 	CommitmentScanIntervalSeconds int            `yaml:"commitment_scan_interval_seconds"`
+	ReminderCooldownHours         int            `yaml:"reminder_cooldown_hours"`
+	AutoSendTrustedReplies        *bool          `yaml:"auto_send_trusted_replies"`
+	AutoSendExternalReplies       *bool          `yaml:"auto_send_external_replies"`
 	Discord                       DiscordConfig  `yaml:"discord"`
 	QQBot                         QQBotConfig    `yaml:"qqbot"`
 	Slack                         SlackConfig    `yaml:"slack"`
@@ -361,8 +367,26 @@ func (c *Config) setDefaults(path string) error {
 	if c.Social.CommitmentFile == "" {
 		c.Social.CommitmentFile = filepath.Join(c.DataDir, "social_commitments.jsonl")
 	}
+	if c.Social.DraftFile == "" {
+		c.Social.DraftFile = filepath.Join(c.DataDir, "social_drafts.json")
+	}
+	if c.Social.FollowUpFile == "" {
+		c.Social.FollowUpFile = filepath.Join(c.DataDir, "social_followups.json")
+	}
+	if c.Social.GraphFile == "" {
+		c.Social.GraphFile = filepath.Join(c.DataDir, "social_graph.json")
+	}
 	if c.Social.CommitmentScanIntervalSeconds <= 0 {
 		c.Social.CommitmentScanIntervalSeconds = 3600
+	}
+	if c.Social.ReminderCooldownHours <= 0 {
+		c.Social.ReminderCooldownHours = 48
+	}
+	if c.Social.AutoSendTrustedReplies == nil {
+		c.Social.AutoSendTrustedReplies = boolPtr(true)
+	}
+	if c.Social.AutoSendExternalReplies == nil {
+		c.Social.AutoSendExternalReplies = boolPtr(true)
 	}
 	if strings.TrimSpace(c.Social.Discord.APIBaseURL) == "" {
 		c.Social.Discord.APIBaseURL = "https://discord.com/api/v10"
@@ -446,7 +470,8 @@ When interacting with the local device, prefer structured system, filesystem, an
 When doing software engineering work, prefer repository indexing, structured repo search, apply_diff, change summaries, and test failure localization before improvising with raw shell output.
 When browsing the web, prefer the structured browser workflow tool for common tasks, and use raw Playwright scripts only for flows that need custom logic.
 When browsing the web through Playwright, prefer persistent browser profiles so logins, cookies, and session state can survive across runs.
-When talking to external parties, represent the owner professionally without overcommitting.
+When talking to external parties, act as an autonomous assistant with delegated authority: you may reply, defer internally, or stay silent when no response is needed.
+When a social channel conversation does not need an outward reply, return [[NO_REPLY]] instead of forcing a response.
 When improving yourself, make concrete, reversible progress and preserve auditability.
 `)
 }

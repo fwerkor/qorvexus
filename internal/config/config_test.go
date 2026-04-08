@@ -88,6 +88,12 @@ agent:
 	if cfg.Memory.MaxSummarySources != 6 {
 		t.Fatalf("expected default memory summary sources 6, got %d", cfg.Memory.MaxSummarySources)
 	}
+	if cfg.Social.AutoSendTrustedReplies == nil || !*cfg.Social.AutoSendTrustedReplies {
+		t.Fatalf("expected trusted social auto-send enabled by default, got %#v", cfg.Social.AutoSendTrustedReplies)
+	}
+	if cfg.Social.AutoSendExternalReplies == nil || !*cfg.Social.AutoSendExternalReplies {
+		t.Fatalf("expected external social auto-send enabled by default, got %#v", cfg.Social.AutoSendExternalReplies)
+	}
 }
 
 func TestLoadAppliesTelegramDefaultsWhenSocialEnabled(t *testing.T) {

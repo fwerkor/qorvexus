@@ -83,3 +83,21 @@ func TestNextEscalationLevelIncreasesForLongOverdue(t *testing.T) {
 		t.Fatalf("expected escalation level 2, got %d", got)
 	}
 }
+
+func TestShouldCreateReminderUsesReminderCooldown(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	entry := Entry{
+		Status:         StatusOverdue,
+		DueHint:        "today",
+		CreatedAt:      now.Add(-48 * time.Hour),
+		UpdatedAt:      now.Add(-48 * time.Hour),
+		LastReminderAt: now.Add(-23 * time.Hour),
+	}
+	if ShouldCreateReminder(entry, now, 48*time.Hour) {
+		t.Fatalf("expected overdue reminder to respect 24h cooldown")
+	}
+	entry.LastReminderAt = now.Add(-25 * time.Hour)
+	if !ShouldCreateReminder(entry, now, 48*time.Hour) {
+		t.Fatalf("expected overdue reminder after cooldown")
+	}
+}

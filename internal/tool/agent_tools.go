@@ -55,7 +55,12 @@ type Runtime interface {
 	Recall(ctx context.Context, query string, limit int) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
+	HoldSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string, reason string) (string, error)
+	ListSocialOutbox(ctx context.Context, limit int, status string) (string, error)
+	ManageSocialOutbox(ctx context.Context, outboxID string, action string, editedText string) (string, error)
 	ListSocialConnectors(ctx context.Context) (string, error)
+	SocialContactGraph(ctx context.Context) (string, error)
+	ListSocialFollowUps(ctx context.Context, limit int, status string) (string, error)
 	ReadRuntimeConfig(ctx context.Context) (string, error)
 	WriteRuntimeConfig(ctx context.Context, raw string) (string, error)
 	UpsertSkill(ctx context.Context, name string, description string, body string) (string, error)
@@ -708,7 +713,7 @@ func NewSocialSendTool(rt Runtime) *SocialSendTool { return &SocialSendTool{rt: 
 func (t *SocialSendTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "send_social_message",
-		Description: "Send or queue a message through a configured social connector. Useful when acting as the owner's digital representative.",
+		Description: "Send a message immediately through a configured social connector when acting as Qorvexus, the owner's autonomous assistant.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -752,6 +757,169 @@ func (t *SocialListTool) Definition() types.ToolDefinition {
 
 func (t *SocialListTool) Invoke(ctx context.Context, _ json.RawMessage) (string, error) {
 	return t.rt.ListSocialConnectors(ctx)
+}
+
+type SocialHoldTool struct {
+	rt Runtime
+}
+
+func NewSocialHoldTool(rt Runtime) *SocialHoldTool { return &SocialHoldTool{rt: rt} }
+
+func (t *SocialHoldTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "hold_social_message",
+		Description: "Save an outbound message into the assistant outbox instead of sending it immediately. Useful when Qorvexus wants to prepare, revise, or wait.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channel":   map[string]any{"type": "string"},
+				"thread_id": map[string]any{"type": "string"},
+				"recipient": map[string]any{"type": "string"},
+				"text":      map[string]any{"type": "string"},
+				"reason":    map[string]any{"type": "string"},
+			},
+			"required": []string{"channel", "text"},
+		},
+	}
+}
+
+func (t *SocialHoldTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Channel   string `json:"channel"`
+		ThreadID  string `json:"thread_id"`
+		Recipient string `json:"recipient"`
+		Text      string `json:"text"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.HoldSocialMessage(ctx, input.Channel, input.ThreadID, input.Recipient, input.Text, input.Reason)
+}
+
+type SocialOutboxListTool struct {
+	rt Runtime
+}
+
+func NewSocialOutboxListTool(rt Runtime) *SocialOutboxListTool { return &SocialOutboxListTool{rt: rt} }
+
+func (t *SocialOutboxListTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_social_outbox",
+		Description: "List held or pending outbound social messages in the assistant outbox.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit":  map[string]any{"type": "integer"},
+				"status": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *SocialOutboxListTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit  int    `json:"limit"`
+		Status string `json:"status"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.ListSocialOutbox(ctx, input.Limit, input.Status)
+}
+
+type SocialOutboxManageTool struct {
+	rt Runtime
+}
+
+func NewSocialOutboxManageTool(rt Runtime) *SocialOutboxManageTool {
+	return &SocialOutboxManageTool{rt: rt}
+}
+
+func (t *SocialOutboxManageTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "manage_social_outbox",
+		Description: "Manage an assistant outbox entry by sending it, keeping it held, or discarding it.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"outbox_id":   map[string]any{"type": "string"},
+				"action":      map[string]any{"type": "string"},
+				"edited_text": map[string]any{"type": "string"},
+			},
+			"required": []string{"outbox_id"},
+		},
+	}
+}
+
+func (t *SocialOutboxManageTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		OutboxID   string `json:"outbox_id"`
+		Action     string `json:"action"`
+		EditedText string `json:"edited_text"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.ManageSocialOutbox(ctx, input.OutboxID, input.Action, input.EditedText)
+}
+
+type SocialGraphTool struct {
+	rt Runtime
+}
+
+func NewSocialGraphTool(rt Runtime) *SocialGraphTool { return &SocialGraphTool{rt: rt} }
+
+func (t *SocialGraphTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "get_social_contact_graph",
+		Description: "Read the structured relationship graph for social contacts, including interaction counts, autonomy boundaries, commitments, and follow-up load.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}
+}
+
+func (t *SocialGraphTool) Invoke(ctx context.Context, _ json.RawMessage) (string, error) {
+	return t.rt.SocialContactGraph(ctx)
+}
+
+type SocialFollowUpListTool struct {
+	rt Runtime
+}
+
+func NewSocialFollowUpListTool(rt Runtime) *SocialFollowUpListTool {
+	return &SocialFollowUpListTool{rt: rt}
+}
+
+func (t *SocialFollowUpListTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_social_followups",
+		Description: "List active social follow-up strategies and pending relationship work tracked by Qorvexus.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit":  map[string]any{"type": "integer"},
+				"status": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *SocialFollowUpListTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit  int    `json:"limit"`
+		Status string `json:"status"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.ListSocialFollowUps(ctx, input.Limit, input.Status)
 }
 
 type ReadConfigTool struct{ rt Runtime }

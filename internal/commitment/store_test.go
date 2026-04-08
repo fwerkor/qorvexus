@@ -85,3 +85,28 @@ func TestStoreNoteReviewQueued(t *testing.T) {
 		t.Fatalf("expected last review timestamp to be set")
 	}
 }
+
+func TestStoreNoteReminderIssued(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "commitments.jsonl"))
+	entry, err := store.Append(Entry{
+		Channel: "telegram",
+		Summary: "Send reminder",
+	})
+	if err != nil {
+		t.Fatalf("append commitment: %v", err)
+	}
+	at := time.Now().UTC()
+	if err := store.NoteReminderIssued(entry.ID, "outbox-1", "hold", at); err != nil {
+		t.Fatalf("note reminder issued: %v", err)
+	}
+	got, err := store.Get(entry.ID)
+	if err != nil {
+		t.Fatalf("get commitment: %v", err)
+	}
+	if got.LastReminderRefID != "outbox-1" || got.LastReminderMode != "hold" || got.ReminderCount != 1 {
+		t.Fatalf("unexpected reminder state: %+v", got)
+	}
+	if got.LastReminderAt.IsZero() {
+		t.Fatalf("expected last reminder timestamp to be set")
+	}
+}

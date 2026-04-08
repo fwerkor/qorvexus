@@ -37,26 +37,29 @@ import (
 )
 
 type appRuntime struct {
-	cfg         *config.Config
-	configPath  string
-	runner      *agent.Runner
-	discussion  *orchestrator.Discussion
-	scheduler   *scheduler.Manager
-	sessions    *session.Store
-	memory      *memory.Store
-	plans       *plan.Store
-	playwright  *tool.PlaywrightManager
-	queue       *taskqueue.Queue
-	worker      *taskqueue.Worker
-	webServer   *http.Server
-	startedAt   time.Time
-	social      *social.Gateway
-	insights    *socialinsight.Analyzer
-	connectors  *social.Registry
-	socialJobs  []socialplugin.BackgroundRunner
-	commitments *commitment.Store
-	self        *self.Manager
-	audit       *audit.Logger
+	cfg             *config.Config
+	configPath      string
+	runner          *agent.Runner
+	discussion      *orchestrator.Discussion
+	scheduler       *scheduler.Manager
+	sessions        *session.Store
+	memory          *memory.Store
+	plans           *plan.Store
+	playwright      *tool.PlaywrightManager
+	queue           *taskqueue.Queue
+	worker          *taskqueue.Worker
+	webServer       *http.Server
+	startedAt       time.Time
+	social          *social.Gateway
+	socialDrafts    *social.DraftStore
+	socialGraph     *social.GraphStore
+	socialFollowUps *social.FollowUpStore
+	insights        *socialinsight.Analyzer
+	connectors      *social.Registry
+	socialJobs      []socialplugin.BackgroundRunner
+	commitments     *commitment.Store
+	self            *self.Manager
+	audit           *audit.Logger
 }
 
 const (
@@ -127,14 +130,17 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 			CompactionRetain:    cfg.Memory.CompactionRetain,
 			MaxSummarySources:   cfg.Memory.MaxSummarySources,
 		}),
-		plans:       plan.NewStore(filepath.Join(cfg.DataDir, "plans.json")),
-		playwright:  playwrightManager,
-		startedAt:   time.Now().UTC(),
-		connectors:  social.NewRegistry(),
-		insights:    socialinsight.NewAnalyzer(),
-		commitments: commitment.NewStore(cfg.Social.CommitmentFile),
-		self:        self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
-		audit:       audit.New(cfg.Audit.File),
+		plans:           plan.NewStore(filepath.Join(cfg.DataDir, "plans.json")),
+		playwright:      playwrightManager,
+		startedAt:       time.Now().UTC(),
+		connectors:      social.NewRegistry(),
+		socialDrafts:    social.NewDraftStore(cfg.Social.DraftFile),
+		socialGraph:     social.NewGraphStore(cfg.Social.GraphFile),
+		socialFollowUps: social.NewFollowUpStore(cfg.Social.FollowUpFile),
+		insights:        socialinsight.NewAnalyzer(),
+		commitments:     commitment.NewStore(cfg.Social.CommitmentFile),
+		self:            self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
+		audit:           audit.New(cfg.Audit.File),
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -164,7 +170,12 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewRecallTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
 	toolRegistry.Register(tool.NewSocialSendTool(app))
+	toolRegistry.Register(tool.NewSocialHoldTool(app))
+	toolRegistry.Register(tool.NewSocialOutboxListTool(app))
+	toolRegistry.Register(tool.NewSocialOutboxManageTool(app))
 	toolRegistry.Register(tool.NewSocialListTool(app))
+	toolRegistry.Register(tool.NewSocialGraphTool(app))
+	toolRegistry.Register(tool.NewSocialFollowUpListTool(app))
 	toolRegistry.Register(tool.NewReadConfigTool(app))
 	toolRegistry.Register(tool.NewWriteConfigTool(app))
 	toolRegistry.Register(tool.NewUpsertSkillTool(app))
@@ -1802,11 +1813,18 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("outbound social messages require owner context")
 	}
+	trimmed := strings.TrimSpace(text)
+	if social.IsSilentReply(trimmed) {
+		return agent.ToolResultJSON(map[string]any{
+			"mode":   "silent",
+			"reason": "the caller intentionally chose not to send a message",
+		}), nil
+	}
 	out, err := a.connectors.Send(ctx, channel, social.OutboundMessage{
 		Channel:   channel,
 		ThreadID:  threadID,
 		Recipient: recipient,
-		Text:      text,
+		Text:      trimmed,
 		Context: types.ConversationContext{
 			Channel:      channel,
 			Trust:        types.TrustOwner,
@@ -1815,6 +1833,16 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 		},
 	})
 	if err == nil {
+		a.recordSocialGraphInteraction(social.Interaction{
+			Kind:        social.InteractionOutbound,
+			Channel:     channel,
+			ThreadID:    threadID,
+			ContactID:   recipient,
+			ContactName: recipient,
+			Trust:       types.TrustOwner,
+			Message:     trimmed,
+			OccurredAt:  time.Now().UTC(),
+		})
 		a.logAudit(ctx, "send_social_message", "ok", channel, map[string]any{"thread_id": threadID, "recipient": recipient})
 	}
 	return out, err
@@ -1822,6 +1850,238 @@ func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, thre
 
 func (a *appRuntime) ListSocialConnectors(_ context.Context) (string, error) {
 	raw, err := json.MarshalIndent(a.connectors.List(), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) HoldSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string, reason string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("holding outbound social messages requires owner context")
+	}
+	draft, err := a.createSocialDraft(ctx, social.Draft{
+		Channel:   channel,
+		ThreadID:  threadID,
+		Recipient: recipient,
+		Text:      text,
+		Reason:    reason,
+		Source:    "owner:hold_social_message",
+		Hold:      true,
+		Context: types.ConversationContext{
+			Channel:      channel,
+			ThreadID:     threadID,
+			Trust:        types.TrustOwner,
+			IsOwner:      true,
+			ReplyAsAgent: true,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return agent.ToolResultJSON(draft), nil
+}
+
+func (a *appRuntime) ListSocialOutbox(ctx context.Context, limit int, status string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("listing social outbox entries requires owner context")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	items, err := a.socialDrafts.List(limit, status)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) ManageSocialOutbox(ctx context.Context, outboxID string, action string, editedText string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("managing social outbox entries requires owner context")
+	}
+	action = strings.TrimSpace(strings.ToLower(action))
+	if action == "" {
+		action = "send"
+	}
+	actor := socialActor(ctx)
+	draft, err := a.socialDrafts.Update(outboxID, func(item *social.Draft) error {
+		if strings.TrimSpace(editedText) != "" {
+			item.Text = strings.TrimSpace(editedText)
+		}
+		switch action {
+		case "send":
+			item.Status = social.DraftStatusReady
+			item.ReviewedBy = actor
+			item.ReviewedAt = time.Now().UTC()
+		case "hold":
+			item.Status = social.DraftStatusHeld
+			item.Hold = true
+			item.ReviewedBy = actor
+			item.ReviewedAt = time.Now().UTC()
+		case "discard":
+			item.Status = social.DraftStatusDiscarded
+			item.ReviewedBy = actor
+			item.ReviewedAt = time.Now().UTC()
+			item.DiscardedAt = time.Now().UTC()
+		default:
+			return fmt.Errorf("unsupported outbox action %q", action)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if action == "discard" {
+		a.logAudit(ctx, "discard_social_outbox", "ok", draft.ID, map[string]any{"channel": draft.Channel, "recipient": draft.Recipient})
+		if draft.RelatedFollowUpID != "" {
+			_, _ = a.socialFollowUps.Update(draft.RelatedFollowUpID, func(item *social.FollowUp) error {
+				item.Status = social.FollowUpStatusDismissed
+				item.LastActionAt = time.Now().UTC()
+				return nil
+			})
+		}
+		return agent.ToolResultJSON(draft), nil
+	}
+	if action == "hold" {
+		a.logAudit(ctx, "update_social_outbox", "ok", draft.ID, map[string]any{"channel": draft.Channel, "recipient": draft.Recipient, "send": false})
+		if draft.RelatedFollowUpID != "" {
+			_, _ = a.socialFollowUps.Update(draft.RelatedFollowUpID, func(item *social.FollowUp) error {
+				item.Status = social.FollowUpStatusHeld
+				item.RelatedOutboxID = draft.ID
+				item.LastActionAt = time.Now().UTC()
+				return nil
+			})
+		}
+		return agent.ToolResultJSON(draft), nil
+	}
+	delivery, err := a.connectors.Send(ctx, draft.Channel, social.OutboundMessage{
+		Channel:   draft.Channel,
+		ThreadID:  draft.ThreadID,
+		Recipient: draft.Recipient,
+		Text:      draft.Text,
+		Context:   draft.Context,
+	})
+	if err != nil {
+		return "", err
+	}
+	draft, err = a.socialDrafts.Update(draft.ID, func(item *social.Draft) error {
+		item.Status = social.DraftStatusSent
+		item.SentAt = time.Now().UTC()
+		item.DeliveryResult = delivery
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	a.recordSocialGraphInteraction(social.Interaction{
+		Kind:        social.InteractionOutbound,
+		Channel:     draft.Channel,
+		ThreadID:    draft.ThreadID,
+		ContactID:   draft.Recipient,
+		ContactName: draft.Counterparty,
+		Trust:       draft.Context.Trust,
+		Message:     draft.Text,
+		OccurredAt:  time.Now().UTC(),
+	})
+	if draft.RelatedFollowUpID != "" {
+		_, _ = a.socialFollowUps.Update(draft.RelatedFollowUpID, func(item *social.FollowUp) error {
+			item.Status = social.FollowUpStatusSent
+			item.RelatedOutboxID = draft.ID
+			item.LastActionAt = time.Now().UTC()
+			return nil
+		})
+	}
+	a.logAudit(ctx, "send_social_outbox", "ok", draft.ID, map[string]any{"channel": draft.Channel, "recipient": draft.Recipient, "send": true})
+	return agent.ToolResultJSON(map[string]any{
+		"outbox":   draft,
+		"delivery": delivery,
+	}), nil
+}
+
+func (a *appRuntime) SocialContactGraph(ctx context.Context) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("reading the social contact graph requires owner context")
+	}
+	snapshot, err := a.socialGraph.Snapshot()
+	if err != nil {
+		return "", err
+	}
+	openCommitments := map[string]int{}
+	if items, err := a.commitments.List(0); err == nil {
+		for _, item := range items {
+			if item.Status != commitment.StatusOpen && item.Status != commitment.StatusOverdue {
+				continue
+			}
+			key := strings.TrimSpace(item.ContactKey)
+			if key == "" {
+				key = social.ContactKey(item.Channel, "", item.Counterparty)
+			}
+			if key != "" {
+				openCommitments[key]++
+			}
+		}
+	}
+	heldOutbox := map[string]int{}
+	if items, err := a.socialDrafts.List(0, ""); err == nil {
+		for _, item := range items {
+			if item.Status == social.DraftStatusSent || item.Status == social.DraftStatusDiscarded {
+				continue
+			}
+			if item.ContactKey != "" {
+				heldOutbox[item.ContactKey]++
+			}
+		}
+	}
+	openFollowUps := map[string]int{}
+	if items, err := a.socialFollowUps.List(0, ""); err == nil {
+		for _, item := range items {
+			if item.Status == social.FollowUpStatusCompleted || item.Status == social.FollowUpStatusDismissed {
+				continue
+			}
+			if item.ContactKey != "" {
+				openFollowUps[item.ContactKey]++
+			}
+		}
+	}
+	type nodeView struct {
+		social.ContactNode
+		OpenCommitments int `json:"open_commitments,omitempty"`
+		HeldOutbox      int `json:"held_outbox,omitempty"`
+		OpenFollowUps   int `json:"open_followups,omitempty"`
+	}
+	nodes := make([]nodeView, 0, len(snapshot.Nodes))
+	for _, node := range snapshot.Nodes {
+		nodes = append(nodes, nodeView{
+			ContactNode:     node,
+			OpenCommitments: openCommitments[node.ID],
+			HeldOutbox:      heldOutbox[node.ID],
+			OpenFollowUps:   openFollowUps[node.ID],
+		})
+	}
+	return agent.ToolResultJSON(map[string]any{
+		"updated_at": snapshot.UpdatedAt,
+		"nodes":      nodes,
+		"edges":      snapshot.Edges,
+	}), nil
+}
+
+func (a *appRuntime) ListSocialFollowUps(ctx context.Context, limit int, status string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("listing social follow-ups requires owner context")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	items, err := a.socialFollowUps.List(limit, status)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -1864,8 +2124,11 @@ func (a *appRuntime) ScanCommitments(ctx context.Context) (string, error) {
 		MarkedOverdue   []string `json:"marked_overdue"`
 		QueuedReview    []string `json:"queued_review"`
 		EscalatedReview []string `json:"escalated_review"`
+		SentReminders   []string `json:"sent_reminders"`
+		HeldReminders   []string `json:"held_reminders"`
 	}
 	out := scanSummary{Checked: len(items)}
+	reminderCooldown := time.Duration(a.cfg.Social.ReminderCooldownHours) * time.Hour
 	for _, entry := range scan.Overdue {
 		if err := a.commitments.UpdateStatus(entry.ID, commitment.StatusOverdue); err == nil {
 			out.MarkedOverdue = append(out.MarkedOverdue, entry.ID)
@@ -1890,19 +2153,56 @@ func (a *appRuntime) ScanCommitments(ctx context.Context) (string, error) {
 			}
 			_ = a.commitments.NoteReviewQueued(entry.ID, taskID, level, now)
 		}
+		if !commitment.ShouldCreateReminder(entry, now, reminderCooldown) {
+			continue
+		}
+		delivery, err := a.issueCommitmentReminder(ctx, entry, now)
+		if err != nil || delivery.Mode == "" || delivery.Mode == string(social.DeliveryModeSilent) {
+			continue
+		}
+		refID := strings.TrimSpace(delivery.OutboxID)
+		if refID == "" && delivery.Mode == string(social.DeliveryModeSend) {
+			refID = "direct-send"
+		}
+		_ = a.commitments.NoteReminderIssued(entry.ID, refID, delivery.Mode, now)
+		switch delivery.Mode {
+		case string(social.DeliveryModeSend):
+			out.SentReminders = append(out.SentReminders, entry.ID)
+		case string(social.DeliveryModeHold):
+			out.HeldReminders = append(out.HeldReminders, entry.ID)
+		}
 	}
 	for _, entry := range scan.Stale {
 		if !commitment.ShouldQueueReview(entry, now) {
+			// still allow autonomous reminders for stale commitments even when a review was recently queued
+		} else {
+			level := commitment.NextEscalationLevel(entry, now)
+			taskID, err := a.enqueueCommitmentReview(ctx, entry, level, "This commitment is getting stale. Review whether it needs a reminder, internal preparation, or a concrete next-step task before it becomes overdue.")
+			if err == nil && taskID != "" {
+				out.QueuedReview = append(out.QueuedReview, taskID)
+				if level > entry.EscalationLevel {
+					out.EscalatedReview = append(out.EscalatedReview, entry.ID)
+				}
+				_ = a.commitments.NoteReviewQueued(entry.ID, taskID, level, now)
+			}
+		}
+		if !commitment.ShouldCreateReminder(entry, now, reminderCooldown) {
 			continue
 		}
-		level := commitment.NextEscalationLevel(entry, now)
-		taskID, err := a.enqueueCommitmentReview(ctx, entry, level, "This commitment is getting stale. Review whether it needs a reminder, owner escalation, or a concrete next-step task before it becomes overdue.")
-		if err == nil && taskID != "" {
-			out.QueuedReview = append(out.QueuedReview, taskID)
-			if level > entry.EscalationLevel {
-				out.EscalatedReview = append(out.EscalatedReview, entry.ID)
-			}
-			_ = a.commitments.NoteReviewQueued(entry.ID, taskID, level, now)
+		delivery, err := a.issueCommitmentReminder(ctx, entry, now)
+		if err != nil || delivery.Mode == "" || delivery.Mode == string(social.DeliveryModeSilent) {
+			continue
+		}
+		refID := strings.TrimSpace(delivery.OutboxID)
+		if refID == "" && delivery.Mode == string(social.DeliveryModeSend) {
+			refID = "direct-send"
+		}
+		_ = a.commitments.NoteReminderIssued(entry.ID, refID, delivery.Mode, now)
+		switch delivery.Mode {
+		case string(social.DeliveryModeSend):
+			out.SentReminders = append(out.SentReminders, entry.ID)
+		case string(social.DeliveryModeHold):
+			out.HeldReminders = append(out.HeldReminders, entry.ID)
 		}
 	}
 	raw, err := json.MarshalIndent(out, "", "  ")
@@ -1936,6 +2236,7 @@ func (a *appRuntime) UpdateCommitmentStatus(ctx context.Context, id string, stat
 	if err := a.commitments.UpdateStatus(id, commitment.Status(status)); err != nil {
 		return "", err
 	}
+	a.syncCommitmentFollowUps(id, commitment.Status(status))
 	a.logAudit(ctx, "update_commitment_status", "ok", id, map[string]any{"status": status})
 	return "commitment status updated", nil
 }
@@ -1977,6 +2278,15 @@ func (a *appRuntime) ListAudit(_ context.Context, limit int) (string, error) {
 	return string(raw), nil
 }
 
+type socialDeliveryResult struct {
+	Mode           string `json:"mode"`
+	Boundary       string `json:"boundary,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	OutboxID       string `json:"outbox_id,omitempty"`
+	DeliveryResult string `json:"delivery_result,omitempty"`
+	HighRisk       bool   `json:"high_risk,omitempty"`
+}
+
 func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (string, error) {
 	sessionID := env.Channel + "-" + env.ThreadID
 	if sessionID == "-" || sessionID == "" {
@@ -1989,42 +2299,43 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		"sender_id":   env.SenderID,
 		"sender_name": env.SenderName,
 	})
+	a.recordSocialGraphInteraction(social.Interaction{
+		Kind:        social.InteractionInbound,
+		Channel:     env.Channel,
+		ThreadID:    env.ThreadID,
+		ContactID:   env.SenderID,
+		ContactName: env.SenderName,
+		Trust:       env.Context.Trust,
+		Message:     env.Text,
+		OccurredAt:  time.Now().UTC(),
+	})
 	var parts []types.ContentPart
 	for _, image := range env.Images {
 		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
 	}
-	_, out, err := a.runner.Run(ctx, agent.Request{
+	_, out, err := a.runner.Run(toolCtx, agent.Request{
 		SessionID: sessionID,
 		Prompt:    env.Text,
 		Parts:     parts,
 		Context:   &env.Context,
 	})
 	if err == nil {
+		delivery, routeErr := a.routeSocialReply(toolCtx, env, out)
+		if routeErr != nil {
+			return out, routeErr
+		}
+		replyText := out
+		if delivery.Mode == string(social.DeliveryModeSilent) {
+			replyText = ""
+		}
 		a.logAudit(toolCtx, "reply_social_message", "ok", sessionID, map[string]any{
 			"channel":   env.Channel,
 			"thread_id": env.ThreadID,
+			"mode":      delivery.Mode,
+			"outbox_id": delivery.OutboxID,
 		})
-		if strings.TrimSpace(out) != "" {
-			if _, sendErr := a.connectors.Send(toolCtx, env.Channel, social.OutboundMessage{
-				Channel:   env.Channel,
-				ThreadID:  env.ThreadID,
-				Recipient: env.SenderID,
-				Text:      out,
-				Context:   env.Context,
-			}); sendErr == nil {
-				a.logAudit(toolCtx, "deliver_social_reply", "ok", sessionID, map[string]any{
-					"channel":   env.Channel,
-					"thread_id": env.ThreadID,
-				})
-			} else {
-				a.logAudit(toolCtx, "deliver_social_reply", "error", sessionID, map[string]any{
-					"channel":   env.Channel,
-					"thread_id": env.ThreadID,
-					"error":     sendErr.Error(),
-				})
-			}
-		}
-		a.captureSocialInsights(toolCtx, env, out)
+		a.captureSocialInsights(toolCtx, env, replyText, delivery)
+		out = replyText
 	}
 	return out, err
 }
@@ -2107,19 +2418,21 @@ func (a *appRuntime) logAudit(ctx context.Context, action string, status string,
 	})
 }
 
-func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envelope, response string) {
+func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envelope, response string, delivery socialDeliveryResult) {
 	if a.insights == nil {
 		return
 	}
 	result := a.insights.Analyze(env, response)
 	var followUpTaskID string
+	contactKey := social.ContactKey(env.Channel, env.SenderID, env.SenderName)
+	contactName := socialCounterpartyName(env)
 	for _, note := range result.Memories {
 		if a.cfg.Memory.Enabled {
 			if err := a.memory.Append(memory.Entry{
 				Layer:      "people",
 				Area:       "contacts",
 				Kind:       "contact_note",
-				Subject:    env.SenderID,
+				Subject:    contactKey,
 				Summary:    note.Content,
 				Content:    note.Content,
 				Source:     note.Source,
@@ -2132,6 +2445,29 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 					"thread_id": env.ThreadID,
 				})
 			}
+		}
+	}
+	for _, suggestion := range result.FollowUps {
+		followUp, err := a.socialFollowUps.Upsert(social.FollowUp{
+			Channel:           env.Channel,
+			ThreadID:          env.ThreadID,
+			ContactKey:        contactKey,
+			ContactName:       contactName,
+			Trust:             string(env.Context.Trust),
+			Summary:           suggestion.Summary,
+			RecommendedAction: suggestion.RecommendedAction,
+			Reason:            suggestion.Reason,
+			DueHint:           suggestion.DueHint,
+			Priority:          suggestion.Priority,
+			Disposition:       suggestion.Disposition,
+		})
+		if err == nil && followUpTaskID != "" {
+			_, _ = a.socialFollowUps.Update(followUp.ID, func(item *social.FollowUp) error {
+				item.RelatedTaskID = followUpTaskID
+				item.Status = social.FollowUpStatusQueued
+				item.LastActionAt = time.Now().UTC()
+				return nil
+			})
 		}
 	}
 	for _, suggestion := range result.Tasks {
@@ -2154,12 +2490,30 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 			}
 		}
 	}
+	if delivery.OutboxID != "" {
+		_, _ = a.socialFollowUps.Upsert(social.FollowUp{
+			Channel:           env.Channel,
+			ThreadID:          env.ThreadID,
+			ContactKey:        contactKey,
+			ContactName:       contactName,
+			Trust:             string(env.Context.Trust),
+			Summary:           "Review held outbound message",
+			RecommendedAction: "review_held_outbox",
+			Reason:            delivery.Reason,
+			Priority:          socialPriorityFromDelivery(delivery),
+			Disposition:       "internal_prep",
+			Status:            social.FollowUpStatusHeld,
+			RelatedOutboxID:   delivery.OutboxID,
+			LastActionAt:      time.Now().UTC(),
+		})
+	}
 	for _, suggestion := range result.Commitments {
 		relatedTaskID := followUpTaskID
 		if a.cfg.Queue.Enabled && (suggestion.DueHint != "" || relatedTaskID == "") {
 			taskID, err := a.enqueueCommitmentReview(ctx, commitment.Entry{
 				Channel:      env.Channel,
 				ThreadID:     env.ThreadID,
+				ContactKey:   contactKey,
 				Counterparty: suggestion.Counterparty,
 				Summary:      suggestion.Summary,
 				DueHint:      suggestion.DueHint,
@@ -2173,6 +2527,7 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 		entry, err := a.commitments.Append(commitment.Entry{
 			Channel:       env.Channel,
 			ThreadID:      env.ThreadID,
+			ContactKey:    contactKey,
 			Counterparty:  suggestion.Counterparty,
 			Summary:       suggestion.Summary,
 			DueHint:       suggestion.DueHint,
@@ -2186,7 +2541,405 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 				"counterparty": suggestion.Counterparty,
 				"due_hint":     suggestion.DueHint,
 			})
+			_, _ = a.socialFollowUps.Upsert(social.FollowUp{
+				Channel:             entry.Channel,
+				ThreadID:            entry.ThreadID,
+				ContactKey:          entry.ContactKey,
+				ContactName:         entry.Counterparty,
+				Trust:               entry.Trust,
+				Summary:             entry.Summary,
+				RecommendedAction:   "fulfill_commitment",
+				Reason:              "A social exchange created a commitment that now needs explicit follow-through.",
+				DueHint:             entry.DueHint,
+				Priority:            socialPriorityFromDueHint(entry.DueHint),
+				Disposition:         "autonomous_send",
+				RelatedCommitmentID: entry.ID,
+				RelatedTaskID:       relatedTaskID,
+			})
 		}
+	}
+}
+
+func (a *appRuntime) routeSocialReply(ctx context.Context, env social.Envelope, out string) (socialDeliveryResult, error) {
+	if social.IsSilentReply(out) {
+		return socialDeliveryResult{Mode: "silent"}, nil
+	}
+	contactKey := social.ContactKey(env.Channel, env.SenderID, env.SenderName)
+	node, ok, err := a.socialGraph.Get(contactKey)
+	if err != nil {
+		return socialDeliveryResult{}, err
+	}
+	if !ok {
+		node = social.ContactNode{
+			ID:               contactKey,
+			Channel:          env.Channel,
+			ContactID:        env.SenderID,
+			DisplayName:      env.SenderName,
+			Trust:            string(env.Context.Trust),
+			Boundary:         social.DefaultBoundary(env.Context.Trust, 0),
+			InteractionCount: 0,
+		}
+	}
+	decision := social.DecideOutboundAuthorization(env, out, node, derefBool(a.cfg.Social.AutoSendTrustedReplies), derefBool(a.cfg.Social.AutoSendExternalReplies))
+	if decision.Mode == social.DeliveryModeSilent {
+		return socialDeliveryResult{
+			Mode:     string(social.DeliveryModeSilent),
+			Boundary: string(decision.Boundary),
+			Reason:   decision.Reason,
+			HighRisk: decision.HighRisk,
+		}, nil
+	}
+	if decision.Mode == social.DeliveryModeHold {
+		draft, err := a.createSocialDraft(ctx, social.Draft{
+			Channel:      env.Channel,
+			ThreadID:     env.ThreadID,
+			Recipient:    env.SenderID,
+			ContactKey:   contactKey,
+			Counterparty: socialCounterpartyName(env),
+			Text:         out,
+			Reason:       decision.Reason,
+			Source:       "social:auto_hold",
+			Boundary:     string(decision.Boundary),
+			Hold:         true,
+			Context:      env.Context,
+		})
+		if err != nil {
+			return socialDeliveryResult{}, err
+		}
+		return socialDeliveryResult{
+			Mode:     string(social.DeliveryModeHold),
+			Boundary: string(decision.Boundary),
+			Reason:   decision.Reason,
+			OutboxID: draft.ID,
+			HighRisk: decision.HighRisk,
+		}, nil
+	}
+	delivery, err := a.connectors.Send(ctx, env.Channel, social.OutboundMessage{
+		Channel:   env.Channel,
+		ThreadID:  env.ThreadID,
+		Recipient: env.SenderID,
+		Text:      out,
+		Context:   env.Context,
+	})
+	if err != nil {
+		a.logAudit(ctx, "deliver_social_reply", "error", env.Channel+"-"+env.ThreadID, map[string]any{
+			"channel":   env.Channel,
+			"thread_id": env.ThreadID,
+			"error":     err.Error(),
+		})
+		return socialDeliveryResult{}, err
+	}
+	a.recordSocialGraphInteraction(social.Interaction{
+		Kind:        social.InteractionOutbound,
+		Channel:     env.Channel,
+		ThreadID:    env.ThreadID,
+		ContactID:   env.SenderID,
+		ContactName: env.SenderName,
+		Trust:       env.Context.Trust,
+		Message:     out,
+		OccurredAt:  time.Now().UTC(),
+	})
+	a.logAudit(ctx, "deliver_social_reply", "ok", env.Channel+"-"+env.ThreadID, map[string]any{
+		"channel":   env.Channel,
+		"thread_id": env.ThreadID,
+	})
+	return socialDeliveryResult{
+		Mode:           string(social.DeliveryModeSend),
+		Boundary:       string(decision.Boundary),
+		Reason:         decision.Reason,
+		DeliveryResult: delivery,
+		HighRisk:       decision.HighRisk,
+	}, nil
+}
+
+func (a *appRuntime) createSocialDraft(ctx context.Context, draft social.Draft) (social.Draft, error) {
+	if strings.TrimSpace(draft.ContactKey) == "" {
+		draft.ContactKey = social.ContactKey(draft.Channel, draft.Recipient, draft.Counterparty)
+	}
+	if strings.TrimSpace(draft.Counterparty) == "" {
+		draft.Counterparty = chooseSocialCounterparty(draft.Recipient, draft.ContactKey)
+	}
+	created, err := a.socialDrafts.Append(draft)
+	if err != nil {
+		return social.Draft{}, err
+	}
+	a.recordSocialGraphInteraction(social.Interaction{
+		Kind:        social.InteractionOutbox,
+		Channel:     created.Channel,
+		ThreadID:    created.ThreadID,
+		ContactID:   created.Recipient,
+		ContactName: created.Counterparty,
+		Trust:       created.Context.Trust,
+		Message:     created.Text,
+		OccurredAt:  created.CreatedAt,
+	})
+	if created.RelatedFollowUpID != "" {
+		_, _ = a.socialFollowUps.Update(created.RelatedFollowUpID, func(item *social.FollowUp) error {
+			item.Status = social.FollowUpStatusHeld
+			item.RelatedOutboxID = created.ID
+			item.LastActionAt = time.Now().UTC()
+			return nil
+		})
+	}
+	a.logAudit(ctx, "create_social_outbox", "ok", created.ID, map[string]any{
+		"channel":   created.Channel,
+		"thread_id": created.ThreadID,
+		"recipient": created.Recipient,
+		"reason":    created.Reason,
+	})
+	return created, nil
+}
+
+func (a *appRuntime) recordSocialGraphInteraction(interaction social.Interaction) {
+	if a.socialGraph == nil {
+		return
+	}
+	_, _ = a.socialGraph.RecordInteraction(interaction)
+}
+
+func socialActor(ctx context.Context) string {
+	if convo, ok := tool.ConversationContextFrom(ctx); ok {
+		if strings.TrimSpace(convo.SenderID) != "" {
+			return strings.TrimSpace(convo.SenderID)
+		}
+		if strings.TrimSpace(convo.SenderName) != "" {
+			return strings.TrimSpace(convo.SenderName)
+		}
+	}
+	return "owner"
+}
+
+func socialPriorityFromDelivery(delivery socialDeliveryResult) string {
+	if delivery.HighRisk {
+		return "high"
+	}
+	return "medium"
+}
+
+func socialPriorityFromDueHint(dueHint string) string {
+	switch strings.ToLower(strings.TrimSpace(dueHint)) {
+	case "today", "tomorrow":
+		return "high"
+	case "this week", "next week":
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func socialCounterpartyName(env social.Envelope) string {
+	if strings.TrimSpace(env.SenderName) != "" {
+		return strings.TrimSpace(env.SenderName)
+	}
+	if strings.TrimSpace(env.SenderID) != "" {
+		return strings.TrimSpace(env.SenderID)
+	}
+	return "unknown contact"
+}
+
+func chooseSocialCounterparty(primary string, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return strings.TrimSpace(primary)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func derefBool(value *bool) bool {
+	return value != nil && *value
+}
+
+func (a *appRuntime) issueCommitmentReminder(ctx context.Context, entry commitment.Entry, now time.Time) (socialDeliveryResult, error) {
+	if strings.TrimSpace(entry.Channel) == "" {
+		return socialDeliveryResult{Mode: string(social.DeliveryModeSilent), Reason: "commitment has no channel routing"}, nil
+	}
+	recipient := socialRecipientFromCommitment(entry)
+	contactKey := strings.TrimSpace(entry.ContactKey)
+	if contactKey == "" {
+		contactKey = social.ContactKey(entry.Channel, recipient, entry.Counterparty)
+	}
+	replyText := buildCommitmentReminderText(entry)
+	if social.IsSilentReply(replyText) {
+		return socialDeliveryResult{Mode: string(social.DeliveryModeSilent), Reason: "reminder text is empty"}, nil
+	}
+	convo := types.ConversationContext{
+		Channel:        entry.Channel,
+		ThreadID:       entry.ThreadID,
+		SenderID:       recipient,
+		SenderName:     entry.Counterparty,
+		Trust:          parseTrustLevel(entry.Trust),
+		ReplyAsAgent:   true,
+		WorkingForUser: true,
+	}
+	if strings.TrimSpace(recipient) == "" && strings.TrimSpace(entry.ThreadID) == "" {
+		draft, err := a.createSocialDraft(tool.WithConversationContext(ctx, convo), social.Draft{
+			Channel:             entry.Channel,
+			ThreadID:            entry.ThreadID,
+			Recipient:           recipient,
+			ContactKey:          contactKey,
+			Counterparty:        entry.Counterparty,
+			Text:                replyText,
+			Reason:              "commitment reminder is ready but lacks routing information",
+			Source:              "commitment:reminder",
+			Boundary:            "routing_hold",
+			Hold:                true,
+			Context:             convo,
+			RelatedCommitmentID: entry.ID,
+		})
+		if err != nil {
+			return socialDeliveryResult{}, err
+		}
+		a.upsertCommitmentFollowUp(entry, social.FollowUpStatusHeld, "internal_prep", draft.ID, "")
+		return socialDeliveryResult{
+			Mode:     string(social.DeliveryModeHold),
+			Reason:   "commitment reminder is held until routing information is available",
+			OutboxID: draft.ID,
+		}, nil
+	}
+	deliveryCtx := tool.WithConversationContext(ctx, convo)
+	delivery, err := a.connectors.Send(deliveryCtx, entry.Channel, social.OutboundMessage{
+		Channel:   entry.Channel,
+		ThreadID:  entry.ThreadID,
+		Recipient: recipient,
+		Text:      replyText,
+		Context:   convo,
+	})
+	if err != nil {
+		draft, holdErr := a.createSocialDraft(deliveryCtx, social.Draft{
+			Channel:             entry.Channel,
+			ThreadID:            entry.ThreadID,
+			Recipient:           recipient,
+			ContactKey:          contactKey,
+			Counterparty:        entry.Counterparty,
+			Text:                replyText,
+			Reason:              "delivery failed; reminder moved to outbox: " + err.Error(),
+			Source:              "commitment:reminder_delivery_failure",
+			Boundary:            "delivery_failure_hold",
+			Hold:                true,
+			Context:             convo,
+			RelatedCommitmentID: entry.ID,
+		})
+		if holdErr != nil {
+			return socialDeliveryResult{}, err
+		}
+		a.upsertCommitmentFollowUp(entry, social.FollowUpStatusHeld, "internal_prep", draft.ID, "")
+		return socialDeliveryResult{
+			Mode:     string(social.DeliveryModeHold),
+			Reason:   "delivery failed and the reminder was moved to outbox",
+			OutboxID: draft.ID,
+		}, nil
+	}
+	a.recordSocialGraphInteraction(social.Interaction{
+		Kind:        social.InteractionOutbound,
+		Channel:     entry.Channel,
+		ThreadID:    entry.ThreadID,
+		ContactID:   recipient,
+		ContactName: entry.Counterparty,
+		Trust:       parseTrustLevel(entry.Trust),
+		Message:     replyText,
+		OccurredAt:  now,
+	})
+	a.upsertCommitmentFollowUp(entry, social.FollowUpStatusSent, "autonomous_send", "", "direct-send")
+	a.logAudit(deliveryCtx, "send_commitment_reminder", "ok", entry.ID, map[string]any{
+		"channel":      entry.Channel,
+		"thread_id":    entry.ThreadID,
+		"counterparty": entry.Counterparty,
+	})
+	return socialDeliveryResult{
+		Mode:           string(social.DeliveryModeSend),
+		Reason:         "assistant autonomously sent a commitment reminder",
+		DeliveryResult: delivery,
+	}, nil
+}
+
+func (a *appRuntime) upsertCommitmentFollowUp(entry commitment.Entry, status social.FollowUpStatus, disposition string, outboxID string, taskID string) {
+	if a.socialFollowUps == nil {
+		return
+	}
+	_, _ = a.socialFollowUps.Upsert(social.FollowUp{
+		Channel:             entry.Channel,
+		ThreadID:            entry.ThreadID,
+		ContactKey:          entry.ContactKey,
+		ContactName:         entry.Counterparty,
+		Trust:               entry.Trust,
+		Summary:             entry.Summary,
+		RecommendedAction:   "follow_up_on_commitment",
+		Reason:              "An open commitment needs a proactive reminder or next step.",
+		DueHint:             entry.DueHint,
+		Priority:            socialPriorityFromDueHint(entry.DueHint),
+		Disposition:         disposition,
+		Status:              status,
+		RelatedCommitmentID: entry.ID,
+		RelatedOutboxID:     outboxID,
+		RelatedTaskID:       taskID,
+		LastActionAt:        time.Now().UTC(),
+	})
+}
+
+func (a *appRuntime) syncCommitmentFollowUps(commitmentID string, status commitment.Status) {
+	items, err := a.socialFollowUps.List(0, "")
+	if err != nil {
+		return
+	}
+	for _, item := range items {
+		if item.RelatedCommitmentID != commitmentID {
+			continue
+		}
+		_, _ = a.socialFollowUps.Update(item.ID, func(existing *social.FollowUp) error {
+			switch status {
+			case commitment.StatusCompleted:
+				existing.Status = social.FollowUpStatusCompleted
+			case commitment.StatusCanceled:
+				existing.Status = social.FollowUpStatusDismissed
+			default:
+				return nil
+			}
+			existing.LastActionAt = time.Now().UTC()
+			return nil
+		})
+	}
+}
+
+func socialRecipientFromCommitment(entry commitment.Entry) string {
+	contactKey := strings.TrimSpace(entry.ContactKey)
+	if idx := strings.Index(contactKey, ":"); idx >= 0 && idx+1 < len(contactKey) {
+		return strings.TrimSpace(contactKey[idx+1:])
+	}
+	if strings.TrimSpace(entry.Counterparty) != "" {
+		return strings.TrimSpace(entry.Counterparty)
+	}
+	return ""
+}
+
+func buildCommitmentReminderText(entry commitment.Entry) string {
+	summary := strings.TrimSpace(entry.Summary)
+	if summary == "" {
+		summary = "our earlier conversation"
+	}
+	var b strings.Builder
+	b.WriteString("Quick follow-up on ")
+	b.WriteString(summary)
+	b.WriteString(".")
+	switch strings.ToLower(strings.TrimSpace(entry.DueHint)) {
+	case "today", "tomorrow":
+		b.WriteString(" I want to keep this moving and check whether the timing still works on your side.")
+	case "this week", "next week":
+		b.WriteString(" Let me know what timing works best on your side.")
+	default:
+		b.WriteString(" Let me know the best next step or timing from your side.")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func parseTrustLevel(raw string) types.TrustLevel {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(types.TrustOwner):
+		return types.TrustOwner
+	case string(types.TrustTrusted):
+		return types.TrustTrusted
+	case string(types.TrustSystem):
+		return types.TrustSystem
+	default:
+		return types.TrustExternal
 	}
 }
 
@@ -2199,7 +2952,7 @@ func (a *appRuntime) enqueueCommitmentReview(ctx context.Context, entry commitme
 		Prompt: strings.TrimSpace(fmt.Sprintf(
 			"%s\n"+
 				"Channel: %s\nThread: %s\nCounterparty: %s\nTrust: %s\nCommitment: %s\nDue hint: %s\nEscalation level: %d\nSource: %s\n"+
-				"Decide whether to prepare a deliverable, send a follow-up, ask the owner for approval, or queue further work. Respect authority boundaries and keep the commitment moving.",
+				"Decide whether to prepare a deliverable, send a follow-up, stay silent for now, or queue further work. Respect delegated authority boundaries and keep the commitment moving.",
 			instruction,
 			entry.Channel,
 			entry.ThreadID,
