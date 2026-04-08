@@ -49,6 +49,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	if err != nil {
 		return nil, "", err
 	}
+	st.Messages = types.SanitizeConversation(st.Messages)
 	if req.Prompt != "" || len(req.Parts) > 0 {
 		msg := types.Message{Role: types.RoleUser, Content: req.Prompt}
 		if len(req.Parts) > 0 {
@@ -80,6 +81,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			return nil, "", err
 		}
 		msg := response.Message
+		msg = types.SanitizeAssistantMessage(msg)
 		if len(msg.ToolCalls) == 0 {
 			st.Messages = append(st.Messages, msg)
 			r.captureConversationMemories(req.SessionID, req.Prompt, strings.TrimSpace(msg.Content), st.Context)

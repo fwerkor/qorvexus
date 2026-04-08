@@ -278,6 +278,7 @@ func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
 	case string:
 		out.Content = v
 	case []any:
+		texts := []string{}
 		for _, item := range v {
 			partMap, ok := item.(map[string]any)
 			if !ok {
@@ -285,10 +286,21 @@ func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
 			}
 			partType, _ := partMap["type"].(string)
 			switch partType {
-			case "text":
-				out.Parts = append(out.Parts, types.ContentPart{Type: "text", Text: toString(partMap["text"])})
+			case "reasoning", "thinking", "analysis", "assistant_reasoning":
+				continue
+			case "text", "output_text":
+				if text := toString(partMap["text"]); strings.TrimSpace(text) != "" {
+					texts = append(texts, text)
+					continue
+				}
+				if textMap, ok := partMap["text"].(map[string]any); ok {
+					if text := toString(textMap["value"]); strings.TrimSpace(text) != "" {
+						texts = append(texts, text)
+					}
+				}
 			}
 		}
+		out.Content = strings.TrimSpace(strings.Join(texts, "\n\n"))
 	}
 	for _, call := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, types.ToolCall{
@@ -297,7 +309,7 @@ func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
 			Arguments: call.Function.Arguments,
 		})
 	}
-	return out
+	return types.SanitizeAssistantMessage(out)
 }
 
 func toString(v any) string {

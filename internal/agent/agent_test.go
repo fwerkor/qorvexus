@@ -302,3 +302,108 @@ func TestRunnerInjectsActivePlanIntoPrompt(t *testing.T) {
 		t.Fatalf("expected active plan prompt injection, got %#v", client.lastRequest.Messages)
 	}
 }
+
+func TestRunnerStripsThinkingBlocksBeforeSavingSession(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "<think>private chain of thought</think>\nFinal answer."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+
+	store := session.NewStore(tempDir)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	state, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-think-strip",
+		Prompt:    "Say hello",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Final answer." {
+		t.Fatalf("expected sanitized assistant output, got %q", out)
+	}
+	if got := state.Messages[len(state.Messages)-1].Content; got != "Final answer." {
+		t.Fatalf("expected saved assistant message to be sanitized, got %q", got)
+	}
+	loaded, err := store.Load("sess-think-strip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "Final answer." {
+		t.Fatalf("expected persisted assistant message to be sanitized, got %q", got)
+	}
+}
+
+func TestRunnerSanitizesThinkingFromLoadedHistory(t *testing.T) {
+	tempDir := t.TempDir()
+	store := session.NewStore(tempDir)
+	if err := store.Save(&session.State{
+		ID:    "sess-history-strip",
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleSystem, Content: "You are helpful."},
+			{Role: types.RoleAssistant, Content: "<thinking>hidden</thinking>\nVisible context."},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "Next answer."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-history-strip",
+		Prompt:    "Continue",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	foundVisible := false
+	for _, msg := range client.lastRequest.Messages {
+		if msg.Role != types.RoleAssistant {
+			continue
+		}
+		if strings.Contains(msg.Content, "<thinking>") || strings.Contains(msg.Content, "<think>") {
+			t.Fatalf("expected reasoning blocks to be removed from replayed history, got %#v", client.lastRequest.Messages)
+		}
+		if strings.Contains(msg.Content, "Visible context.") {
+			foundVisible = true
+		}
+	}
+	if !foundVisible {
+		t.Fatalf("expected sanitized visible assistant history to remain, got %#v", client.lastRequest.Messages)
+	}
+}
