@@ -106,6 +106,102 @@ func TestRunnerInjectsRelevantMemoryIntoPrompt(t *testing.T) {
 	}
 }
 
+func TestRunnerInjectsCurrentContactMemoryIntoPrompt(t *testing.T) {
+	tempDir := t.TempDir()
+	mem := memory.NewStore(filepath.Join(tempDir, "memory.jsonl"))
+	subject := memory.ContactMemorySubject(types.ConversationContext{
+		Channel:    "telegram",
+		SenderID:   "lead-1",
+		SenderName: "Taylor",
+		Trust:      types.TrustExternal,
+	})
+	if err := mem.Upsert(memory.Entry{
+		Key:        "person:" + subject + ":profile:organization",
+		Layer:      "people",
+		Area:       "contacts",
+		Kind:       "contact_profile",
+		Subject:    subject,
+		Content:    "Contact organization or company: Northstar Studio.",
+		Importance: 8,
+		Confidence: 0.9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Upsert(memory.Entry{
+		Key:        "person:" + subject + ":preference:concise",
+		Layer:      "people",
+		Area:       "contacts",
+		Kind:       "contact_preference",
+		Subject:    subject,
+		Content:    "Please keep replies concise.",
+		Importance: 7,
+		Confidence: 0.8,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Upsert(memory.Entry{
+		Key:        "person:telegram:other-1:profile:organization",
+		Layer:      "people",
+		Area:       "contacts",
+		Kind:       "contact_profile",
+		Subject:    "telegram:other-1",
+		Content:    "Contact organization or company: Other Corp.",
+		Importance: 8,
+		Confidence: 0.9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "Will do."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+		Memory:     mem,
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-contact",
+		Prompt:    "Reply politely.",
+		Context: &types.ConversationContext{
+			Channel:      "telegram",
+			ThreadID:     "thread-1",
+			SenderID:     "lead-1",
+			SenderName:   "Taylor",
+			Trust:        types.TrustExternal,
+			ReplyAsAgent: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	foundContact := false
+	for _, msg := range client.lastRequest.Messages {
+		if msg.Role != types.RoleSystem {
+			continue
+		}
+		if strings.Contains(msg.Content, "Current contact memory:") &&
+			strings.Contains(msg.Content, "Northstar Studio") &&
+			strings.Contains(msg.Content, "Please keep replies concise.") {
+			foundContact = true
+			break
+		}
+	}
+	if !foundContact {
+		t.Fatalf("expected current contact memory to be injected into system prompt, got %#v", client.lastRequest.Messages)
+	}
+}
+
 func TestRunnerCapturesOwnerMemoriesAutomatically(t *testing.T) {
 	tempDir := t.TempDir()
 	mem := memory.NewStore(filepath.Join(tempDir, "memory.jsonl"))

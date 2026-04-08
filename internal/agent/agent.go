@@ -265,9 +265,66 @@ func (r *Runner) buildRelevantMemoryPrompt(sessionID string, query string, ctx t
 	}
 	sort.Strings(layers)
 
+	identity := memory.ResolveContactIdentity(ctx, "")
+	contactSubject := identity.CanonicalSubject
+	currentContact := []memory.Entry{}
+	if contactSubject != "" {
+		for _, entry := range grouped["people"] {
+			if strings.EqualFold(strings.TrimSpace(entry.Subject), strings.TrimSpace(contactSubject)) {
+				currentContact = append(currentContact, entry)
+			}
+		}
+		if len(currentContact) > 0 {
+			sort.Slice(currentContact, func(i, j int) bool {
+				if currentContact[i].Importance == currentContact[j].Importance {
+					return currentContact[i].UpdatedAt.After(currentContact[j].UpdatedAt)
+				}
+				return currentContact[i].Importance > currentContact[j].Importance
+			})
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("Relevant long-term memory:\n")
+	if len(currentContact) > 0 {
+		card := memory.BuildContactCard(currentContact)
+		b.WriteString("Current contact memory:\n")
+		if cardText := memory.FormatContactCard(card); cardText != "" {
+			for _, line := range strings.Split(cardText, "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				b.WriteString("- " + line + "\n")
+			}
+		}
+		for _, entry := range currentContact {
+			if entry.Kind == "contact_summary" || entry.Kind == "contact_profile" || entry.Kind == "contact_preference" || entry.Kind == "contact_alias" {
+				continue
+			}
+			line := strings.TrimSpace(entry.Content)
+			if line == "" {
+				line = strings.TrimSpace(entry.Summary)
+			}
+			if line == "" {
+				continue
+			}
+			b.WriteString("- note: " + line + "\n")
+		}
+	}
 	for _, layer := range layers {
+		if layer == "people" && len(currentContact) > 0 {
+			filtered := make([]memory.Entry, 0, len(grouped[layer]))
+			for _, entry := range grouped[layer] {
+				if strings.EqualFold(strings.TrimSpace(entry.Subject), strings.TrimSpace(contactSubject)) {
+					continue
+				}
+				filtered = append(filtered, entry)
+			}
+			if len(filtered) == 0 {
+				continue
+			}
+			grouped[layer] = filtered
+		}
 		b.WriteString("- " + layer + ":\n")
 		items := grouped[layer]
 		sort.Slice(items, func(i, j int) bool {
@@ -344,6 +401,8 @@ func (r *Runner) buildActivePlanPrompt(sessionID string) string {
 
 func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx types.ConversationContext) []memory.Entry {
 	selected := map[string]memory.Entry{}
+	identity := memory.ResolveContactIdentity(ctx, "")
+	contactSubject := identity.CanonicalSubject
 	add := func(items []memory.Entry) {
 		for _, item := range items {
 			key := item.Key
@@ -369,6 +428,40 @@ func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx typ
 	if ctx.Trust == types.TrustExternal || ctx.Trust == types.TrustTrusted {
 		layers = append(layers, "people")
 	}
+	if contactSubject != "" && (ctx.Trust == types.TrustExternal || ctx.Trust == types.TrustTrusted) {
+		if contactCore, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+			Layers:           []string{"people"},
+			Areas:            []string{"contacts"},
+			Subjects:         []string{contactSubject},
+			Limit:            8,
+			IncludeSummaries: true,
+		}); err == nil {
+			add(contactCore)
+		}
+		if identity.RouteKey != "" {
+			if contactAliases, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+				Layers:           []string{"people"},
+				Areas:            []string{"contacts"},
+				Tags:             []string{"contact_route:" + identity.RouteKey},
+				Limit:            6,
+				IncludeSummaries: true,
+			}); err == nil {
+				add(contactAliases)
+			}
+		}
+		if strings.TrimSpace(query) != "" {
+			if contactRelevant, err := r.Memory.SearchWithOptions(memory.SearchOptions{
+				Query:            query,
+				Layers:           []string{"people"},
+				Areas:            []string{"contacts"},
+				Subjects:         []string{contactSubject},
+				Limit:            6,
+				IncludeSummaries: true,
+			}); err == nil {
+				add(contactRelevant)
+			}
+		}
+	}
 	if strings.TrimSpace(query) != "" {
 		if relevant, err := r.Memory.SearchWithOptions(memory.SearchOptions{
 			Query:            query,
@@ -384,6 +477,11 @@ func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx typ
 		out = append(out, entry)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		leftCurrent := contactSubject != "" && strings.EqualFold(strings.TrimSpace(out[i].Subject), strings.TrimSpace(contactSubject))
+		rightCurrent := contactSubject != "" && strings.EqualFold(strings.TrimSpace(out[j].Subject), strings.TrimSpace(contactSubject))
+		if leftCurrent != rightCurrent {
+			return leftCurrent
+		}
 		if out[i].Importance == out[j].Importance {
 			return out[i].UpdatedAt.After(out[j].UpdatedAt)
 		}
@@ -399,8 +497,14 @@ func (r *Runner) captureConversationMemories(sessionID string, userInput string,
 	if r.Memory == nil {
 		return
 	}
-	for _, entry := range memory.ExtractStructuredMemories(sessionID, userInput, assistantOutput, ctx) {
+	extracted := memory.ExtractStructuredMemories(sessionID, userInput, assistantOutput, ctx)
+	for _, entry := range extracted {
 		_ = r.Memory.Upsert(entry)
+	}
+	if ctx.Trust == types.TrustExternal || ctx.Trust == types.TrustTrusted {
+		if subject := memory.ResolveContactIdentity(ctx, userInput).CanonicalSubject; strings.TrimSpace(subject) != "" {
+			_ = r.Memory.RefreshContactCard(subject)
+		}
 	}
 }
 

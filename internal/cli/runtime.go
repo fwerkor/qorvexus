@@ -2053,14 +2053,51 @@ func (a *appRuntime) SocialContactGraph(ctx context.Context) (string, error) {
 		OpenCommitments int `json:"open_commitments,omitempty"`
 		HeldOutbox      int `json:"held_outbox,omitempty"`
 		OpenFollowUps   int `json:"open_followups,omitempty"`
+		ContactCard     any `json:"contact_card,omitempty"`
 	}
 	nodes := make([]nodeView, 0, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
+		var card any
+		if a.memory != nil && a.cfg.Memory.Enabled {
+			identity := memory.ResolveContactIdentity(types.ConversationContext{
+				Channel:    node.Channel,
+				SenderID:   node.ContactID,
+				SenderName: node.DisplayName,
+				Trust:      types.TrustLevel(node.Trust),
+			}, "")
+			items := []memory.Entry{}
+			if identity.CanonicalSubject != "" {
+				if subjectItems, err := a.memory.SearchWithOptions(memory.SearchOptions{
+					Layers:           []string{"people"},
+					Areas:            []string{"contacts"},
+					Subjects:         []string{identity.CanonicalSubject},
+					Limit:            20,
+					IncludeSummaries: true,
+				}); err == nil {
+					items = append(items, subjectItems...)
+				}
+			}
+			if identity.RouteKey != "" {
+				if routeItems, err := a.memory.SearchWithOptions(memory.SearchOptions{
+					Layers:           []string{"people"},
+					Areas:            []string{"contacts"},
+					Tags:             []string{"contact_route:" + identity.RouteKey},
+					Limit:            12,
+					IncludeSummaries: true,
+				}); err == nil {
+					items = append(items, routeItems...)
+				}
+			}
+			if len(items) > 0 {
+				card = memory.BuildContactCard(items)
+			}
+		}
 		nodes = append(nodes, nodeView{
 			ContactNode:     node,
 			OpenCommitments: openCommitments[node.ID],
 			HeldOutbox:      heldOutbox[node.ID],
 			OpenFollowUps:   openFollowUps[node.ID],
+			ContactCard:     card,
 		})
 	}
 	return agent.ToolResultJSON(map[string]any{
@@ -2425,18 +2462,24 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 	result := a.insights.Analyze(env, response)
 	var followUpTaskID string
 	contactKey := social.ContactKey(env.Channel, env.SenderID, env.SenderName)
+	identity := memory.ResolveContactIdentity(env.Context, env.Text)
+	contactSubject := identity.CanonicalSubject
+	if contactSubject == "" {
+		contactSubject = contactKey
+	}
 	contactName := socialCounterpartyName(env)
 	for _, note := range result.Memories {
 		if a.cfg.Memory.Enabled {
-			if err := a.memory.Append(memory.Entry{
+			if err := a.memory.Upsert(memory.Entry{
+				Key:        "person:" + contactSubject + ":social_note:" + memory.HashKey(note.Content),
 				Layer:      "people",
 				Area:       "contacts",
-				Kind:       "contact_note",
-				Subject:    contactKey,
+				Kind:       "interaction_note",
+				Subject:    contactSubject,
 				Summary:    note.Content,
 				Content:    note.Content,
 				Source:     note.Source,
-				Tags:       note.Tags,
+				Tags:       append(memory.ContactIdentityTags(identity, env.Context), note.Tags...),
 				Importance: 6,
 				Confidence: 0.8,
 			}); err == nil {
@@ -2446,6 +2489,9 @@ func (a *appRuntime) captureSocialInsights(ctx context.Context, env social.Envel
 				})
 			}
 		}
+	}
+	if a.cfg.Memory.Enabled && strings.TrimSpace(contactSubject) != "" {
+		_ = a.memory.RefreshContactCard(contactSubject)
 	}
 	for _, suggestion := range result.FollowUps {
 		followUp, err := a.socialFollowUps.Upsert(social.FollowUp{

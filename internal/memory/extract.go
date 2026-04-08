@@ -15,6 +15,7 @@ var (
 	reWorkAs          = regexp.MustCompile(`(?i)\b(?:i work as|my role is|i work in)\s+([A-Za-z][A-Za-z0-9 ,/\-]{2,80})`)
 	reTimezone        = regexp.MustCompile(`(?i)\b(?:my timezone is|timezone[: ]|i am in|i'm in|based in)\s+([A-Za-z0-9_./+\- :]{2,80})`)
 	reHelpWith        = regexp.MustCompile(`(?i)\b(?:help me with|i want this bot to help with|this bot should help with)\s+(.{4,160})`)
+	reWorkAt          = regexp.MustCompile(`(?i)\b(?:i work at|i'm with|i am with|my company is|our company is|we are from)\s+([A-Za-z0-9&.,_/+\- ]{2,80})`)
 	rePreferenceLead  = regexp.MustCompile(`(?i)\b(?:i prefer|please|always|never|do not|don't|avoid|use)\b`)
 	reQuotedStatement = regexp.MustCompile(`["“](.+?)["”]`)
 	reProjectName     = regexp.MustCompile(`(?i)\b(?:project|repo|repository|feature|milestone|initiative)\s+([A-Za-z0-9._/\-]{2,80})`)
@@ -128,18 +129,151 @@ func extractPeopleMemories(userText string, assistantText string, ctx types.Conv
 	if ctx.Trust != types.TrustExternal && ctx.Trust != types.TrustTrusted {
 		return nil
 	}
-	subject := strings.TrimSpace(ctx.SenderName)
-	if subject == "" {
-		subject = strings.TrimSpace(ctx.SenderID)
-	}
+	identity := ResolveContactIdentity(ctx, userText)
+	subject := identity.CanonicalSubject
 	if subject == "" {
 		return nil
 	}
-	content := fmt.Sprintf("Interaction with %s. Latest inbound: %s", subject, compact(userText, 220))
+	displayName := displayNameOrSubject(identity.ClaimedName, identity.DisplayName)
+	tags := ContactIdentityTags(identity, ctx)
+	var out []Entry
+	if identity.RouteKey != "" {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "alias", HashKey(identity.RouteKey)),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_alias",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("Known route alias for %s: %s.", displayNameOrSubject(displayName, subject), identity.RouteKey),
+			Content:    fmt.Sprintf("Known contact alias or route: %s.", identity.RouteKey),
+			Source:     "social:identity",
+			Tags:       append([]string{}, tags...),
+			Importance: 8,
+			Confidence: 0.95,
+		})
+	}
+	if identity.ClaimedName != "" && !strings.EqualFold(strings.TrimSpace(identity.ClaimedName), strings.TrimSpace(identity.DisplayName)) {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "alias", HashKey(identity.ClaimedName)),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_alias",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s explicitly introduced themselves as %s.", displayNameOrSubject(identity.DisplayName, subject), identity.ClaimedName),
+			Content:    fmt.Sprintf("Known contact alias or route: %s.", identity.ClaimedName),
+			Source:     "social:identity",
+			Tags:       append([]string{}, tags...),
+			Importance: 7,
+			Confidence: 0.88,
+		})
+	}
+	if displayName != "" {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "identity", "display_name"),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_profile",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("Display name for %s is %s.", subject, displayName),
+			Content:    fmt.Sprintf("Contact display name is %s.", displayName),
+			Source:     "social:identity",
+			Tags:       append([]string{}, tags...),
+			Importance: 8,
+			Confidence: 0.95,
+		})
+	}
+	out = append(out, Entry{
+		Key:        stableKey("person", subject, "relationship", "trust"),
+		Layer:      "people",
+		Area:       "contacts",
+		Kind:       "contact_profile",
+		Subject:    subject,
+		Summary:    fmt.Sprintf("Trust level for %s is %s.", displayNameOrSubject(displayName, subject), ctx.Trust),
+		Content:    fmt.Sprintf("Contact trust level is %s.", ctx.Trust),
+		Source:     "social:identity",
+		Tags:       append([]string{}, tags...),
+		Importance: 7,
+		Confidence: 0.9,
+	})
+	if value := firstMatch(reWorkAt, userText); value != "" {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "profile", "organization"),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_profile",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s is associated with %s.", displayNameOrSubject(displayName, subject), cleanSentence(value)),
+			Content:    fmt.Sprintf("Contact organization or company: %s.", cleanSentence(value)),
+			Source:     "social:conversation",
+			Tags:       append([]string{}, tags...),
+			Importance: 8,
+			Confidence: 0.82,
+		})
+	}
+	if value := firstMatch(reWorkAs, userText); value != "" {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "profile", "role"),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_profile",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s works as %s.", displayNameOrSubject(displayName, subject), cleanSentence(value)),
+			Content:    fmt.Sprintf("Contact role or field: %s.", cleanSentence(value)),
+			Source:     "social:conversation",
+			Tags:       append([]string{}, tags...),
+			Importance: 7,
+			Confidence: 0.8,
+		})
+	} else if value := firstMatch(reIAm, userText); value != "" && looksLikeRole(value) {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "profile", "role"),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_profile",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s describes their role as %s.", displayNameOrSubject(displayName, subject), cleanSentence(value)),
+			Content:    fmt.Sprintf("Contact role or field: %s.", cleanSentence(value)),
+			Source:     "social:conversation",
+			Tags:       append([]string{}, tags...),
+			Importance: 6,
+			Confidence: 0.68,
+		})
+	}
+	if value := firstMatch(reTimezone, userText); value != "" {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "profile", "location"),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_profile",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s is based in or mentions %s.", displayNameOrSubject(displayName, subject), cleanSentence(value)),
+			Content:    fmt.Sprintf("Contact timezone or location hint: %s.", cleanSentence(value)),
+			Source:     "social:conversation",
+			Tags:       append([]string{}, tags...),
+			Importance: 6,
+			Confidence: 0.74,
+		})
+	}
+	for _, pref := range extractPreferenceStatements(userText) {
+		out = append(out, Entry{
+			Key:        stableKey("person", subject, "preference", HashKey(pref)),
+			Layer:      "people",
+			Area:       "contacts",
+			Kind:       "contact_preference",
+			Subject:    subject,
+			Summary:    fmt.Sprintf("%s preference: %s", displayNameOrSubject(displayName, subject), compact(pref, 120)),
+			Content:    pref,
+			Source:     "social:conversation",
+			Tags:       append([]string{}, tags...),
+			Importance: 6,
+			Confidence: 0.72,
+		})
+	}
+	content := fmt.Sprintf("Interaction with %s. Latest inbound: %s", displayNameOrSubject(displayName, subject), compact(userText, 220))
 	if strings.TrimSpace(assistantText) != "" {
 		content += ". Latest reply: " + compact(assistantText, 180)
 	}
-	return []Entry{{
+	out = append(out, Entry{
 		Key:        stableKey("person", HashKey(subject), "interaction", HashKey(compact(userText, 120))),
 		Layer:      "people",
 		Area:       "contacts",
@@ -147,11 +281,19 @@ func extractPeopleMemories(userText string, assistantText string, ctx types.Conv
 		Subject:    subject,
 		Summary:    compact(content, 140),
 		Content:    content,
-		Source:     "auto:conversation",
-		Tags:       []string{"people", "contact", "memory_layer:people"},
+		Source:     "social:conversation",
+		Tags:       append([]string{}, tags...),
 		Importance: 5,
 		Confidence: 0.7,
-	}}
+	})
+	return out
+}
+
+func displayNameOrSubject(displayName string, subject string) string {
+	if strings.TrimSpace(displayName) != "" {
+		return strings.TrimSpace(displayName)
+	}
+	return strings.TrimSpace(subject)
 }
 
 func extractProjectMemories(sessionID string, userText string, assistantText string, ctx types.ConversationContext) []Entry {

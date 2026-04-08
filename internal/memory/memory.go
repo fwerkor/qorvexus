@@ -1078,6 +1078,10 @@ func shouldCompact(entry Entry) bool {
 	if entry.Kind == "summary" || entry.Kind == "memory_arbitration" {
 		return false
 	}
+	switch strings.ToLower(strings.TrimSpace(entry.Kind)) {
+	case "contact_profile", "person_profile", "contact_preference", "contact_alias", "contact_summary":
+		return false
+	}
 	if entry.Importance >= 9 {
 		return false
 	}
