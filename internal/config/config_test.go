@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,11 @@ agent:
 	}
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
+	}
+	for _, needle := range []string{"restart_runtime", "apply_self_update"} {
+		if !strings.Contains(cfg.Agent.SystemPrompt, needle) {
+			t.Fatalf("expected default system prompt to mention %q, got %q", needle, cfg.Agent.SystemPrompt)
+		}
 	}
 	if cfg.Agent.SummarizerModel != "" {
 		t.Fatalf("expected summarizer model to remain optional by default, got %q", cfg.Agent.SummarizerModel)
@@ -93,6 +99,9 @@ agent:
 	}
 	if cfg.Social.AutoSendExternalReplies == nil || !*cfg.Social.AutoSendExternalReplies {
 		t.Fatalf("expected external social auto-send enabled by default, got %#v", cfg.Social.AutoSendExternalReplies)
+	}
+	if cfg.Self.AllowRuntimeApply == nil || !*cfg.Self.AllowRuntimeApply {
+		t.Fatalf("expected runtime apply enabled by default, got %#v", cfg.Self.AllowRuntimeApply)
 	}
 }
 

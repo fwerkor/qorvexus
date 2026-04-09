@@ -69,6 +69,8 @@ type Runtime interface {
 	PromoteSelfImprovement(ctx context.Context, title string, description string, model string) (string, error)
 	MineSelfImprovements(ctx context.Context, limit int) (string, error)
 	CaptureSelfImprovement(ctx context.Context, title string, description string, kind string, promote bool, model string) (string, error)
+	RequestRuntimeRestart(ctx context.Context, reason string) (string, error)
+	ApplySelfUpdate(ctx context.Context, runTests bool, reason string) (string, error)
 }
 
 func (t *ThinkTool) Definition() types.ToolDefinition {
@@ -1163,4 +1165,64 @@ func (t *CaptureSelfImprovementTool) Invoke(ctx context.Context, raw json.RawMes
 		return "", err
 	}
 	return t.rt.CaptureSelfImprovement(ctx, input.Title, input.Description, input.Kind, input.Promote, input.Model)
+}
+
+type RestartRuntimeTool struct{ rt Runtime }
+
+func NewRestartRuntimeTool(rt Runtime) *RestartRuntimeTool { return &RestartRuntimeTool{rt: rt} }
+
+func (t *RestartRuntimeTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "restart_runtime",
+		Description: "Ask the supervisor to restart the running runtime so config or skill changes take effect.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"reason": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *RestartRuntimeTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.RequestRuntimeRestart(ctx, input.Reason)
+}
+
+type ApplySelfUpdateTool struct{ rt Runtime }
+
+func NewApplySelfUpdateTool(rt Runtime) *ApplySelfUpdateTool { return &ApplySelfUpdateTool{rt: rt} }
+
+func (t *ApplySelfUpdateTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "apply_self_update",
+		Description: "Build a fresh Qorvexus binary from the current source tree and ask the supervisor to restart into it.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"run_tests": map[string]any{"type": "boolean"},
+				"reason":    map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *ApplySelfUpdateTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		RunTests bool   `json:"run_tests"`
+		Reason   string `json:"reason"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.ApplySelfUpdate(ctx, input.RunTests, input.Reason)
 }

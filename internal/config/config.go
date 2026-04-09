@@ -158,11 +158,12 @@ type TelegramConfig struct {
 }
 
 type SelfConfig struct {
-	Enabled          bool   `yaml:"enabled"`
-	SkillsDir        string `yaml:"skills_dir"`
-	BacklogFile      string `yaml:"backlog_file"`
-	AllowConfigEdits bool   `yaml:"allow_config_edits"`
-	AllowSkillWrites bool   `yaml:"allow_skill_writes"`
+	Enabled           bool   `yaml:"enabled"`
+	SkillsDir         string `yaml:"skills_dir"`
+	BacklogFile       string `yaml:"backlog_file"`
+	AllowConfigEdits  bool   `yaml:"allow_config_edits"`
+	AllowSkillWrites  bool   `yaml:"allow_skill_writes"`
+	AllowRuntimeApply *bool  `yaml:"allow_runtime_apply"`
 }
 
 type AuditConfig struct {
@@ -421,6 +422,9 @@ func (c *Config) setDefaults(path string) error {
 	if c.Self.BacklogFile == "" {
 		c.Self.BacklogFile = filepath.Join(c.DataDir, "self_backlog.jsonl")
 	}
+	if c.Self.AllowRuntimeApply == nil {
+		c.Self.AllowRuntimeApply = boolPtr(true)
+	}
 	c.Self.SkillsDir = expandPath(base, c.Self.SkillsDir)
 	if c.Audit.File == "" {
 		c.Audit.File = filepath.Join(c.DataDir, "audit.jsonl")
@@ -473,6 +477,9 @@ When browsing the web through Playwright, prefer persistent browser profiles so 
 When talking to external parties, act as an autonomous assistant with delegated authority: you may reply, defer internally, or stay silent when no response is needed.
 When a social channel conversation does not need an outward reply, return [[NO_REPLY]] instead of forcing a response.
 When improving yourself, make concrete, reversible progress and preserve auditability.
+When changing runtime config or SKILL.md files that should affect the live service, use restart_runtime after the write succeeds so the supervised runtime reloads them.
+When changing Qorvexus source code and you need the running service to adopt it, use apply_self_update so a fresh binary is built and the supervisor can hand off to it.
+Do not claim a self-update is live until restart_runtime or apply_self_update has succeeded; if supervised runtime apply is unavailable, say so plainly.
 `)
 }
 

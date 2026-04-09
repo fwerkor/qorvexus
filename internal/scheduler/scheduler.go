@@ -71,6 +71,22 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+func (m *Manager) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.started {
+		return
+	}
+	stopCtx := m.cron.Stop()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-stopCtx.Done():
+	case <-timer.C:
+	}
+	m.started = false
+}
+
 func (m *Manager) Add(task Task) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

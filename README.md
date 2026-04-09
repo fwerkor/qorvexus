@@ -83,6 +83,8 @@ social:
 ./qorvexus start
 ```
 
+`start` now runs Qorvexus under a lightweight supervisor. That lets the runtime restart cleanly after config or skill changes, and it also enables supervised self-update handoffs when the owner approves a code rebuild.
+
 5. Open the control panel:
 
 ```text
@@ -103,11 +105,15 @@ Qorvexus fills in many internal defaults automatically, but model connection set
 
 ```bash
 ./qorvexus start
+./qorvexus daemon
 ./qorvexus run "Plan my day and execute any necessary research"
 ./qorvexus run --image https://example.com/screen.png "Describe this screen"
 ./qorvexus skills
 ./qorvexus queue
 ```
+
+- Use `start` for the normal supervised service.
+- Use `daemon` only when you intentionally want a single unsupervised runtime process.
 
 Local developer workflows:
 
