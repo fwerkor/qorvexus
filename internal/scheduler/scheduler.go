@@ -90,6 +90,9 @@ func (m *Manager) Stop() {
 func (m *Manager) Add(task Task) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := validateScheduleInterval(task.Schedule, 5*time.Minute); err != nil {
+		return err
+	}
 	task.CreatedAt = time.Now().UTC()
 	if task.ID == "" {
 		task.ID = fmt.Sprintf("task-%d", task.CreatedAt.UnixNano())
@@ -119,4 +122,19 @@ func (m *Manager) saveLocked() error {
 		return err
 	}
 	return os.WriteFile(m.path, raw, 0o644)
+}
+
+func validateScheduleInterval(expr string, minInterval time.Duration) error {
+	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	schedule, err := parser.Parse(expr)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	first := schedule.Next(now)
+	second := schedule.Next(first)
+	if second.Sub(first) < minInterval {
+		return fmt.Errorf("cron interval must be at least %s", minInterval)
+	}
+	return nil
 }
