@@ -158,6 +158,111 @@ func TestPollerConsumesUpdates(t *testing.T) {
 	}
 }
 
+func TestPollerCoalescesQueuedUpdatesByThread(t *testing.T) {
+	var getUpdatesCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/deleteWebhook"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			getUpdatesCalls++
+			w.Header().Set("Content-Type", "application/json")
+			if getUpdatesCalls == 1 {
+				_, _ = w.Write([]byte(`{"ok":true,"result":[
+					{"update_id":41,"message":{"message_id":7,"text":"hello","chat":{"id":123,"type":"private"},"from":{"id":456,"first_name":"Ada"}}},
+					{"update_id":42,"message":{"message_id":8,"text":"are you there?","chat":{"id":123,"type":"private"},"from":{"id":456,"first_name":"Ada"}}}
+				]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	poller := NewPoller("test-token", 1, 10*time.Millisecond)
+	poller.apiBaseURL = srv.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	received := make(chan social.Envelope, 2)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- poller.Run(ctx, func(_ context.Context, env social.Envelope) error {
+			received <- env
+			cancel()
+			return nil
+		})
+	}()
+
+	var env social.Envelope
+	select {
+	case env = <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for coalesced telegram message")
+	}
+	select {
+	case extra := <-received:
+		t.Fatalf("expected one coalesced envelope, got extra %+v", extra)
+	default:
+	}
+
+	if !strings.Contains(env.Text, "Multiple inbound messages arrived before you replied.") {
+		t.Fatalf("expected coalesced envelope preamble, got %q", env.Text)
+	}
+	if !strings.Contains(env.Text, "hello") || !strings.Contains(env.Text, "are you there?") {
+		t.Fatalf("expected coalesced envelope to contain both messages, got %q", env.Text)
+	}
+	if env.ThreadID != "123" || env.SenderID != "456" {
+		t.Fatalf("unexpected coalesced envelope identity: %+v", env)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("unexpected poller error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for poller shutdown")
+	}
+
+	if poller.offset != 43 {
+		t.Fatalf("expected offset to advance to 43, got %d", poller.offset)
+	}
+}
+
+func TestCoalesceUpdatesKeepsDifferentThreadsSeparate(t *testing.T) {
+	out := coalesceUpdates([]Update{
+		{
+			UpdateID: 41,
+			Message: &Message{
+				MessageID: 7,
+				Text:      "hello",
+				Chat:      Chat{ID: 123, Type: "private"},
+				From:      &User{ID: 456, FirstName: "Ada"},
+			},
+		},
+		{
+			UpdateID: 42,
+			Message: &Message{
+				MessageID: 8,
+				Text:      "hi from elsewhere",
+				Chat:      Chat{ID: 789, Type: "private"},
+				From:      &User{ID: 456, FirstName: "Ada"},
+			},
+		},
+	})
+	if len(out) != 2 {
+		t.Fatalf("expected two envelopes, got %d", len(out))
+	}
+	if out[0].ThreadID != "123" || out[1].ThreadID != "789" {
+		t.Fatalf("unexpected coalesced thread order: %+v", out)
+	}
+}
+
 func TestPollerDeleteWebhookFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":false,"description":"failed"}`))

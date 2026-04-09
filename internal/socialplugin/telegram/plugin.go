@@ -202,10 +202,8 @@ func (p *Poller) Run(ctx context.Context, handle func(context.Context, social.En
 			if update.UpdateID >= p.offset {
 				p.offset = update.UpdateID + 1
 			}
-			env, ok := Envelope(update)
-			if !ok {
-				continue
-			}
+		}
+		for _, env := range coalesceUpdates(updates) {
 			if err := handle(ctx, env); err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -349,4 +347,57 @@ func Envelope(update Update) (social.Envelope, bool) {
 		SenderName: senderName,
 		Text:       message.Text,
 	}, true
+}
+
+func coalesceUpdates(updates []Update) []social.Envelope {
+	order := make([]string, 0, len(updates))
+	grouped := map[string][]social.Envelope{}
+	for _, update := range updates {
+		env, ok := Envelope(update)
+		if !ok {
+			continue
+		}
+		key := envelopeBatchKey(env)
+		if _, exists := grouped[key]; !exists {
+			order = append(order, key)
+		}
+		grouped[key] = append(grouped[key], env)
+	}
+	out := make([]social.Envelope, 0, len(order))
+	for _, key := range order {
+		out = append(out, mergeEnvelopes(grouped[key]))
+	}
+	return out
+}
+
+func envelopeBatchKey(env social.Envelope) string {
+	return strings.TrimSpace(env.Channel) + "|" + strings.TrimSpace(env.ThreadID) + "|" + strings.TrimSpace(env.SenderID) + "|" + strings.TrimSpace(env.SenderName)
+}
+
+func mergeEnvelopes(batch []social.Envelope) social.Envelope {
+	if len(batch) == 0 {
+		return social.Envelope{}
+	}
+	if len(batch) == 1 {
+		return batch[0]
+	}
+	merged := batch[0]
+	texts := make([]string, 0, len(batch))
+	for i, env := range batch {
+		if trimmed := strings.TrimSpace(env.Text); trimmed != "" {
+			texts = append(texts, fmt.Sprintf("Message %d:\n%s", i+1, trimmed))
+		}
+		if len(env.Images) > 0 {
+			merged.Images = append(merged.Images, env.Images...)
+		}
+		if env.ReceivedAt.After(merged.ReceivedAt) {
+			merged.ReceivedAt = env.ReceivedAt
+		}
+		merged.ID = env.ID
+		if env.Context.Channel != "" {
+			merged.Context = env.Context
+		}
+	}
+	merged.Text = "Multiple inbound messages arrived before you replied. Treat them as one turn and answer once.\n\n" + strings.Join(texts, "\n\n")
+	return merged
 }
