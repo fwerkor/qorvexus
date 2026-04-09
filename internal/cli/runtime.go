@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"qorvexus/internal/orchestrator"
 	"qorvexus/internal/plan"
 	"qorvexus/internal/policy"
+	"qorvexus/internal/runtimecontrol"
 	"qorvexus/internal/scheduler"
 	"qorvexus/internal/self"
 	"qorvexus/internal/session"
@@ -60,6 +62,10 @@ type appRuntime struct {
 	commitments     *commitment.Store
 	self            *self.Manager
 	audit           *audit.Logger
+	runtimeControl  *runtimecontrol.Client
+	executablePath  string
+	sourceRoot      string
+	runtimeMu       sync.Mutex
 }
 
 const (
@@ -93,6 +99,14 @@ type planCheckVerdict struct {
 }
 
 func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
+	executablePath, _ := os.Executable()
+	workingDir, _ := os.Getwd()
+	sourceRoot := discoverSourceRoot(
+		os.Getenv(runtimecontrol.EnvSourceRoot),
+		workingDir,
+		filepath.Dir(configPath),
+		filepath.Dir(executablePath),
+	)
 	registry := model.NewRegistry()
 	recorder := model.NewRecorder(filepath.Join(cfg.DataDir, "traces", "model_calls.jsonl"))
 	for name, modelCfg := range cfg.Models {
@@ -141,6 +155,9 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		commitments:     commitment.NewStore(cfg.Social.CommitmentFile),
 		self:            self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
 		audit:           audit.New(cfg.Audit.File),
+		runtimeControl:  runtimecontrol.NewClientFromEnv(),
+		executablePath:  executablePath,
+		sourceRoot:      sourceRoot,
 	}
 
 	toolRegistry := tool.NewRegistry()
@@ -184,6 +201,8 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewPromoteSelfImprovementTool(app))
 	toolRegistry.Register(tool.NewMineSelfImprovementsTool(app))
 	toolRegistry.Register(tool.NewCaptureSelfImprovementTool(app))
+	toolRegistry.Register(tool.NewRestartRuntimeTool(app))
+	toolRegistry.Register(tool.NewApplySelfUpdateTool(app))
 
 	app.runner = &agent.Runner{
 		Config:   cfg,
@@ -1534,6 +1553,10 @@ func (a *appRuntime) Status() webui.Status {
 		SelfEnabled:              a.cfg.Self.Enabled,
 		SocialEnabled:            a.cfg.Social.Enabled,
 		WebAddress:               a.cfg.Web.Address,
+		RuntimeMode:              a.runtimeMode(),
+		RuntimeApplyEnabled:      a.runtimeApplyEnabled(),
+		ExecutablePath:           a.executablePath,
+		SourceRoot:               a.sourceRoot,
 		OwnerOnboardingRequired:  required,
 		OwnerOnboardingSessionID: sessionID,
 		OwnerOnboardingPrompt:    prompt,

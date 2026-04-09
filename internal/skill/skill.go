@@ -148,7 +148,14 @@ func Prompt(skills []Skill) string {
 		if skill.DisableModelInvocation {
 			continue
 		}
-		fmt.Fprintf(&b, "- %s: %s (location: %s)\n", skill.Name, skill.Description, skill.Location)
+		fmt.Fprintf(&b, "\nSkill: %s\n", skill.Name)
+		fmt.Fprintf(&b, "Description: %s\n", skill.Description)
+		if instructions := strings.TrimSpace(skill.Instructions); instructions != "" {
+			b.WriteString("Instructions:\n")
+			b.WriteString(instructions)
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Location: %s\n", skill.Location)
 	}
 	return strings.TrimSpace(b.String())
 }

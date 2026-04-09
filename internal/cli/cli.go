@@ -102,7 +102,10 @@ func startCommand(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return runService(ctx, *configPath, false)
+	if err := ensureConfigExists(*configPath); err != nil {
+		return err
+	}
+	return runUnderSupervisor(ctx, *configPath)
 }
 
 func runService(ctx context.Context, configPath string, forceWeb bool) error {
@@ -120,6 +123,9 @@ func runService(ctx context.Context, configPath string, forceWeb bool) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = shutdownRuntime(app)
+	}()
 	if msg, err := app.EnsureBrowserRuntime(ctx); err == nil && strings.TrimSpace(msg) != "" {
 		fmt.Println(msg)
 	} else if err != nil {
@@ -175,6 +181,9 @@ func webCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = shutdownRuntime(app)
+	}()
 	if msg, err := app.EnsureBrowserRuntime(ctx); err == nil && strings.TrimSpace(msg) != "" {
 		fmt.Println(msg)
 	} else if err != nil {
@@ -199,6 +208,10 @@ func webCommand(ctx context.Context, args []string) error {
 			_ = app.RunSocialBackground(ctx)
 		}()
 	}
+	go func() {
+		<-ctx.Done()
+		_ = shutdownRuntime(app)
+	}()
 	fmt.Printf("qorvexus web panel listening on http://%s\n", cfg.Web.Address)
 	return app.webServer.ListenAndServe()
 }
@@ -313,6 +326,7 @@ self:
   enabled: true
   allow_config_edits: true
   allow_skill_writes: true
+  allow_runtime_apply: true
 audit:
   enabled: true
 `

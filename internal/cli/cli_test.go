@@ -51,6 +51,7 @@ func TestSampleConfigKeepsModelConnectionFieldsVisible(t *testing.T) {
 		"provider: openai-compatible",
 		"base_url: https://api.openai.com/v1",
 		"model: gpt-4.1",
+		"allow_runtime_apply: true",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("expected sample config to include %q", needle)

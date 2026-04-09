@@ -44,6 +44,8 @@ type App interface {
 	RetryQueueTask(ctx context.Context, id string) (string, error)
 	UpdateCommitmentStatus(ctx context.Context, id string, status string) (string, error)
 	UpdateSelfImprovementStatus(ctx context.Context, id string, status string) (string, error)
+	RequestRuntimeRestart(ctx context.Context, reason string) (string, error)
+	ApplySelfUpdate(ctx context.Context, runTests bool, reason string) (string, error)
 }
 
 type Status struct {
@@ -55,6 +57,10 @@ type Status struct {
 	SelfEnabled              bool      `json:"self_enabled"`
 	SocialEnabled            bool      `json:"social_enabled"`
 	WebAddress               string    `json:"web_address"`
+	RuntimeMode              string    `json:"runtime_mode"`
+	RuntimeApplyEnabled      bool      `json:"runtime_apply_enabled"`
+	ExecutablePath           string    `json:"executable_path,omitempty"`
+	SourceRoot               string    `json:"source_root,omitempty"`
 	OwnerOnboardingRequired  bool      `json:"owner_onboarding_required"`
 	OwnerOnboardingSessionID string    `json:"owner_onboarding_session_id,omitempty"`
 	OwnerOnboardingPrompt    string    `json:"owner_onboarding_prompt,omitempty"`
@@ -98,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/queue/retry", s.handleQueueRetry)
 	mux.HandleFunc("/api/commitments/status", s.handleCommitmentStatus)
 	mux.HandleFunc("/api/self/status", s.handleSelfStatus)
+	mux.HandleFunc("/api/runtime/control", s.handleRuntimeControl)
 	for _, adapter := range s.app.SocialWebhookAdapters() {
 		adapter := adapter
 		mux.HandleFunc(adapter.Path(), func(w http.ResponseWriter, r *http.Request) {
@@ -459,6 +466,40 @@ func (s *Server) handleSelfStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.app.UpdateSelfImprovementStatus(ownerContext(r.Context()), input.ID, input.Status)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
+}
+
+func (s *Server) handleRuntimeControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		Action   string `json:"action"`
+		RunTests bool   `json:"run_tests"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var (
+		out string
+		err error
+	)
+	switch strings.TrimSpace(strings.ToLower(input.Action)) {
+	case "restart":
+		out, err = s.app.RequestRuntimeRestart(ownerContext(r.Context()), input.Reason)
+	case "apply", "build":
+		out, err = s.app.ApplySelfUpdate(ownerContext(r.Context()), input.RunTests, input.Reason)
+	default:
+		http.Error(w, "unsupported runtime action", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -926,6 +967,7 @@ const dashboardHTML = `<!doctype html>
         </div>
         <div class="chip-row">
           <span class="chip"><strong data-i18n="chip_default_model">Default model</strong> {{.DefaultModel}}</span>
+          <span class="chip"><strong data-i18n="chip_runtime_mode">Runtime</strong> {{.RuntimeMode}}</span>
           <span class="chip"><strong data-i18n="chip_memory">Memory</strong> {{.MemoryEnabled}}</span>
           <span class="chip"><strong data-i18n="chip_queue">Queue</strong> {{.QueueEnabled}}</span>
           <span class="chip"><strong data-i18n="chip_scheduler">Scheduler</strong> {{.SchedulerEnabled}}</span>
@@ -1018,14 +1060,46 @@ const dashboardHTML = `<!doctype html>
                   <div class="metric-value" id="current-tab-label" data-i18n-dynamic="tab_overview">Overview</div>
                 </div>
                 <div class="metric">
+                  <div class="metric-label" data-i18n="runtime_mode">Runtime Mode</div>
+                  <div class="metric-value" id="runtime-mode">{{.RuntimeMode}}</div>
+                </div>
+                <div class="metric">
                   <div class="metric-label" data-i18n="web_address">Web Address</div>
                   <div class="metric-value mono">{{.WebAddress}}</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label" data-i18n="runtime_binary">Executable</div>
+                  <div class="metric-value mono" id="runtime-binary">{{.ExecutablePath}}</div>
                 </div>
               </div>
               <div style="margin-top:14px;">
                 <label data-i18n="run_output">Run Output</label>
                 <pre id="run-output" class="result" {{if not .OwnerOnboardingRequired}}data-i18n="run_output_ready"{{end}}>{{if .OwnerOnboardingRequired}}{{.OwnerOnboardingPrompt}}{{else}}Ready. Run a prompt or open another workspace tab.{{end}}</pre>
               </div>
+            </article>
+
+            <article class="panel card span-12">
+              <div class="card-head">
+                <div>
+                  <h2 data-i18n="runtime_control">Runtime Control</h2>
+                </div>
+              </div>
+              <p class="muted" data-i18n="runtime_control_desc">Restart the supervised runtime, or build a fresh binary from source and hand off to it.</p>
+              <div class="split-row">
+                <div>
+                  <label for="runtime-reason" data-i18n="runtime_reason">Reason</label>
+                  <input id="runtime-reason" placeholder="Optional note for the audit log" data-i18n-placeholder="runtime_reason_placeholder">
+                </div>
+                <div>
+                  <label for="runtime-run-tests" data-i18n="run_tests_before_apply">Run Tests Before Apply</label>
+                  <input id="runtime-run-tests" type="checkbox" checked>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="secondary" onclick="controlRuntime('restart')" data-i18n="restart_runtime">Restart Runtime</button>
+                <button onclick="controlRuntime('apply')" data-i18n="build_and_restart">Build And Restart</button>
+              </div>
+              <pre id="runtime-control-output" class="compact"></pre>
             </article>
 
             <article class="panel card span-12">
@@ -1343,6 +1417,7 @@ const dashboardHTML = `<!doctype html>
         hero_title: "Operate the agent without fighting the interface.",
         hero_lede: "The command center stays focused on the things you actually need first: run work, inspect memory, watch queue health, and only then drop into social, self-improvement, or raw config.",
         chip_default_model: "Default model",
+        chip_runtime_mode: "Runtime",
         chip_memory: "Memory",
         chip_queue: "Queue",
         chip_scheduler: "Scheduler",
@@ -1378,9 +1453,18 @@ const dashboardHTML = `<!doctype html>
         immediate_context: "Immediate Context",
         immediate_context_desc: "What the runtime thinks is important right now.",
         current_tab: "Current Tab",
+        runtime_mode: "Runtime Mode",
+        runtime_binary: "Executable",
         web_address: "Web Address",
         run_output: "Run Output",
         run_output_ready: "Ready. Run a prompt or open another workspace tab.",
+        runtime_control: "Runtime Control",
+        runtime_control_desc: "Restart the supervised runtime, or build a fresh binary from source and hand off to it.",
+        runtime_reason: "Reason",
+        runtime_reason_placeholder: "Optional note for the audit log",
+        restart_runtime: "Restart Runtime",
+        build_and_restart: "Build And Restart",
+        run_tests_before_apply: "Run Tests Before Apply",
         system_snapshot: "System Snapshot",
         system_snapshot_desc: "High-signal runtime state without dropping you straight into raw JSON.",
         refresh_status: "Refresh Status",
@@ -1497,6 +1581,7 @@ const dashboardHTML = `<!doctype html>
         hero_title: "以更顺手的方式操作智能体，而不是和界面较劲。",
         hero_lede: "这个控制台优先展示你真正常用的事情：运行任务、查看记忆、观察队列健康，再进入社交、自我进化或原始配置。",
         chip_default_model: "默认模型",
+        chip_runtime_mode: "运行模式",
         chip_memory: "记忆",
         chip_queue: "队列",
         chip_scheduler: "调度",
@@ -1532,9 +1617,18 @@ const dashboardHTML = `<!doctype html>
         immediate_context: "即时上下文",
         immediate_context_desc: "当前运行时认为最重要的信息。",
         current_tab: "当前标签页",
+        runtime_mode: "运行模式",
+        runtime_binary: "可执行文件",
         web_address: "Web 地址",
         run_output: "运行结果",
         run_output_ready: "已就绪。现在可以运行一个 prompt，或切换到其它工作区。",
+        runtime_control: "运行控制",
+        runtime_control_desc: "可以重启受监督的运行时，或从源码构建新二进制并切换接管。",
+        runtime_reason: "原因",
+        runtime_reason_placeholder: "可选，写入审计日志",
+        restart_runtime: "重启运行时",
+        build_and_restart: "构建并重启",
+        run_tests_before_apply: "应用前运行测试",
         system_snapshot: "系统快照",
         system_snapshot_desc: "直接查看高价值运行状态，而不是一上来就面对整块原始 JSON。",
         refresh_status: "刷新状态",
@@ -1881,6 +1975,8 @@ const dashboardHTML = `<!doctype html>
     async function loadStatus() {
       const data = await api(apiPath("api/status"));
       setText("status-output", data);
+      setText("runtime-mode", data.runtime_mode || "standalone");
+      setText("runtime-binary", data.executable_path || "");
       if (data.owner_onboarding_required) {
         if (!document.getElementById("run-session").value) {
           document.getElementById("run-session").value = data.owner_onboarding_session_id || "";
@@ -1896,6 +1992,22 @@ const dashboardHTML = `<!doctype html>
         setText("hero-focus", t("focus_operations"));
       }
       return data;
+    }
+
+    async function controlRuntime(action) {
+      const payload = {
+        action,
+        run_tests: document.getElementById("runtime-run-tests").checked,
+        reason: document.getElementById("runtime-reason").value,
+      };
+      const data = await api(apiPath("api/runtime/control"), {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      setText("runtime-control-output", data.result);
+      loadAudit();
+      loadStatus();
     }
 
     async function runPrompt() {

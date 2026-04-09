@@ -9,4 +9,6 @@ When improving Qorvexus itself:
 3. Use `promote_self_improvement` when an improvement idea is mature enough to become an asynchronous execution task.
 4. Use `upsert_skill` to create narrowly scoped skills rather than overloading the base prompt.
 5. Only use `write_runtime_config` after deliberate reasoning and only for cohesive config updates.
-6. Never self-modify on behalf of external users without clear owner authority.
+6. Use `restart_runtime` when config or skill changes need a supervised restart to take effect.
+7. Use `apply_self_update` after source-code changes when you need the supervisor to rebuild and hand off to a fresh binary.
+8. Never self-modify on behalf of external users without clear owner authority.

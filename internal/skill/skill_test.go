@@ -3,6 +3,7 @@ package skill
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +31,25 @@ Follow these instructions.
 	}
 	if skills[0].Name != "demo" {
 		t.Fatalf("unexpected skill name: %s", skills[0].Name)
+	}
+}
+
+func TestPromptIncludesSkillInstructions(t *testing.T) {
+	prompt := Prompt([]Skill{{
+		Name:         "self-improver",
+		Description:  "Improve Qorvexus safely.",
+		Instructions: "Use restart_runtime after config changes.\nUse apply_self_update after source changes.",
+		Location:     "/tmp/skills/self-improver",
+	}})
+	for _, needle := range []string{
+		"Skill: self-improver",
+		"Description: Improve Qorvexus safely.",
+		"Use restart_runtime after config changes.",
+		"Use apply_self_update after source changes.",
+		"Location: /tmp/skills/self-improver",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("expected prompt to include %q, got %q", needle, prompt)
+		}
 	}
 }

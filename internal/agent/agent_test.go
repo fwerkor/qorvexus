@@ -12,6 +12,7 @@ import (
 	"qorvexus/internal/model"
 	"qorvexus/internal/plan"
 	"qorvexus/internal/session"
+	"qorvexus/internal/skill"
 	"qorvexus/internal/tool"
 	"qorvexus/internal/types"
 )
@@ -103,6 +104,60 @@ func TestRunnerInjectsRelevantMemoryIntoPrompt(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected relevant memory to be injected into system prompt, got %#v", client.lastRequest.Messages)
+	}
+}
+
+func TestRunnerInjectsSkillInstructionsIntoSystemPrompt(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "Applied."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:   registry,
+		Sessions: session.NewStore(tempDir),
+		Tools:    tool.NewRegistry(),
+		Skills: []skill.Skill{
+			{
+				Name:         "self-improver",
+				Description:  "Improve Qorvexus safely.",
+				Instructions: "Use restart_runtime after config changes.\nUse apply_self_update after source changes.",
+				Location:     "/tmp/skills/self-improver",
+			},
+		},
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-skills",
+		Prompt:    "Update yourself.",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, msg := range client.lastRequest.Messages {
+		if msg.Role != types.RoleSystem {
+			continue
+		}
+		if strings.Contains(msg.Content, "Use restart_runtime after config changes.") &&
+			strings.Contains(msg.Content, "Use apply_self_update after source changes.") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected skill instructions to be injected into system prompt, got %#v", client.lastRequest.Messages)
 	}
 }
 
