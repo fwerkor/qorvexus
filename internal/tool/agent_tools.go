@@ -56,6 +56,7 @@ type Runtime interface {
 	ListSavedSessions(ctx context.Context, limit int, channel string, senderID string) (string, error)
 	GetSessionView(ctx context.Context, sessionID string, limitMessages int, includeSystem bool, includeTool bool) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
+	GrantOwnerIdentity(ctx context.Context, channel string, senderID string, senderName string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
 	HoldSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string, reason string) (string, error)
 	ListSocialOutbox(ctx context.Context, limit int, status string) (string, error)
@@ -870,6 +871,43 @@ func (t *SocialHoldTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 		return "", err
 	}
 	return t.rt.HoldSocialMessage(ctx, input.Channel, input.ThreadID, input.Recipient, input.Text, input.Reason)
+}
+
+type GrantOwnerIdentityTool struct {
+	rt Runtime
+}
+
+func NewGrantOwnerIdentityTool(rt Runtime) *GrantOwnerIdentityTool {
+	return &GrantOwnerIdentityTool{rt: rt}
+}
+
+func (t *GrantOwnerIdentityTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "grant_owner_identity",
+		Description: "Authorize a channel identity as owner when an already-authenticated owner wants to add a new account, device, or chat route.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channel":     map[string]any{"type": "string"},
+				"sender_id":   map[string]any{"type": "string"},
+				"sender_name": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *GrantOwnerIdentityTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Channel    string `json:"channel"`
+		SenderID   string `json:"sender_id"`
+		SenderName string `json:"sender_name"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.GrantOwnerIdentity(ctx, input.Channel, input.SenderID, input.SenderName)
 }
 
 type SocialOutboxListTool struct {

@@ -33,24 +33,26 @@ type Handler interface {
 }
 
 type Gateway struct {
-	cfg     config.SocialConfig
-	idCfg   config.IdentityConfig
-	path    string
-	handler Handler
-	mu      sync.Mutex
+	cfg      config.SocialConfig
+	idCfg    config.IdentityConfig
+	path     string
+	handler  Handler
+	identity *IdentityStore
+	mu       sync.Mutex
 }
 
-func NewGateway(cfg config.SocialConfig, identity config.IdentityConfig, handler Handler) *Gateway {
+func NewGateway(cfg config.SocialConfig, identity config.IdentityConfig, store *IdentityStore, handler Handler) *Gateway {
 	return &Gateway{
-		cfg:     cfg,
-		idCfg:   identity,
-		path:    cfg.InboxFile,
-		handler: handler,
+		cfg:      cfg,
+		idCfg:    identity,
+		path:     cfg.InboxFile,
+		handler:  handler,
+		identity: store,
 	}
 }
 
 func (g *Gateway) Receive(ctx context.Context, env Envelope) (string, error) {
-	env.Context = g.Classify(env.Channel, env.ThreadID, env.SenderID, env.SenderName)
+	env.Context = g.classifyWithBootstrap(env.Channel, env.ThreadID, env.SenderID, env.SenderName)
 	env.ReceivedAt = time.Now().UTC()
 	if env.ID == "" {
 		env.ID = fmt.Sprintf("social-%d", env.ReceivedAt.UnixNano())
@@ -71,6 +73,10 @@ func (g *Gateway) Receive(ctx context.Context, env Envelope) (string, error) {
 }
 
 func (g *Gateway) Classify(channel string, threadID string, senderID string, senderName string) types.ConversationContext {
+	return g.classifyWithBootstrap(channel, threadID, senderID, senderName)
+}
+
+func (g *Gateway) classifyWithBootstrap(channel string, threadID string, senderID string, senderName string) types.ConversationContext {
 	ctx := types.ConversationContext{
 		Channel:      channel,
 		ThreadID:     threadID,
@@ -78,19 +84,62 @@ func (g *Gateway) Classify(channel string, threadID string, senderID string, sen
 		SenderName:   senderName,
 		ReplyAsAgent: true,
 	}
-	if contains(g.idCfg.OwnerIDs, senderID) || containsFold(g.idCfg.OwnerAliases, senderName) {
+	if g.isOwner(channel, senderID, senderName) {
 		ctx.IsOwner = true
 		ctx.Trust = types.TrustOwner
 		return ctx
 	}
-	if contains(g.idCfg.TrustedIDs, senderID) {
+	if g.isTrusted(channel, senderID) {
 		ctx.Trust = types.TrustTrusted
 		ctx.WorkingForUser = true
+		return ctx
+	}
+	if g.identity != nil {
+		if claimed, err := g.identity.ClaimFirstOwner(g.idCfg, channel, senderID, senderName); err == nil && claimed {
+			ctx.IsOwner = true
+			ctx.Trust = types.TrustOwner
+			return ctx
+		}
+	} else if !hasConcreteOwner(g.idCfg, IdentityState{}) && (strings.TrimSpace(senderID) != "" || strings.TrimSpace(senderName) != "") {
+		ctx.IsOwner = true
+		ctx.Trust = types.TrustOwner
 		return ctx
 	}
 	ctx.Trust = types.TrustExternal
 	ctx.WorkingForUser = true
 	return ctx
+}
+
+func (g *Gateway) GrantOwnerIdentity(channel string, senderID string, senderName string) (string, error) {
+	if g.identity == nil {
+		return "", fmt.Errorf("identity store is unavailable")
+	}
+	return g.identity.GrantOwner(channel, senderID, senderName)
+}
+
+func (g *Gateway) isOwner(channel string, senderID string, senderName string) bool {
+	if contains(g.idCfg.OwnerIDs, senderID) || containsFold(g.idCfg.OwnerAliases, senderName) {
+		return true
+	}
+	if g.identity == nil {
+		return false
+	}
+	state := g.identity.Snapshot()
+	if contains(state.OwnerRoutes, identityRouteKey(channel, senderID)) || contains(state.OwnerIDs, senderID) || containsFold(state.OwnerAliases, senderName) {
+		return true
+	}
+	return false
+}
+
+func (g *Gateway) isTrusted(channel string, senderID string) bool {
+	if contains(g.idCfg.TrustedIDs, senderID) {
+		return true
+	}
+	if g.identity == nil {
+		return false
+	}
+	state := g.identity.Snapshot()
+	return contains(state.TrustedRoutes, identityRouteKey(channel, senderID)) || contains(state.TrustedIDs, senderID)
 }
 
 func (g *Gateway) Recent(limit int) ([]Envelope, error) {

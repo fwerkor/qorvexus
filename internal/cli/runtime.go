@@ -62,6 +62,7 @@ type appRuntime struct {
 	commitments     *commitment.Store
 	self            *self.Manager
 	audit           *audit.Logger
+	identity        *social.IdentityStore
 	runtimeControl  *runtimecontrol.Client
 	executablePath  string
 	sourceRoot      string
@@ -155,6 +156,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		commitments:     commitment.NewStore(cfg.Social.CommitmentFile),
 		self:            self.NewManager(cfg.Self.SkillsDir, cfg.Self.BacklogFile),
 		audit:           audit.New(cfg.Audit.File),
+		identity:        social.NewIdentityStore(filepath.Join(cfg.DataDir, "identity_state.json")),
 		runtimeControl:  runtimecontrol.NewClientFromEnv(),
 		executablePath:  executablePath,
 		sourceRoot:      sourceRoot,
@@ -190,6 +192,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
 	toolRegistry.Register(tool.NewSocialSendTool(app))
 	toolRegistry.Register(tool.NewSocialHoldTool(app))
+	toolRegistry.Register(tool.NewGrantOwnerIdentityTool(app))
 	toolRegistry.Register(tool.NewSocialOutboxListTool(app))
 	toolRegistry.Register(tool.NewSocialOutboxManageTool(app))
 	toolRegistry.Register(tool.NewSocialListTool(app))
@@ -231,7 +234,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		Queue:        app.queue,
 		PollInterval: time.Duration(cfg.Queue.PollInterval) * time.Second,
 	}
-	app.social = social.NewGateway(cfg.Social, cfg.Identity, app)
+	app.social = social.NewGateway(cfg.Social, cfg.Identity, app.identity, app)
 	pluginManager := socialpluginregistry.NewManager()
 	app.socialJobs, err = pluginManager.Setup(cfg.Social, app.connectors, cfg.DataDir, func(runCtx context.Context, env social.Envelope) error {
 		_, err := app.HandleSocialEnvelope(runCtx, env)
@@ -1960,6 +1963,40 @@ func (a *appRuntime) HandleSocialEnvelope(ctx context.Context, env social.Envelo
 	return a.social.Receive(ctx, env)
 }
 
+func (a *appRuntime) GrantOwnerIdentity(ctx context.Context, channel string, senderID string, senderName string) (string, error) {
+	if !ownerAllowedFromContext(ctx) {
+		return "", fmt.Errorf("granting owner identities requires owner context")
+	}
+	if a.social == nil {
+		return "", fmt.Errorf("social gateway is unavailable")
+	}
+	if convo, ok := tool.ConversationContextFrom(ctx); ok {
+		if strings.TrimSpace(channel) == "" {
+			channel = convo.Channel
+		}
+		if strings.TrimSpace(senderID) == "" {
+			senderID = convo.SenderID
+		}
+		if strings.TrimSpace(senderName) == "" {
+			senderName = convo.SenderName
+		}
+	}
+	out, err := a.social.GrantOwnerIdentity(channel, senderID, senderName)
+	if err != nil {
+		return "", err
+	}
+	target := strings.TrimSpace(channel) + ":" + strings.TrimSpace(senderID)
+	if target == ":" || target == "" {
+		target = strings.TrimSpace(senderName)
+	}
+	a.logAudit(ctx, "grant_owner_identity", "ok", target, map[string]any{
+		"channel":     strings.TrimSpace(channel),
+		"sender_id":   strings.TrimSpace(senderID),
+		"sender_name": strings.TrimSpace(senderName),
+	})
+	return out, nil
+}
+
 func (a *appRuntime) SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error) {
 	if !ownerAllowedFromContext(ctx) {
 		return "", fmt.Errorf("outbound social messages require owner context")
@@ -2657,7 +2694,7 @@ func (a *appRuntime) ownerOnboardingState() (bool, string, string) {
 }
 
 func (a *appRuntime) logAudit(ctx context.Context, action string, status string, target string, metadata map[string]any) {
-	if !a.cfg.Audit.Enabled {
+	if a == nil || a.cfg == nil || !a.cfg.Audit.Enabled || a.audit == nil {
 		return
 	}
 	var actor, channel, trust string
