@@ -53,6 +53,8 @@ type Runtime interface {
 	AdvancePlan(ctx context.Context, planID string, limit int) (string, error)
 	Remember(ctx context.Context, entry memory.Entry) (string, error)
 	Recall(ctx context.Context, query string, limit int) (string, error)
+	ListSavedSessions(ctx context.Context, limit int, channel string, senderID string) (string, error)
+	GetSessionView(ctx context.Context, sessionID string, limitMessages int, includeSystem bool, includeTool bool) (string, error)
 	EnqueueTask(ctx context.Context, name string, prompt string, model string, sessionID string) (string, error)
 	SendSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string) (string, error)
 	HoldSocialMessage(ctx context.Context, channel string, threadID string, recipient string, text string, reason string) (string, error)
@@ -668,6 +670,77 @@ func (t *RecallTool) Invoke(ctx context.Context, raw json.RawMessage) (string, e
 		return "", err
 	}
 	return t.rt.Recall(ctx, input.Query, input.Limit)
+}
+
+type SessionListTool struct {
+	rt Runtime
+}
+
+func NewSessionListTool(rt Runtime) *SessionListTool { return &SessionListTool{rt: rt} }
+
+func (t *SessionListTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "list_sessions",
+		Description: "List saved sessions across channels so Qorvexus can recover context from other conversations, workstreams, or prior threads.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit":     map[string]any{"type": "integer"},
+				"channel":   map[string]any{"type": "string"},
+				"sender_id": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (t *SessionListTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Limit    int    `json:"limit"`
+		Channel  string `json:"channel"`
+		SenderID string `json:"sender_id"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return "", err
+		}
+	}
+	return t.rt.ListSavedSessions(ctx, input.Limit, input.Channel, input.SenderID)
+}
+
+type SessionViewTool struct {
+	rt Runtime
+}
+
+func NewSessionViewTool(rt Runtime) *SessionViewTool { return &SessionViewTool{rt: rt} }
+
+func (t *SessionViewTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "get_session",
+		Description: "Read another saved session by id, including recent messages and metadata, when Qorvexus needs cross-session continuity.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session_id":     map[string]any{"type": "string"},
+				"limit_messages": map[string]any{"type": "integer"},
+				"include_system": map[string]any{"type": "boolean"},
+				"include_tool":   map[string]any{"type": "boolean"},
+			},
+			"required": []string{"session_id"},
+		},
+	}
+}
+
+func (t *SessionViewTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		SessionID     string `json:"session_id"`
+		LimitMessages int    `json:"limit_messages"`
+		IncludeSystem bool   `json:"include_system"`
+		IncludeTool   bool   `json:"include_tool"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return t.rt.GetSessionView(ctx, input.SessionID, input.LimitMessages, input.IncludeSystem, input.IncludeTool)
 }
 
 type EnqueueTaskTool struct {

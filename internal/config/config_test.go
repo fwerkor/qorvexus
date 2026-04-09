@@ -38,7 +38,7 @@ agent:
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
 	}
-	for _, needle := range []string{"restart_runtime", "apply_self_update"} {
+	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session"} {
 		if !strings.Contains(cfg.Agent.SystemPrompt, needle) {
 			t.Fatalf("expected default system prompt to mention %q, got %q", needle, cfg.Agent.SystemPrompt)
 		}

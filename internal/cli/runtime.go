@@ -185,6 +185,8 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	toolRegistry.Register(tool.NewAdvancePlanTool(app))
 	toolRegistry.Register(tool.NewRememberTool(app))
 	toolRegistry.Register(tool.NewRecallTool(app))
+	toolRegistry.Register(tool.NewSessionListTool(app))
+	toolRegistry.Register(tool.NewSessionViewTool(app))
 	toolRegistry.Register(tool.NewEnqueueTaskTool(app))
 	toolRegistry.Register(tool.NewSocialSendTool(app))
 	toolRegistry.Register(tool.NewSocialHoldTool(app))
@@ -1598,6 +1600,132 @@ func (a *appRuntime) SearchMemory(query string, limit int) (string, error) {
 	return a.Recall(context.Background(), query, limit)
 }
 
+func (a *appRuntime) ListSavedSessions(ctx context.Context, limit int, channel string, senderID string) (string, error) {
+	if !ownerOrSystemAllowedFromContext(ctx) {
+		return "", fmt.Errorf("listing saved sessions requires owner or system context")
+	}
+	items, err := a.sessions.List()
+	if err != nil {
+		return "", err
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	channel = strings.TrimSpace(channel)
+	senderID = strings.TrimSpace(senderID)
+	type sessionListItem struct {
+		ID                 string    `json:"id"`
+		Model              string    `json:"model"`
+		Channel            string    `json:"channel,omitempty"`
+		ThreadID           string    `json:"thread_id,omitempty"`
+		SenderID           string    `json:"sender_id,omitempty"`
+		SenderName         string    `json:"sender_name,omitempty"`
+		Trust              string    `json:"trust,omitempty"`
+		CreatedAt          time.Time `json:"created_at"`
+		UpdatedAt          time.Time `json:"updated_at"`
+		MessageCount       int       `json:"message_count"`
+		LastRole           string    `json:"last_role,omitempty"`
+		LastMessagePreview string    `json:"last_message_preview,omitempty"`
+	}
+	out := make([]sessionListItem, 0, minInt(limit, len(items)))
+	for _, item := range items {
+		if channel != "" && item.Context.Channel != channel {
+			continue
+		}
+		if senderID != "" && item.Context.SenderID != senderID {
+			continue
+		}
+		lastRole, lastPreview := sessionLastMessagePreview(item.Messages)
+		out = append(out, sessionListItem{
+			ID:                 item.ID,
+			Model:              item.Model,
+			Channel:            item.Context.Channel,
+			ThreadID:           item.Context.ThreadID,
+			SenderID:           item.Context.SenderID,
+			SenderName:         item.Context.SenderName,
+			Trust:              string(item.Context.Trust),
+			CreatedAt:          item.CreatedAt,
+			UpdatedAt:          item.UpdatedAt,
+			MessageCount:       len(item.Messages),
+			LastRole:           lastRole,
+			LastMessagePreview: lastPreview,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+	raw, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (a *appRuntime) GetSessionView(ctx context.Context, sessionID string, limitMessages int, includeSystem bool, includeTool bool) (string, error) {
+	if !ownerOrSystemAllowedFromContext(ctx) {
+		return "", fmt.Errorf("reading saved sessions requires owner or system context")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", fmt.Errorf("session_id is required")
+	}
+	st, err := a.sessions.Load(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if limitMessages <= 0 {
+		limitMessages = 40
+	}
+	type sessionMessageView struct {
+		Index         int      `json:"index"`
+		Role          string   `json:"role"`
+		Name          string   `json:"name,omitempty"`
+		Content       string   `json:"content,omitempty"`
+		ToolCallID    string   `json:"tool_call_id,omitempty"`
+		ToolCallNames []string `json:"tool_call_names,omitempty"`
+		PartCount     int      `json:"part_count,omitempty"`
+	}
+	messages := make([]sessionMessageView, 0, minInt(limitMessages, len(st.Messages)))
+	start := maxInt(0, len(st.Messages)-limitMessages)
+	for idx := start; idx < len(st.Messages); idx++ {
+		msg := st.Messages[idx]
+		if msg.Role == types.RoleSystem && !includeSystem {
+			continue
+		}
+		if msg.Role == types.RoleTool && !includeTool {
+			continue
+		}
+		view := sessionMessageView{
+			Index:      idx,
+			Role:       string(msg.Role),
+			Name:       msg.Name,
+			Content:    truncateSessionText(sessionMessageContent(msg), 2000),
+			ToolCallID: msg.ToolCallID,
+			PartCount:  len(msg.Parts),
+		}
+		for _, call := range msg.ToolCalls {
+			if strings.TrimSpace(call.Name) != "" {
+				view.ToolCallNames = append(view.ToolCallNames, call.Name)
+			}
+		}
+		messages = append(messages, view)
+	}
+	payload := map[string]any{
+		"id":            st.ID,
+		"model":         st.Model,
+		"context":       st.Context,
+		"created_at":    st.CreatedAt,
+		"updated_at":    st.UpdatedAt,
+		"message_count": len(st.Messages),
+		"messages":      messages,
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func (a *appRuntime) EnsureOwnerOnboarding(ctx context.Context) (string, error) {
 	required, sessionID, prompt := a.ownerOnboardingState()
 	if !required {
@@ -2406,12 +2534,83 @@ func sanitize(value string) string {
 	return value
 }
 
+func sessionLastMessagePreview(messages []types.Message) (string, string) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == types.RoleSystem || messages[i].Role == types.RoleTool {
+			continue
+		}
+		content := truncateSessionText(sessionMessageContent(messages[i]), 240)
+		if strings.TrimSpace(content) == "" && len(messages[i].ToolCalls) == 0 {
+			continue
+		}
+		return string(messages[i].Role), content
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		content := truncateSessionText(sessionMessageContent(messages[i]), 240)
+		if strings.TrimSpace(content) == "" && len(messages[i].ToolCalls) == 0 {
+			continue
+		}
+		return string(messages[i].Role), content
+	}
+	return "", ""
+}
+
+func sessionMessageContent(msg types.Message) string {
+	if strings.TrimSpace(msg.Content) != "" {
+		return msg.Content
+	}
+	var parts []string
+	for _, part := range msg.Parts {
+		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+			continue
+		}
+		if part.Type == "image_url" && strings.TrimSpace(part.ImageURL) != "" {
+			parts = append(parts, "[image] "+part.ImageURL)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func truncateSessionText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return text[:limit]
+	}
+	return text[:limit-3] + "..."
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func ownerAllowedFromContext(ctx context.Context) bool {
 	convo, ok := tool.ConversationContextFrom(ctx)
 	if !ok {
 		return false
 	}
 	return convo.IsOwner || convo.Trust == types.TrustOwner
+}
+
+func ownerOrSystemAllowedFromContext(ctx context.Context) bool {
+	convo, ok := tool.ConversationContextFrom(ctx)
+	if !ok {
+		return false
+	}
+	return convo.IsOwner || convo.Trust == types.TrustOwner || convo.Trust == types.TrustSystem
 }
 
 func ownerContext(ctx context.Context) context.Context {
