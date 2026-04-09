@@ -70,7 +70,7 @@ type openAIResponse struct {
 	Choices []struct {
 		Message openAIResponseMessage `json:"message"`
 	} `json:"choices"`
-	Usage map[string]int `json:"usage"`
+	Usage map[string]any `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -93,7 +93,7 @@ type openAIEmbeddingResponse struct {
 		Index     int       `json:"index"`
 	} `json:"data"`
 	Model string         `json:"model"`
-	Usage map[string]int `json:"usage"`
+	Usage map[string]any `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -167,7 +167,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 	msg := parsed.Choices[0].Message
 	return &CompletionResponse{
 		Message: fromOpenAIMessage(msg),
-		Usage:   parsed.Usage,
+		Usage:   normalizeUsage(parsed.Usage),
 	}, nil
 }
 
@@ -223,7 +223,7 @@ func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*Embedd
 	}
 	out := &EmbeddingResponse{
 		Model: parsed.Model,
-		Usage: parsed.Usage,
+		Usage: normalizeUsage(parsed.Usage),
 	}
 	for _, item := range parsed.Data {
 		out.Vectors = append(out.Vectors, item.Embedding)
@@ -317,6 +317,41 @@ func toString(v any) string {
 		return s
 	}
 	return ""
+}
+
+func normalizeUsage(raw map[string]any) map[string]int {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]int{}
+	flattenUsage("", raw, out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func flattenUsage(prefix string, raw map[string]any, out map[string]int) {
+	for key, value := range raw {
+		name := key
+		if prefix != "" {
+			name = prefix + "." + key
+		}
+		switch typed := value.(type) {
+		case float64:
+			out[name] = int(typed)
+		case int:
+			out[name] = typed
+		case int64:
+			out[name] = int(typed)
+		case json.Number:
+			if parsed, err := typed.Int64(); err == nil {
+				out[name] = int(parsed)
+			}
+		case map[string]any:
+			flattenUsage(name, typed, out)
+		}
+	}
 }
 
 func (c *OpenAIClient) pick(primary, fallback string) string {
