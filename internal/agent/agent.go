@@ -31,12 +31,13 @@ type Runner struct {
 }
 
 type Request struct {
-	SessionID          string
-	Model              string
-	Prompt             string
-	Parts              []types.ContentPart
-	Context            *types.ConversationContext
-	OnAssistantMessage func(context.Context, types.Message) error
+	SessionID                string
+	Model                    string
+	Prompt                   string
+	Parts                    []types.ContentPart
+	Context                  *types.ConversationContext
+	OnAssistantMessage       func(context.Context, types.Message) error
+	DrainPendingUserMessages func(context.Context, *session.State) ([]types.Message, error)
 }
 
 func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, error) {
@@ -124,6 +125,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 				ToolCallID: result.CallID,
 				Content:    content,
 			})
+		}
+		if req.DrainPendingUserMessages != nil {
+			pending, err := req.DrainPendingUserMessages(ctx, st)
+			if err != nil {
+				return nil, "", err
+			}
+			if len(pending) > 0 {
+				st.Messages = append(st.Messages, pending...)
+			}
 		}
 	}
 	return nil, "", fmt.Errorf("max turns exceeded")

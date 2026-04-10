@@ -34,14 +34,16 @@ func (s *stubClient) Complete(_ context.Context, req model.CompletionRequest) (*
 }
 
 type sequencedStubClient struct {
-	replies []types.Message
-	calls   int
+	replies  []types.Message
+	requests []model.CompletionRequest
+	calls    int
 }
 
-func (s *sequencedStubClient) Complete(_ context.Context, _ model.CompletionRequest) (*model.CompletionResponse, error) {
+func (s *sequencedStubClient) Complete(_ context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
 	if s.calls >= len(s.replies) {
 		return nil, context.DeadlineExceeded
 	}
+	s.requests = append(s.requests, req)
 	msg := s.replies[s.calls]
 	s.calls++
 	return &model.CompletionResponse{Message: msg}, nil
@@ -575,5 +577,81 @@ func TestRunnerEmitsAssistantPrefaceBeforeToolExecution(t *testing.T) {
 	}
 	if !foundTool {
 		t.Fatalf("expected tool result in session, got %#v", state.Messages)
+	}
+}
+
+func TestRunnerDrainsPendingUserMessagesAfterToolExecution(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &sequencedStubClient{
+		replies: []types.Message{
+			{
+				Role:    types.RoleAssistant,
+				Content: "Checking now.",
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "echo", Arguments: `{"text":"demo"}`},
+				},
+			},
+			{
+				Role:    types.RoleAssistant,
+				Content: "Saw the follow-up too.",
+			},
+		},
+	}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     3,
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tools,
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	drained := false
+	_, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-pending",
+		Prompt:    "First question",
+		Context: &types.ConversationContext{
+			Channel:      "telegram",
+			ThreadID:     "thread-1",
+			SenderID:     "lead-1",
+			SenderName:   "Taylor",
+			Trust:        types.TrustExternal,
+			ReplyAsAgent: true,
+		},
+		DrainPendingUserMessages: func(_ context.Context, st *session.State) ([]types.Message, error) {
+			if drained {
+				return nil, nil
+			}
+			drained = true
+			st.Context.SenderName = "Taylor"
+			return []types.Message{{Role: types.RoleUser, Content: "Second question"}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Saw the follow-up too." {
+		t.Fatalf("expected final output, got %q", out)
+	}
+	if client.calls != 2 || len(client.requests) != 2 {
+		t.Fatalf("expected two model calls, got %d", client.calls)
+	}
+	foundPending := false
+	for _, msg := range client.requests[1].Messages {
+		if msg.Role == types.RoleUser && strings.Contains(msg.Content, "Second question") {
+			foundPending = true
+			break
+		}
+	}
+	if !foundPending {
+		t.Fatalf("expected second model call to include drained user message, got %#v", client.requests[1].Messages)
 	}
 }

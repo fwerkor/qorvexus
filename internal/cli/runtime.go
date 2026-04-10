@@ -67,11 +67,18 @@ type appRuntime struct {
 	executablePath  string
 	sourceRoot      string
 	runtimeMu       sync.Mutex
+	socialTurnMu    sync.Mutex
+	socialTurns     map[string]*socialTurnState
 }
 
 const (
 	ownerOnboardingSessionID = "owner-onboarding"
 )
+
+type socialTurnState struct {
+	running bool
+	pending []social.Envelope
+}
 
 type planStepExecutionItem struct {
 	PlanID         string    `json:"plan_id"`
@@ -2534,59 +2541,178 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		Message:     env.Text,
 		OccurredAt:  time.Now().UTC(),
 	})
-	var parts []types.ContentPart
-	for _, image := range env.Images {
-		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
+	if !a.beginSocialTurn(sessionID, env) {
+		return "", nil
 	}
-	deliveredPreface := false
-	_, out, err := a.runner.Run(toolCtx, agent.Request{
-		SessionID: sessionID,
-		Prompt:    env.Text,
-		Parts:     parts,
-		Context:   &env.Context,
-		OnAssistantMessage: func(cbCtx context.Context, msg types.Message) error {
-			if len(msg.ToolCalls) == 0 || strings.TrimSpace(msg.Content) == "" {
+	defer a.finishSocialTurn(sessionID)
+	currentBatch := []social.Envelope{env}
+	var lastOut string
+	for {
+		mergedEnv := mergeSocialEnvelopes(currentBatch)
+		mergedCtx := tool.WithConversationContext(ctx, mergedEnv.Context)
+		var parts []types.ContentPart
+		for _, image := range mergedEnv.Images {
+			parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
+		}
+		deliveredPreface := false
+		_, out, err := a.runner.Run(mergedCtx, agent.Request{
+			SessionID: sessionID,
+			Prompt:    mergedEnv.Text,
+			Parts:     parts,
+			Context:   &mergedEnv.Context,
+			OnAssistantMessage: func(cbCtx context.Context, msg types.Message) error {
+				if len(msg.ToolCalls) == 0 || strings.TrimSpace(msg.Content) == "" {
+					return nil
+				}
+				delivery, routeErr := a.routeSocialReply(cbCtx, mergedEnv, msg.Content)
+				if routeErr != nil {
+					return routeErr
+				}
+				if delivery.Mode != string(social.DeliveryModeSilent) {
+					deliveredPreface = true
+				}
 				return nil
-			}
-			delivery, routeErr := a.routeSocialReply(cbCtx, env, msg.Content)
-			if routeErr != nil {
-				return routeErr
-			}
-			if delivery.Mode != string(social.DeliveryModeSilent) {
-				deliveredPreface = true
-			}
-			return nil
-		},
-	})
-	if err == nil {
-		delivery, routeErr := a.routeSocialReply(toolCtx, env, out)
-		if routeErr != nil {
-			return out, routeErr
-		}
-		replyText := out
-		if delivery.Mode == string(social.DeliveryModeSilent) {
-			replyText = ""
-		}
-		replyMode := delivery.Mode
-		if deliveredPreface && replyMode == string(social.DeliveryModeSend) {
-			replyMode = "send_after_tools"
-		}
-		a.logAudit(toolCtx, "reply_social_message", "ok", sessionID, map[string]any{
-			"channel":   env.Channel,
-			"thread_id": env.ThreadID,
-			"mode":      replyMode,
-			"outbox_id": delivery.OutboxID,
+			},
+			DrainPendingUserMessages: func(_ context.Context, st *session.State) ([]types.Message, error) {
+				pending := a.drainPendingSocialTurns(sessionID)
+				if len(pending) == 0 {
+					return nil, nil
+				}
+				last := pending[len(pending)-1]
+				st.Context = last.Context
+				return socialEnvelopesToMessages(pending), nil
+			},
 		})
-		a.captureSocialInsights(toolCtx, env, replyText, delivery)
-		out = replyText
+		if err == nil {
+			delivery, routeErr := a.routeSocialReply(mergedCtx, mergedEnv, out)
+			if routeErr != nil {
+				return out, routeErr
+			}
+			replyText := out
+			if delivery.Mode == string(social.DeliveryModeSilent) {
+				replyText = ""
+			}
+			replyMode := delivery.Mode
+			if deliveredPreface && replyMode == string(social.DeliveryModeSend) {
+				replyMode = "send_after_tools"
+			}
+			a.logAudit(mergedCtx, "reply_social_message", "ok", sessionID, map[string]any{
+				"channel":   mergedEnv.Channel,
+				"thread_id": mergedEnv.ThreadID,
+				"mode":      replyMode,
+				"outbox_id": delivery.OutboxID,
+			})
+			a.captureSocialInsights(mergedCtx, mergedEnv, replyText, delivery)
+			out = replyText
+		}
+		if err != nil {
+			return out, err
+		}
+		lastOut = out
+		currentBatch = a.drainPendingSocialTurns(sessionID)
+		if len(currentBatch) == 0 {
+			return lastOut, nil
+		}
 	}
-	return out, err
 }
 
 func sanitize(value string) string {
 	value = strings.ToLower(value)
 	value = strings.ReplaceAll(value, " ", "-")
 	return value
+}
+
+func (a *appRuntime) beginSocialTurn(sessionID string, env social.Envelope) bool {
+	a.socialTurnMu.Lock()
+	defer a.socialTurnMu.Unlock()
+	if a.socialTurns == nil {
+		a.socialTurns = map[string]*socialTurnState{}
+	}
+	state, ok := a.socialTurns[sessionID]
+	if !ok {
+		state = &socialTurnState{}
+		a.socialTurns[sessionID] = state
+	}
+	if state.running {
+		state.pending = append(state.pending, env)
+		return false
+	}
+	state.running = true
+	return true
+}
+
+func (a *appRuntime) drainPendingSocialTurns(sessionID string) []social.Envelope {
+	a.socialTurnMu.Lock()
+	defer a.socialTurnMu.Unlock()
+	state, ok := a.socialTurns[sessionID]
+	if !ok || len(state.pending) == 0 {
+		return nil
+	}
+	out := append([]social.Envelope(nil), state.pending...)
+	state.pending = nil
+	return out
+}
+
+func (a *appRuntime) finishSocialTurn(sessionID string) {
+	a.socialTurnMu.Lock()
+	defer a.socialTurnMu.Unlock()
+	state, ok := a.socialTurns[sessionID]
+	if !ok {
+		return
+	}
+	if len(state.pending) == 0 {
+		delete(a.socialTurns, sessionID)
+		return
+	}
+	state.running = false
+}
+
+func socialEnvelopesToMessages(batch []social.Envelope) []types.Message {
+	if len(batch) == 0 {
+		return nil
+	}
+	out := make([]types.Message, 0, len(batch))
+	for _, env := range batch {
+		msg := types.Message{Role: types.RoleUser, Content: env.Text}
+		if len(env.Images) > 0 {
+			msg.Parts = make([]types.ContentPart, 0, len(env.Images)+1)
+			if strings.TrimSpace(env.Text) != "" {
+				msg.Parts = append(msg.Parts, types.ContentPart{Type: "text", Text: env.Text})
+				msg.Content = ""
+			}
+			for _, image := range env.Images {
+				msg.Parts = append(msg.Parts, types.ContentPart{Type: "image_url", ImageURL: image})
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func mergeSocialEnvelopes(batch []social.Envelope) social.Envelope {
+	if len(batch) == 0 {
+		return social.Envelope{}
+	}
+	if len(batch) == 1 {
+		return batch[0]
+	}
+	merged := batch[0]
+	texts := make([]string, 0, len(batch))
+	images := make([]string, 0)
+	for i, env := range batch {
+		if trimmed := strings.TrimSpace(env.Text); trimmed != "" {
+			texts = append(texts, fmt.Sprintf("Message %d:\n%s", i+1, trimmed))
+		}
+		images = append(images, env.Images...)
+		if env.ReceivedAt.After(merged.ReceivedAt) {
+			merged.ReceivedAt = env.ReceivedAt
+		}
+		merged.ID = env.ID
+		merged.Context = env.Context
+	}
+	merged.Images = images
+	merged.Text = strings.Join(texts, "\n\n")
+	return merged
 }
 
 func sessionLastMessagePreview(messages []types.Message) (string, string) {
