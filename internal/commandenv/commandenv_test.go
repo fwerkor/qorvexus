@@ -35,3 +35,20 @@ func TestResolveExecutableUsesProvidedPath(t *testing.T) {
 		t.Fatalf("expected %s, got %s", scriptPath, resolved)
 	}
 }
+
+func TestAugmentedEnvAddsDefaultGoEnv(t *testing.T) {
+	env := AugmentedEnv([]string{"HOME=/tmp/qorvexus-home"})
+	values := map[string]string{}
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if got := values["GOPATH"]; got != "/tmp/qorvexus-home/go" {
+		t.Fatalf("expected GOPATH default, got %q", got)
+	}
+	if got := values["GOMODCACHE"]; got != "/tmp/qorvexus-home/go/pkg/mod" {
+		t.Fatalf("expected GOMODCACHE default, got %q", got)
+	}
+}

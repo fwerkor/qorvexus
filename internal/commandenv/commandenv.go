@@ -38,8 +38,15 @@ func AugmentedEnv(base []string) []string {
 		envMap[key] = value
 	}
 	envMap["PATH"] = augmentPath(envMap["PATH"])
+	ensureHome(envMap)
+	ensureGoEnv(envMap)
 	if !contains(order, "PATH") {
 		order = append(order, "PATH")
+	}
+	for _, key := range []string{"HOME", "GOPATH", "GOMODCACHE"} {
+		if _, ok := envMap[key]; ok && !contains(order, key) {
+			order = append(order, key)
+		}
 	}
 	out := make([]string, 0, len(order))
 	for _, key := range order {
@@ -128,6 +135,28 @@ func augmentPath(existing string) string {
 		out = append(out, part)
 	}
 	return strings.Join(out, string(os.PathListSeparator))
+}
+
+func ensureHome(envMap map[string]string) {
+	if strings.TrimSpace(envMap["HOME"]) != "" {
+		return
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		envMap["HOME"] = home
+	}
+}
+
+func ensureGoEnv(envMap map[string]string) {
+	home := strings.TrimSpace(envMap["HOME"])
+	if home == "" {
+		return
+	}
+	if strings.TrimSpace(envMap["GOPATH"]) == "" {
+		envMap["GOPATH"] = filepath.Join(home, "go")
+	}
+	if strings.TrimSpace(envMap["GOMODCACHE"]) == "" {
+		envMap["GOMODCACHE"] = filepath.Join(envMap["GOPATH"], "pkg", "mod")
+	}
 }
 
 func isExecutable(mode os.FileMode) bool {
