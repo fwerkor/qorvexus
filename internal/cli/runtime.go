@@ -2576,6 +2576,7 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 				}
 				if delivery.Mode != string(social.DeliveryModeSilent) {
 					deliveredPreface = true
+					a.bumpSocialTyping(cbCtx, mergedEnv)
 				}
 				return nil
 			},
@@ -2626,14 +2627,8 @@ func (a *appRuntime) startSocialTyping(ctx context.Context, env social.Envelope)
 	if a == nil || a.connectors == nil {
 		return func() {}
 	}
-	msg := social.OutboundMessage{
-		Channel:   env.Channel,
-		ThreadID:  env.ThreadID,
-		Recipient: env.SenderID,
-		Context:   env.Context,
-	}
 	typingCtx, cancel := context.WithCancel(ctx)
-	_ = a.connectors.SendTyping(typingCtx, env.Channel, msg)
+	a.bumpSocialTyping(typingCtx, env)
 	go func() {
 		ticker := time.NewTicker(4 * time.Second)
 		defer ticker.Stop()
@@ -2642,11 +2637,23 @@ func (a *appRuntime) startSocialTyping(ctx context.Context, env social.Envelope)
 			case <-typingCtx.Done():
 				return
 			case <-ticker.C:
-				_ = a.connectors.SendTyping(typingCtx, env.Channel, msg)
+				a.bumpSocialTyping(typingCtx, env)
 			}
 		}
 	}()
 	return cancel
+}
+
+func (a *appRuntime) bumpSocialTyping(ctx context.Context, env social.Envelope) {
+	if a == nil || a.connectors == nil {
+		return
+	}
+	_ = a.connectors.SendTyping(ctx, env.Channel, social.OutboundMessage{
+		Channel:   env.Channel,
+		ThreadID:  env.ThreadID,
+		Recipient: env.SenderID,
+		Context:   env.Context,
+	})
 }
 
 func sanitize(value string) string {
