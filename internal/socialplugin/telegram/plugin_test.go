@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -301,5 +302,34 @@ func TestPollerUsesBotPath(t *testing.T) {
 	}
 	if sawPath != fmt.Sprintf("/bot%s/deleteWebhook", "abc") {
 		t.Fatalf("unexpected path: %s", sawPath)
+	}
+}
+
+func TestConnectorSendUsesMarkdownParseMode(t *testing.T) {
+	var payload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+	}))
+	defer srv.Close()
+
+	conn := NewConnector("abc")
+	conn.apiBaseURL = srv.URL
+	_, err := conn.Send(context.Background(), social.OutboundMessage{
+		ThreadID: "123",
+		Text:     "*hello* `code`",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["parse_mode"]; got != "Markdown" {
+		t.Fatalf("expected Markdown parse_mode, got %#v", got)
+	}
+	if got := payload["chat_id"]; got != "123" {
+		t.Fatalf("expected chat id 123, got %#v", got)
 	}
 }

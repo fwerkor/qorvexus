@@ -21,6 +21,7 @@ type Plugin struct{}
 
 type Connector struct {
 	token      string
+	apiBaseURL string
 	httpClient *http.Client
 }
 
@@ -76,7 +77,8 @@ func (p *Plugin) Setup(cfg config.SocialConfig, registry *social.Registry, handl
 
 func NewConnector(token string) *Connector {
 	return &Connector{
-		token: token,
+		token:      token,
+		apiBaseURL: "https://api.telegram.org",
 		httpClient: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -147,14 +149,15 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 		return "", fmt.Errorf("telegram requires thread_id or recipient as chat id")
 	}
 	payload := map[string]any{
-		"chat_id": chatID,
-		"text":    msg.Text,
+		"chat_id":    chatID,
+		"text":       msg.Text,
+		"parse_mode": "Markdown",
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+c.token+"/sendMessage", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.apiBaseURL, "/")+"/bot"+c.token+"/sendMessage", bytes.NewReader(raw))
 	if err != nil {
 		return "", err
 	}
