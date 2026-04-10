@@ -27,7 +27,7 @@ func NewCommandTool(cfg config.ToolsConfig, engine *policy.Engine) *CommandTool 
 func (t *CommandTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "run_command",
-		Description: "Run a command on the local system. Use only when direct system interaction is necessary.",
+		Description: "Run a short-lived command on the local system. Prefer this for brief synchronous shell work only; for long-running commands such as apt update, installs, servers, watchers, or builds, use manage_process with action=start instead because this tool is timeout-bound.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

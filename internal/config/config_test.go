@@ -38,10 +38,13 @@ agent:
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
 	}
-	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session", "grant_owner_identity"} {
+	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session", "grant_owner_identity", "manage_process", "run_command"} {
 		if !strings.Contains(cfg.Agent.SystemPrompt, needle) {
 			t.Fatalf("expected default system prompt to mention %q, got %q", needle, cfg.Agent.SystemPrompt)
 		}
+	}
+	if !strings.Contains(cfg.Agent.SystemPrompt, "apt update") {
+		t.Fatalf("expected default system prompt to steer long commands like apt update away from run_command, got %q", cfg.Agent.SystemPrompt)
 	}
 	if cfg.Agent.SummarizerModel != "" {
 		t.Fatalf("expected summarizer model to remain optional by default, got %q", cfg.Agent.SummarizerModel)

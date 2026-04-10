@@ -349,7 +349,7 @@ func NewProcessTool(cfg config.ToolsConfig, engine *policy.Engine) *ProcessTool 
 func (t *ProcessTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "manage_process",
-		Description: "List, inspect, start, and signal local processes for stronger device control without dropping to ad-hoc shell commands.",
+		Description: "List, inspect, start, and signal local processes for stronger device control without dropping to ad-hoc shell commands. Use action=start for long-running or stateful commands such as apt update, package installs, servers, watchers, and builds that should continue in the background.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
