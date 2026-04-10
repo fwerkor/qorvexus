@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,45 @@ func (s *stubClient) Complete(_ context.Context, req model.CompletionRequest) (*
 			Content: s.reply,
 		},
 	}, nil
+}
+
+type sequencedStubClient struct {
+	replies []types.Message
+	calls   int
+}
+
+func (s *sequencedStubClient) Complete(_ context.Context, _ model.CompletionRequest) (*model.CompletionResponse, error) {
+	if s.calls >= len(s.replies) {
+		return nil, context.DeadlineExceeded
+	}
+	msg := s.replies[s.calls]
+	s.calls++
+	return &model.CompletionResponse{Message: msg}, nil
+}
+
+type echoTool struct{}
+
+func (echoTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "echo",
+		Description: "Echo input.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"text": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (echoTool) Invoke(_ context.Context, raw json.RawMessage) (string, error) {
+	var input struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", err
+	}
+	return "echo:" + input.Text, nil
 }
 
 func TestPickModelUsesVisionFallback(t *testing.T) {
@@ -460,5 +500,80 @@ func TestRunnerSanitizesThinkingFromLoadedHistory(t *testing.T) {
 	}
 	if !foundVisible {
 		t.Fatalf("expected sanitized visible assistant history to remain, got %#v", client.lastRequest.Messages)
+	}
+}
+
+func TestRunnerEmitsAssistantPrefaceBeforeToolExecution(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &sequencedStubClient{
+		replies: []types.Message{
+			{
+				Role:    types.RoleAssistant,
+				Content: "I will check that first.",
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "echo", Arguments: `{"text":"demo"}`},
+				},
+			},
+			{
+				Role:    types.RoleAssistant,
+				Content: "Done checking.",
+			},
+		},
+	}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     3,
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tools,
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	var emitted []string
+	state, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-preface",
+		Prompt:    "Check now",
+		Context: &types.ConversationContext{
+			Channel:      "telegram",
+			ThreadID:     "thread-1",
+			SenderID:     "lead-1",
+			SenderName:   "Taylor",
+			Trust:        types.TrustExternal,
+			ReplyAsAgent: true,
+		},
+		OnAssistantMessage: func(_ context.Context, msg types.Message) error {
+			emitted = append(emitted, msg.Content)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emitted) != 1 || emitted[0] != "I will check that first." {
+		t.Fatalf("expected tool-preface callback once, got %#v", emitted)
+	}
+	if out != "Done checking." {
+		t.Fatalf("expected final output, got %q", out)
+	}
+	if len(state.Messages) < 4 {
+		t.Fatalf("expected conversation with tool steps, got %#v", state.Messages)
+	}
+	foundTool := false
+	for _, msg := range state.Messages {
+		if msg.Role == types.RoleTool && strings.Contains(msg.Content, "echo:demo") {
+			foundTool = true
+			break
+		}
+	}
+	if !foundTool {
+		t.Fatalf("expected tool result in session, got %#v", state.Messages)
 	}
 }

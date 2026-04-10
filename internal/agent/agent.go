@@ -31,11 +31,12 @@ type Runner struct {
 }
 
 type Request struct {
-	SessionID string
-	Model     string
-	Prompt    string
-	Parts     []types.ContentPart
-	Context   *types.ConversationContext
+	SessionID          string
+	Model              string
+	Prompt             string
+	Parts              []types.ContentPart
+	Context            *types.ConversationContext
+	OnAssistantMessage func(context.Context, types.Message) error
 }
 
 func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, error) {
@@ -89,6 +90,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 				return nil, "", err
 			}
 			return st, strings.TrimSpace(msg.Content), nil
+		}
+
+		if req.OnAssistantMessage != nil && strings.TrimSpace(msg.Content) != "" {
+			callbackCtx := tool.WithSessionID(ctx, st.ID)
+			if !isZeroContext(st.Context) {
+				callbackCtx = tool.WithConversationContext(callbackCtx, st.Context)
+			}
+			if err := req.OnAssistantMessage(callbackCtx, msg); err != nil {
+				return nil, "", err
+			}
 		}
 
 		st.Messages = append(st.Messages, types.Message{

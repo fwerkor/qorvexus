@@ -2538,11 +2538,25 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 	for _, image := range env.Images {
 		parts = append(parts, types.ContentPart{Type: "image_url", ImageURL: image})
 	}
+	deliveredPreface := false
 	_, out, err := a.runner.Run(toolCtx, agent.Request{
 		SessionID: sessionID,
 		Prompt:    env.Text,
 		Parts:     parts,
 		Context:   &env.Context,
+		OnAssistantMessage: func(cbCtx context.Context, msg types.Message) error {
+			if len(msg.ToolCalls) == 0 || strings.TrimSpace(msg.Content) == "" {
+				return nil
+			}
+			delivery, routeErr := a.routeSocialReply(cbCtx, env, msg.Content)
+			if routeErr != nil {
+				return routeErr
+			}
+			if delivery.Mode != string(social.DeliveryModeSilent) {
+				deliveredPreface = true
+			}
+			return nil
+		},
 	})
 	if err == nil {
 		delivery, routeErr := a.routeSocialReply(toolCtx, env, out)
@@ -2553,10 +2567,14 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		if delivery.Mode == string(social.DeliveryModeSilent) {
 			replyText = ""
 		}
+		replyMode := delivery.Mode
+		if deliveredPreface && replyMode == string(social.DeliveryModeSend) {
+			replyMode = "send_after_tools"
+		}
 		a.logAudit(toolCtx, "reply_social_message", "ok", sessionID, map[string]any{
 			"channel":   env.Channel,
 			"thread_id": env.ThreadID,
-			"mode":      delivery.Mode,
+			"mode":      replyMode,
 			"outbox_id": delivery.OutboxID,
 		})
 		a.captureSocialInsights(toolCtx, env, replyText, delivery)
