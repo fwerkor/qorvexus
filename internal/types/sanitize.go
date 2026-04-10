@@ -8,6 +8,7 @@ import (
 var (
 	reasoningTagPattern   = regexp.MustCompile(`(?is)<(?:think|thinking|reasoning|analysis)\b[^>]*>.*?</(?:think|thinking|reasoning|analysis)>`)
 	reasoningFencePattern = regexp.MustCompile("(?is)```(?:thinking|reasoning|analysis)\\s+.*?```")
+	controlTokenPattern   = regexp.MustCompile(`<\|[^|\r\n]{1,128}\|>`)
 )
 
 func SanitizeAssistantMessage(msg Message) Message {
@@ -62,6 +63,7 @@ func sanitizeReasoningText(value string) string {
 	}
 	cleaned := reasoningTagPattern.ReplaceAllString(value, "")
 	cleaned = reasoningFencePattern.ReplaceAllString(cleaned, "")
+	cleaned = controlTokenPattern.ReplaceAllString(cleaned, "")
 	lines := strings.Split(cleaned, "\n")
 	out := make([]string, 0, len(lines))
 	blank := false

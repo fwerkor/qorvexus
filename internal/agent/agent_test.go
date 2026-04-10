@@ -447,6 +447,52 @@ func TestRunnerStripsThinkingBlocksBeforeSavingSession(t *testing.T) {
 	}
 }
 
+func TestRunnerStripsControlTokensBeforeSavingSession(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "<|channel|>\nFinal answer."}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+
+	store := session.NewStore(tempDir)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	state, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-control-token-strip",
+		Prompt:    "Say hello",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Final answer." {
+		t.Fatalf("expected sanitized assistant output, got %q", out)
+	}
+	if got := state.Messages[len(state.Messages)-1].Content; got != "Final answer." {
+		t.Fatalf("expected saved assistant message to be sanitized, got %q", got)
+	}
+	loaded, err := store.Load("sess-control-token-strip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "Final answer." {
+		t.Fatalf("expected persisted assistant message to be sanitized, got %q", got)
+	}
+}
+
 func TestRunnerSanitizesThinkingFromLoadedHistory(t *testing.T) {
 	tempDir := t.TempDir()
 	store := session.NewStore(tempDir)
