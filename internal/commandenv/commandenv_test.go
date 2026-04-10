@@ -52,3 +52,16 @@ func TestAugmentedEnvAddsDefaultGoEnv(t *testing.T) {
 		t.Fatalf("expected GOMODCACHE default, got %q", got)
 	}
 }
+
+func TestAugmentedEnvAddsNVMNodeBinToPath(t *testing.T) {
+	tempDir := t.TempDir()
+	nvmBin := filepath.Join(tempDir, ".nvm", "versions", "node", "v24.14.1", "bin")
+	if err := os.MkdirAll(nvmBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := AugmentedEnv([]string{"HOME=" + tempDir})
+	pathValue := pathValueFromEnv(env)
+	if !strings.Contains(pathValue, nvmBin) {
+		t.Fatalf("expected PATH to contain %s, got %q", nvmBin, pathValue)
+	}
+}

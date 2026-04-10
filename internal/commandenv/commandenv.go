@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -38,8 +39,8 @@ func AugmentedEnv(base []string) []string {
 		}
 		envMap[key] = value
 	}
-	envMap["PATH"] = augmentPath(envMap["PATH"])
 	ensureHome(envMap)
+	envMap["PATH"] = augmentPath(envMap["PATH"], envMap["HOME"])
 	ensureGoEnv(envMap)
 	if !contains(order, "PATH") {
 		order = append(order, "PATH")
@@ -117,14 +118,16 @@ func pathValueFromEnv(env []string) string {
 			return value
 		}
 	}
-	return augmentPath("")
+	return augmentPath("", "")
 }
 
-func augmentPath(existing string) string {
+func augmentPath(existing string, home string) string {
 	parts := filepath.SplitList(existing)
 	seen := map[string]struct{}{}
-	out := make([]string, 0, len(parts)+len(defaultPathEntries))
-	for _, part := range append(parts, defaultPathEntries...) {
+	out := make([]string, 0, len(parts)+len(defaultPathEntries)+8)
+	candidates := append(parts, additionalPathEntries(home)...)
+	candidates = append(candidates, defaultPathEntries...)
+	for _, part := range candidates {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -136,6 +139,45 @@ func augmentPath(existing string) string {
 		out = append(out, part)
 	}
 	return strings.Join(out, string(os.PathListSeparator))
+}
+
+func additionalPathEntries(home string) []string {
+	home = strings.TrimSpace(home)
+	if home == "" {
+		return nil
+	}
+	entries := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, "bin"),
+		filepath.Join(home, ".cargo", "bin"),
+		filepath.Join(home, "go", "bin"),
+	}
+	entries = append(entries, nvmBinEntries(home)...)
+	return existingDirs(entries)
+}
+
+func nvmBinEntries(home string) []string {
+	pattern := filepath.Join(home, ".nvm", "versions", "node", "*", "bin")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return nil
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+	currentBin := filepath.Join(home, ".nvm", "versions", "node", "current", "bin")
+	if pathExists(currentBin) {
+		matches = append([]string{currentBin}, matches...)
+	}
+	return matches
+}
+
+func existingDirs(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if pathExists(entry) {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func ensureHome(envMap map[string]string) {
@@ -162,6 +204,11 @@ func ensureGoEnv(envMap map[string]string) {
 
 func isExecutable(mode os.FileMode) bool {
 	return mode&0o111 != 0
+}
+
+func pathExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func contains(items []string, needle string) bool {
