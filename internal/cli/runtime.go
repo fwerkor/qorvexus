@@ -2593,6 +2593,7 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		if err == nil {
 			delivery, routeErr := a.routeSocialReply(mergedCtx, mergedEnv, out)
 			if routeErr != nil {
+				a.notifySocialContinuationError(mergedCtx, mergedEnv, routeErr)
 				return out, routeErr
 			}
 			replyText := out
@@ -2613,9 +2614,7 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 			out = replyText
 		}
 		if err != nil {
-			if deliveredPreface {
-				a.notifySocialContinuationError(mergedCtx, mergedEnv, err)
-			}
+			a.notifySocialContinuationError(mergedCtx, mergedEnv, err)
 			return out, err
 		}
 		lastOut = out

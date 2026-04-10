@@ -75,6 +75,67 @@ func TestHandleEnvelopeSendsFailureNoticeAfterPrefaceError(t *testing.T) {
 	}
 }
 
+func TestHandleEnvelopeSendsFailureNoticeWhenFinalDeliveryFailsAfterToolCall(t *testing.T) {
+	tempDir := t.TempDir()
+	autoSend := true
+	cfg := &config.Config{
+		DataDir: tempDir,
+		Agent: config.AgentConfig{
+			DefaultModel: "primary",
+			MaxTurns:     3,
+		},
+		Social: config.SocialConfig{
+			AutoSendExternalReplies: &autoSend,
+		},
+	}
+	registry := model.NewRegistry()
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, &finalDeliveryFailureClient{})
+	connectors := social.NewRegistry()
+	conn := &capturingConnector{
+		failOn: map[int]error{
+			2: errors.New("telegram sendMessage returned 400 Bad Request: can't parse entities"),
+		},
+	}
+	connectors.Register(conn)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	app := &appRuntime{
+		cfg:         cfg,
+		runner:      &agent.Runner{Config: cfg, Models: registry, Sessions: session.NewStore(tempDir), Tools: tools, Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9}},
+		connectors:  connectors,
+		socialGraph: social.NewGraphStore(filepath.Join(tempDir, "graph.json")),
+		socialTurns: map[string]*socialTurnState{},
+	}
+
+	_, err := app.HandleEnvelope(context.Background(), social.Envelope{
+		Channel:    "telegram",
+		ThreadID:   "thread-1",
+		SenderID:   "user-1",
+		SenderName: "Ada",
+		Text:       "hello",
+		Context: types.ConversationContext{
+			Channel:      "telegram",
+			ThreadID:     "thread-1",
+			SenderID:     "user-1",
+			SenderName:   "Ada",
+			Trust:        types.TrustExternal,
+			ReplyAsAgent: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected handle envelope to return error")
+	}
+	if len(conn.messages) != 2 {
+		t.Fatalf("expected preface and failure notice after final delivery error, got %#v", conn.messages)
+	}
+	if conn.messages[0].Text != "Checking now." {
+		t.Fatalf("unexpected preface message: %#v", conn.messages[0])
+	}
+	if conn.messages[1].Text == "" || !containsString(conn.messages[1].Text, "I ran into an error while continuing that task") {
+		t.Fatalf("unexpected failure notice: %#v", conn.messages[1])
+	}
+}
+
 type failingAfterPrefaceClient struct {
 	calls int
 }
@@ -97,13 +158,44 @@ func (c *failingAfterPrefaceClient) Complete(_ context.Context, _ model.Completi
 
 type capturingConnector struct {
 	messages []social.OutboundMessage
+	sends    int
+	failOn   map[int]error
 }
 
 func (c *capturingConnector) Name() string { return "telegram" }
 
 func (c *capturingConnector) Send(_ context.Context, msg social.OutboundMessage) (string, error) {
+	c.sends++
+	if err, ok := c.failOn[c.sends]; ok {
+		return "", err
+	}
 	c.messages = append(c.messages, msg)
 	return "ok", nil
+}
+
+type finalDeliveryFailureClient struct {
+	calls int
+}
+
+func (c *finalDeliveryFailureClient) Complete(_ context.Context, _ model.CompletionRequest) (*model.CompletionResponse, error) {
+	if c.calls == 0 {
+		c.calls++
+		return &model.CompletionResponse{
+			Message: types.Message{
+				Role:    types.RoleAssistant,
+				Content: "Checking now.",
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "echo", Arguments: `{"text":"demo"}`},
+				},
+			},
+		}, nil
+	}
+	return &model.CompletionResponse{
+		Message: types.Message{
+			Role:    types.RoleAssistant,
+			Content: "Final answer with [brackets] that should still trigger a fallback notice if delivery fails.",
+		},
+	}, nil
 }
 
 type echoTool struct{}

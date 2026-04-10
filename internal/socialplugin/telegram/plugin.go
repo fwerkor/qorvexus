@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,10 @@ type Connector struct {
 	apiBaseURL string
 	httpClient *http.Client
 }
+
+const telegramMaxMessageChars = 4096
+
+var telegramParseModes = []string{"MarkdownV2", "Markdown", ""}
 
 type WebhookAdapter struct {
 	path          string
@@ -148,29 +153,74 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 	if chatID == "" {
 		return "", fmt.Errorf("telegram requires thread_id or recipient as chat id")
 	}
+	chunks := splitTelegramMessage(msg.Text, telegramMaxMessageChars)
+	for _, chunk := range chunks {
+		if err := c.sendWithFallback(ctx, chatID, chunk); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("sent %d telegram message(s) to %s", len(chunks), chatID), nil
+}
+
+func (c *Connector) sendWithFallback(ctx context.Context, chatID string, text string) error {
+	var lastErr error
+	for idx, parseMode := range telegramParseModes {
+		err := c.sendChunk(ctx, chatID, text, parseMode)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		var sendErr *telegramSendError
+		if !errors.As(err, &sendErr) || !sendErr.markdownParseFailure() || idx == len(telegramParseModes)-1 {
+			return err
+		}
+	}
+	return lastErr
+}
+
+func (c *Connector) sendChunk(ctx context.Context, chatID string, text string, parseMode string) error {
 	payload := map[string]any{
-		"chat_id":    chatID,
-		"text":       msg.Text,
-		"parse_mode": "Markdown",
+		"chat_id": chatID,
+		"text":    text,
+	}
+	if strings.TrimSpace(parseMode) != "" {
+		payload["parse_mode"] = parseMode
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.apiBaseURL, "/")+"/bot"+c.token+"/sendMessage", bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("telegram sendMessage returned %s", resp.Status)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return readErr
 	}
-	return fmt.Sprintf("sent telegram message to %s", chatID), nil
+	var parsed apiResponse[json.RawMessage]
+	_ = json.Unmarshal(body, &parsed)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &telegramSendError{
+			status:      resp.Status,
+			description: strings.TrimSpace(parsed.Description),
+			raw:         strings.TrimSpace(string(body)),
+		}
+	}
+	if !parsed.OK {
+		return &telegramSendError{
+			status:      resp.Status,
+			description: strings.TrimSpace(parsed.Description),
+			raw:         strings.TrimSpace(string(body)),
+		}
+	}
+	return nil
 }
 
 func (c *Connector) SendTyping(ctx context.Context, msg social.OutboundMessage) error {
@@ -207,6 +257,76 @@ func (c *Connector) SendTyping(ctx context.Context, msg social.OutboundMessage) 
 
 func WebhookURL(baseURL string, path string) string {
 	return strings.TrimRight(baseURL, "/") + ensureLeadingSlash(path)
+}
+
+type telegramSendError struct {
+	status      string
+	description string
+	raw         string
+}
+
+func (e *telegramSendError) Error() string {
+	if e == nil {
+		return ""
+	}
+	detail := strings.TrimSpace(e.description)
+	if detail == "" {
+		detail = strings.TrimSpace(e.raw)
+	}
+	if detail == "" {
+		return fmt.Sprintf("telegram sendMessage returned %s", e.status)
+	}
+	return fmt.Sprintf("telegram sendMessage returned %s: %s", e.status, detail)
+}
+
+func (e *telegramSendError) markdownParseFailure() bool {
+	if e == nil {
+		return false
+	}
+	detail := strings.ToLower(strings.TrimSpace(e.description + " " + e.raw))
+	return strings.Contains(detail, "parse entities") ||
+		strings.Contains(detail, "can't parse") ||
+		strings.Contains(detail, "can't find end") ||
+		strings.Contains(detail, "unsupported start tag")
+}
+
+func splitTelegramMessage(text string, limit int) []string {
+	if limit <= 0 {
+		return []string{text}
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return []string{text}
+	}
+	out := make([]string, 0, len(runes)/limit+1)
+	for start := 0; start < len(runes); {
+		end := start + limit
+		if end >= len(runes) {
+			out = append(out, string(runes[start:]))
+			break
+		}
+		split := findTelegramSplit(runes, start, end)
+		if split <= start {
+			split = end
+		}
+		out = append(out, string(runes[start:split]))
+		start = split
+	}
+	return out
+}
+
+func findTelegramSplit(runes []rune, start int, end int) int {
+	for i := end - 1; i > start; i-- {
+		if runes[i] == '\n' {
+			return i + 1
+		}
+	}
+	for i := end - 1; i > start; i-- {
+		if runes[i] == ' ' || runes[i] == '\t' {
+			return i + 1
+		}
+	}
+	return end
 }
 
 func (p *Poller) Run(ctx context.Context, handle func(context.Context, social.Envelope) error) error {
