@@ -173,6 +173,38 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 	return fmt.Sprintf("sent telegram message to %s", chatID), nil
 }
 
+func (c *Connector) SendTyping(ctx context.Context, msg social.OutboundMessage) error {
+	chatID := strings.TrimSpace(msg.ThreadID)
+	if chatID == "" {
+		chatID = strings.TrimSpace(msg.Recipient)
+	}
+	if chatID == "" {
+		return fmt.Errorf("telegram requires thread_id or recipient as chat id")
+	}
+	payload := map[string]any{
+		"chat_id": chatID,
+		"action":  "typing",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.apiBaseURL, "/")+"/bot"+c.token+"/sendChatAction", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telegram sendChatAction returned %s", resp.Status)
+	}
+	return nil
+}
+
 func WebhookURL(baseURL string, path string) string {
 	return strings.TrimRight(baseURL, "/") + ensureLeadingSlash(path)
 }

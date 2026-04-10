@@ -2545,6 +2545,8 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		return "", nil
 	}
 	defer a.finishSocialTurn(sessionID)
+	stopTyping := a.startSocialTyping(toolCtx, env)
+	defer stopTyping()
 	currentBatch := []social.Envelope{env}
 	var lastOut string
 	for {
@@ -2614,6 +2616,33 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 			return lastOut, nil
 		}
 	}
+}
+
+func (a *appRuntime) startSocialTyping(ctx context.Context, env social.Envelope) func() {
+	if a == nil || a.connectors == nil {
+		return func() {}
+	}
+	msg := social.OutboundMessage{
+		Channel:   env.Channel,
+		ThreadID:  env.ThreadID,
+		Recipient: env.SenderID,
+		Context:   env.Context,
+	}
+	typingCtx, cancel := context.WithCancel(ctx)
+	_ = a.connectors.SendTyping(typingCtx, env.Channel, msg)
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-typingCtx.Done():
+				return
+			case <-ticker.C:
+				_ = a.connectors.SendTyping(typingCtx, env.Channel, msg)
+			}
+		}
+	}()
+	return cancel
 }
 
 func sanitize(value string) string {

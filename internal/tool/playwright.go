@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/types"
 )
@@ -300,8 +301,11 @@ func runPlaywrightExecution(ctx context.Context, cfg config.ToolsConfig, manager
 
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, cfg.CommandShell, "-lc", cfg.PlaywrightCommand)
-	cmd.Env = append(os.Environ(),
+	cmd, err := commandenv.ShellCommandContext(cmdCtx, cfg.CommandShell, cfg.PlaywrightCommand)
+	if err != nil {
+		return "", err
+	}
+	cmd.Env = append(cmd.Env,
 		"QORVEXUS_PLAYWRIGHT_MODE="+req.Mode,
 		"QORVEXUS_PLAYWRIGHT_SCRIPT_FILE="+payloadPath,
 		"QORVEXUS_PLAYWRIGHT_ACTIONS_FILE="+payloadPath,
@@ -412,15 +416,18 @@ func writePlaywrightRuntimePackage(runtimeDir string) error {
 }
 
 func runCommandInDir(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd, err := commandenv.CommandContext(ctx, name, args...)
+	if err != nil {
+		return "", err
+	}
 	cmd.Dir = dir
 	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = append(cmd.Env, env...)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	out := strings.TrimSpace(stdout.String())
 	if serr := strings.TrimSpace(stderr.String()); serr != "" {
 		if out != "" {

@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"strings"
 	"time"
 
+	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
@@ -64,11 +64,14 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, t.cfg.CommandShell, "-lc", input.Command)
+	cmd, err := commandenv.ShellCommandContext(cmdCtx, t.cfg.CommandShell, input.Command)
+	if err != nil {
+		return "", err
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	out := stdout.String()
 	if serr := strings.TrimSpace(stderr.String()); serr != "" {
 		if out != "" {

@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"qorvexus/internal/commandenv"
 	"qorvexus/internal/runtimecontrol"
 )
 
@@ -135,13 +135,16 @@ func (a *appRuntime) selfUpdateSourceRoot() (string, error) {
 }
 
 func (a *appRuntime) runLocalCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd, err := commandenv.CommandContext(ctx, name, args...)
+	if err != nil {
+		return "", err
+	}
 	cmd.Dir = dir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	out := strings.TrimSpace(stdout.String())
 	if serr := strings.TrimSpace(stderr.String()); serr != "" {
 		if out != "" {

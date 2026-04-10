@@ -30,3 +30,19 @@ func TestPolicyBlocksHighRiskCommandForNonOwner(t *testing.T) {
 		t.Fatalf("expected deny for non-owner high-risk command, got %s", result.Verdict)
 	}
 }
+
+func TestPolicyAllowsSudoForOwner(t *testing.T) {
+	engine := NewEngine(config.ToolsConfig{})
+	result := engine.EvaluateCommandForContext("sudo apt update", types.ConversationContext{Trust: types.TrustOwner, IsOwner: true})
+	if result.Verdict != VerdictAllow {
+		t.Fatalf("expected allow for owner sudo command, got %s", result.Verdict)
+	}
+}
+
+func TestPolicyStillBlocksSelfDestructiveCommandsWithSudo(t *testing.T) {
+	engine := NewEngine(config.ToolsConfig{})
+	result := engine.EvaluateCommandForContext("sudo rm -rf /", types.ConversationContext{Trust: types.TrustOwner, IsOwner: true})
+	if result.Verdict != VerdictDeny {
+		t.Fatalf("expected deny for destructive sudo command, got %s", result.Verdict)
+	}
+}

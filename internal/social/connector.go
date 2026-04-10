@@ -28,6 +28,10 @@ type Connector interface {
 	Send(ctx context.Context, msg OutboundMessage) (string, error)
 }
 
+type TypingIndicator interface {
+	SendTyping(ctx context.Context, msg OutboundMessage) error
+}
+
 type WebhookAdapter interface {
 	Name() string
 	Path() string
@@ -60,13 +64,23 @@ func (r *Registry) RegisterWebhook(adapter WebhookAdapter) {
 }
 
 func (r *Registry) Send(ctx context.Context, channel string, msg OutboundMessage) (string, error) {
-	r.mu.RLock()
-	connector, ok := r.connectors[channel]
-	r.mu.RUnlock()
+	connector, ok := r.connector(channel)
 	if !ok {
 		return "", fmt.Errorf("social connector %q not found", channel)
 	}
 	return connector.Send(ctx, msg)
+}
+
+func (r *Registry) SendTyping(ctx context.Context, channel string, msg OutboundMessage) error {
+	connector, ok := r.connector(channel)
+	if !ok {
+		return fmt.Errorf("social connector %q not found", channel)
+	}
+	typing, ok := connector.(TypingIndicator)
+	if !ok {
+		return nil
+	}
+	return typing.SendTyping(ctx, msg)
 }
 
 func (r *Registry) List() []string {
@@ -87,6 +101,13 @@ func (r *Registry) Webhooks() []WebhookAdapter {
 		out = append(out, adapter)
 	}
 	return out
+}
+
+func (r *Registry) connector(channel string) (Connector, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	connector, ok := r.connectors[channel]
+	return connector, ok
 }
 
 type FileConnector struct {

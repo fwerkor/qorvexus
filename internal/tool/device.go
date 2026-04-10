@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
@@ -473,7 +474,10 @@ func (t *ProcessTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 			return "", err
 		}
 		defer stderrFile.Close()
-		cmd := exec.CommandContext(context.Background(), t.cfg.CommandShell, "-lc", command)
+		cmd, err := commandenv.ShellCommandContext(context.Background(), t.cfg.CommandShell, command)
+		if err != nil {
+			return "", err
+		}
 		if workdir != "" {
 			cmd.Dir = workdir
 		}
@@ -722,7 +726,10 @@ func statDisk(path string) (systemDiskStat, error) {
 }
 
 func listProcesses(ctx context.Context, limit int, filter string) ([]listedProcess, error) {
-	cmd := exec.CommandContext(ctx, "ps", "-eo", "pid=,ppid=,pgid=,stat=,%cpu=,%mem=,etime=,command=", "--sort=-%cpu")
+	cmd, err := commandenv.CommandContext(ctx, "ps", "-eo", "pid=,ppid=,pgid=,stat=,%cpu=,%mem=,etime=,command=", "--sort=-%cpu")
+	if err != nil {
+		return nil, err
+	}
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err

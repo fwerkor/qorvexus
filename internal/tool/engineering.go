@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
@@ -255,7 +256,10 @@ func (t *ApplyDiffTool) Invoke(ctx context.Context, raw json.RawMessage) (string
 		args = append(args, "--reverse")
 	}
 	args = append(args, tempPatchPath)
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd, err := commandenv.CommandContext(ctx, "git", args...)
+	if err != nil {
+		return "", err
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -400,12 +404,15 @@ func (t *TestFailureLocatorTool) Invoke(ctx context.Context, raw json.RawMessage
 		}
 		runCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(runCtx, t.cfg.CommandShell, "-lc", input.Command)
+		cmd, err := commandenv.ShellCommandContext(runCtx, t.cfg.CommandShell, input.Command)
+		if err != nil {
+			return "", err
+		}
 		cmd.Dir = workdir
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		err := cmd.Run()
+		err = cmd.Run()
 		output = stdout.String()
 		if serr := strings.TrimSpace(stderr.String()); serr != "" {
 			if output != "" {
@@ -1225,7 +1232,10 @@ func gitRevParse(repoRoot string, args ...string) (string, error) {
 }
 
 func gitOutput(ctx context.Context, repoRoot string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
+	cmd, err := commandenv.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
+	if err != nil {
+		return "", err
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

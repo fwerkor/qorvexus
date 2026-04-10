@@ -48,7 +48,7 @@ func (e *Engine) EvaluateCommandForContext(command string, ctx types.Conversatio
 		}
 	}
 	dangerous := []string{
-		"rm -rf /", "mkfs", "shutdown", "reboot", "userdel", "dd if=", "git reset --hard", "git checkout --", "sudo ", "poweroff",
+		"rm -rf /", "mkfs", "shutdown", "reboot", "userdel", "dd if=", "git reset --hard", "git checkout --", "poweroff",
 	}
 	for _, pattern := range dangerous {
 		if strings.Contains(cmd, pattern) {

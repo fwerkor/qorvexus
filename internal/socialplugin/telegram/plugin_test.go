@@ -333,3 +333,38 @@ func TestConnectorSendUsesMarkdownParseMode(t *testing.T) {
 		t.Fatalf("expected chat id 123, got %#v", got)
 	}
 }
+
+func TestConnectorSendTypingUsesChatAction(t *testing.T) {
+	var (
+		payload map[string]any
+		path    string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer srv.Close()
+
+	conn := NewConnector("abc")
+	conn.apiBaseURL = srv.URL
+	err := conn.SendTyping(context.Background(), social.OutboundMessage{
+		ThreadID: "123",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/botabc/sendChatAction") {
+		t.Fatalf("expected sendChatAction path, got %q", path)
+	}
+	if got := payload["action"]; got != "typing" {
+		t.Fatalf("expected typing action, got %#v", got)
+	}
+	if got := payload["chat_id"]; got != "123" {
+		t.Fatalf("expected chat id 123, got %#v", got)
+	}
+}
