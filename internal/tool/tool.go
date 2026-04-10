@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"qorvexus/internal/types"
 )
@@ -40,7 +41,15 @@ func (r *Registry) Execute(ctx context.Context, call types.ToolCall) types.ToolR
 	}
 	out, err := tool.Invoke(ctx, json.RawMessage(call.Arguments))
 	if err != nil {
-		return types.ToolResult{Name: call.Name, CallID: call.ID, Error: true, Content: err.Error()}
+		return types.ToolResult{Name: call.Name, CallID: call.ID, Error: true, Content: formatToolError(out, err)}
 	}
 	return types.ToolResult{Name: call.Name, CallID: call.ID, Content: out}
+}
+
+func formatToolError(out string, err error) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return err.Error()
+	}
+	return strings.TrimSpace(err.Error()) + "\n\n" + out
 }
