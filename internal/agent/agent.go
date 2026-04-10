@@ -69,6 +69,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	if prompt := r.buildActivePlanPrompt(st.ID); prompt != "" {
 		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
 	}
+	persist := func() error {
+		if r.Sessions == nil {
+			return nil
+		}
+		return r.Sessions.Save(st)
+	}
 
 	for turn := 0; turn < r.Config.Agent.MaxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
@@ -87,10 +93,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		if len(msg.ToolCalls) == 0 {
 			st.Messages = append(st.Messages, msg)
 			r.captureConversationMemories(req.SessionID, req.Prompt, strings.TrimSpace(msg.Content), st.Context)
-			if err := r.Sessions.Save(st); err != nil {
+			if err := persist(); err != nil {
 				return nil, "", err
 			}
 			return st, strings.TrimSpace(msg.Content), nil
+		}
+
+		st.Messages = append(st.Messages, types.Message{
+			Role:      types.RoleAssistant,
+			Content:   msg.Content,
+			ToolCalls: msg.ToolCalls,
+		})
+		if err := persist(); err != nil {
+			return nil, "", err
 		}
 
 		if req.OnAssistantMessage != nil && strings.TrimSpace(msg.Content) != "" {
@@ -102,12 +117,6 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 				return nil, "", err
 			}
 		}
-
-		st.Messages = append(st.Messages, types.Message{
-			Role:      types.RoleAssistant,
-			Content:   msg.Content,
-			ToolCalls: msg.ToolCalls,
-		})
 		for _, call := range msg.ToolCalls {
 			toolCtx := ctx
 			if !isZeroContext(st.Context) {
@@ -125,6 +134,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 				ToolCallID: result.CallID,
 				Content:    content,
 			})
+			if err := persist(); err != nil {
+				return nil, "", err
+			}
 		}
 		if req.DrainPendingUserMessages != nil {
 			pending, err := req.DrainPendingUserMessages(ctx, st)
@@ -133,9 +145,13 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			}
 			if len(pending) > 0 {
 				st.Messages = append(st.Messages, pending...)
+				if err := persist(); err != nil {
+					return nil, "", err
+				}
 			}
 		}
 	}
+	_ = persist()
 	return nil, "", fmt.Errorf("max turns exceeded")
 }
 

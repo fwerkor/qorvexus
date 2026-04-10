@@ -2613,6 +2613,9 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 			out = replyText
 		}
 		if err != nil {
+			if deliveredPreface {
+				a.notifySocialContinuationError(mergedCtx, mergedEnv, err)
+			}
 			return out, err
 		}
 		lastOut = out
@@ -2653,6 +2656,36 @@ func (a *appRuntime) bumpSocialTyping(ctx context.Context, env social.Envelope) 
 		ThreadID:  env.ThreadID,
 		Recipient: env.SenderID,
 		Context:   env.Context,
+	})
+}
+
+func (a *appRuntime) notifySocialContinuationError(ctx context.Context, env social.Envelope, err error) {
+	if a == nil || a.connectors == nil {
+		return
+	}
+	text := "I ran into an error while continuing that task"
+	if detail := truncateText(err.Error(), 160); detail != "" {
+		text += ": " + detail
+	}
+	text += "."
+	if _, sendErr := a.connectors.Send(ctx, env.Channel, social.OutboundMessage{
+		Channel:   env.Channel,
+		ThreadID:  env.ThreadID,
+		Recipient: env.SenderID,
+		Text:      text,
+		Context:   env.Context,
+	}); sendErr != nil {
+		a.logAudit(ctx, "deliver_social_failure_notice", "error", env.Channel+"-"+env.ThreadID, map[string]any{
+			"channel":   env.Channel,
+			"thread_id": env.ThreadID,
+			"error":     sendErr.Error(),
+		})
+		return
+	}
+	a.logAudit(ctx, "deliver_social_failure_notice", "ok", env.Channel+"-"+env.ThreadID, map[string]any{
+		"channel":   env.Channel,
+		"thread_id": env.ThreadID,
+		"error":     truncateText(err.Error(), 200),
 	})
 }
 

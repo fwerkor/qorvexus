@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -654,4 +655,75 @@ func TestRunnerDrainsPendingUserMessagesAfterToolExecution(t *testing.T) {
 	if !foundPending {
 		t.Fatalf("expected second model call to include drained user message, got %#v", client.requests[1].Messages)
 	}
+}
+
+func TestRunnerPersistsToolProgressBeforeLaterFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &failingAfterToolClient{}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	store := session.NewStore(tempDir)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     3,
+			},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tools,
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-error-after-tool",
+		Prompt:    "Check now",
+	})
+	if err == nil {
+		t.Fatal("expected runner to fail after tool execution")
+	}
+
+	state, loadErr := store.Load("sess-error-after-tool")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	foundAssistantToolCall := false
+	foundToolResult := false
+	for _, msg := range state.Messages {
+		if msg.Role == types.RoleAssistant && len(msg.ToolCalls) == 1 && msg.ToolCalls[0].Name == "echo" {
+			foundAssistantToolCall = true
+		}
+		if msg.Role == types.RoleTool && strings.Contains(msg.Content, "echo:demo") {
+			foundToolResult = true
+		}
+	}
+	if !foundAssistantToolCall {
+		t.Fatalf("expected persisted assistant tool call, got %#v", state.Messages)
+	}
+	if !foundToolResult {
+		t.Fatalf("expected persisted tool result, got %#v", state.Messages)
+	}
+}
+
+type failingAfterToolClient struct {
+	calls int
+}
+
+func (c *failingAfterToolClient) Complete(_ context.Context, _ model.CompletionRequest) (*model.CompletionResponse, error) {
+	if c.calls == 0 {
+		c.calls++
+		return &model.CompletionResponse{
+			Message: types.Message{
+				Role:    types.RoleAssistant,
+				Content: "I will check that.",
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "echo", Arguments: `{"text":"demo"}`},
+				},
+			},
+		}, nil
+	}
+	return nil, errors.New("model backend unavailable")
 }
