@@ -134,30 +134,25 @@ func NewBrowserWorkflowTool(cfg config.ToolsConfig, manager *PlaywrightManager) 
 func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "browser_workflow",
-		Description: "Run a structured browser workflow with retries, persistent login state, multi-tab control, uploads, form autofill, pagination extraction, screenshots, PDFs, and download indexing.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"start_url":          map[string]any{"type": "string"},
-				"profile":            map[string]any{"type": "string"},
-				"storage_state":      map[string]any{"type": "string"},
-				"browser":            map[string]any{"type": "string"},
-				"headless":           map[string]any{"type": "boolean"},
-				"persist_profile":    map[string]any{"type": "boolean"},
-				"save_storage_state": map[string]any{"type": "boolean"},
-				"timeout_seconds":    map[string]any{"type": "integer"},
-				"retry_count":        map[string]any{"type": "integer"},
-				"actions": map[string]any{
-					"type":        "array",
-					"description": "Structured browser actions such as goto, open_tab, switch_tab, close_tab, upload_files, fill_form, paginate_extract, check_login_state, screenshot, save_pdf, and download.",
-					"items": map[string]any{
-						"type":                 "object",
-						"additionalProperties": true,
-					},
+		Description: "Run a structured browser workflow with retries, persistent login state, multi-tab control, uploads, form autofill, pagination extraction, screenshots, PDFs, and download indexing. Prefer this for standard browser tasks because it is more reliable and inspectable than writing a custom Playwright script.",
+		Parameters: schemaObject(map[string]any{
+			"start_url":          schemaString("Optional initial URL to open before executing actions."),
+			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused."),
+			"storage_state":      schemaString("Optional named storage-state snapshot to load before the workflow."),
+			"browser":            schemaString("Optional browser engine override such as chromium."),
+			"headless":           schemaBoolean("Whether to run headless. Defaults follow runtime config."),
+			"persist_profile":    schemaBoolean("Whether browser profile changes should be kept after the workflow."),
+			"save_storage_state": schemaBoolean("Whether to save updated storage state for later reuse."),
+			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds."),
+			"retry_count":        schemaInteger("Workflow retry count for transient browser failures."),
+			"actions": schemaArray(
+				"Structured browser actions such as goto, open_tab, switch_tab, close_tab, upload_files, fill_form, paginate_extract, check_login_state, screenshot, save_pdf, and download.",
+				map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
 				},
-			},
-			"required": []string{"actions"},
-		},
+			),
+		}, "actions"),
 	}
 }
 

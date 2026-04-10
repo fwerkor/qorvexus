@@ -27,15 +27,11 @@ func NewCommandTool(cfg config.ToolsConfig, engine *policy.Engine) *CommandTool 
 func (t *CommandTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "run_command",
-		Description: "Run a short-lived command on the local system. Prefer this for brief synchronous shell work only; for long-running commands such as apt update, installs, servers, watchers, or builds, use manage_process with action=start instead because this tool is timeout-bound.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"command":         map[string]any{"type": "string"},
-				"timeout_seconds": map[string]any{"type": "integer"},
-			},
-			"required": []string{"command"},
-		},
+		Description: "Run a short-lived command on the local system and return stdout/stderr. Use this for brief synchronous shell work when you need an immediate result. Do not use it for long-running or stateful jobs such as apt update, package installs, servers, watchers, or builds that may outlive a short timeout; use manage_process with action=start for those.",
+		Parameters: schemaObject(map[string]any{
+			"command":         schemaString("Shell command to run. Prefer a focused one-shot command whose result can be captured immediately."),
+			"timeout_seconds": schemaInteger("Optional timeout in seconds. Defaults to 60. Increase only for slightly longer synchronous work, not for background jobs."),
+		}, "command"),
 	}
 }
 
@@ -103,16 +99,12 @@ func NewHTTPTool(cfg config.ToolsConfig) *HTTPTool { return &HTTPTool{cfg: cfg} 
 func (t *HTTPTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "http_request",
-		Description: "Fetch web pages or APIs when browsing is needed without a full browser.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"url":    map[string]any{"type": "string"},
-				"method": map[string]any{"type": "string"},
-				"body":   map[string]any{"type": "string"},
-			},
-			"required": []string{"url"},
-		},
+		Description: "Fetch a web page or API over HTTP when browser automation is unnecessary. Prefer this for simple GET or API calls. If the task needs login state, JavaScript execution, clicking, uploads, or multi-step navigation, use browser_workflow or playwright instead.",
+		Parameters: schemaObject(map[string]any{
+			"url":    schemaString("Absolute URL to request."),
+			"method": schemaString("HTTP method such as GET or POST. Defaults to GET when omitted."),
+			"body":   schemaString("Optional request body as raw text. Most useful with POST, PUT, or PATCH."),
+		}, "url"),
 	}
 }
 
@@ -161,21 +153,17 @@ func NewPlaywrightTool(cfg config.ToolsConfig, manager *PlaywrightManager) *Play
 func (t *PlaywrightTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "playwright",
-		Description: "Use a browser automation command to interact with websites through Playwright, with persistent browser profiles and storage state support.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"script":             map[string]any{"type": "string"},
-				"profile":            map[string]any{"type": "string"},
-				"storage_state":      map[string]any{"type": "string"},
-				"persist_profile":    map[string]any{"type": "boolean"},
-				"save_storage_state": map[string]any{"type": "boolean"},
-				"browser":            map[string]any{"type": "string"},
-				"headless":           map[string]any{"type": "boolean"},
-				"timeout_seconds":    map[string]any{"type": "integer"},
-			},
-			"required": []string{"script"},
-		},
+		Description: "Run a custom Playwright script for browser work that is too bespoke for browser_workflow. Use this only when you need custom control flow or logic. For common browsing tasks such as navigation, form fill, screenshots, downloads, and pagination, prefer browser_workflow because it is more structured and easier to keep reliable.",
+		Parameters: schemaObject(map[string]any{
+			"script":             schemaString("JavaScript Playwright script to execute."),
+			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused across runs."),
+			"storage_state":      schemaString("Optional named storage-state snapshot to load before the run."),
+			"persist_profile":    schemaBoolean("Whether to keep browser profile changes after the run. Useful when login state should survive."),
+			"save_storage_state": schemaBoolean("Whether to save updated storage state after the run for later reuse."),
+			"browser":            schemaString("Optional browser engine override such as chromium."),
+			"headless":           schemaBoolean("Whether to run headless. Defaults follow runtime config."),
+			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds for the automation run."),
+		}, "script"),
 	}
 }
 

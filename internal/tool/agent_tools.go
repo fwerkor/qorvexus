@@ -79,14 +79,10 @@ type Runtime interface {
 func (t *ThinkTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "think",
-		Description: "Write down private reasoning notes or plans before acting.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"note": map[string]any{"type": "string"},
-			},
-			"required": []string{"note"},
-		},
+		Description: "Write down a short private reasoning note or plan fragment before acting. Use this sparingly for intermediate planning, not as a substitute for taking real tool actions.",
+		Parameters: schemaObject(map[string]any{
+			"note": schemaString("Private reasoning note to record."),
+		}, "note"),
 	}
 }
 
@@ -109,16 +105,12 @@ func NewSubAgentTool(rt Runtime) *SubAgentTool { return &SubAgentTool{rt: rt} }
 func (t *SubAgentTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "spawn_subagent",
-		Description: "Delegate a focused task to a child agent and receive its result.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":   map[string]any{"type": "string"},
-				"prompt": map[string]any{"type": "string"},
-				"model":  map[string]any{"type": "string"},
-			},
-			"required": []string{"name", "prompt"},
-		},
+		Description: "Delegate a focused task to a child agent and receive its result. Use this when a subtask can be isolated cleanly. Give the child a concrete objective and enough context to finish without further hand-holding.",
+		Parameters: schemaObject(map[string]any{
+			"name":   schemaString("Short label for the delegated task."),
+			"prompt": schemaString("Full task instructions for the child agent, including the expected deliverable."),
+			"model":  schemaString("Optional model override for the child agent."),
+		}, "name", "prompt"),
 	}
 }
 
@@ -143,18 +135,11 @@ func NewDiscussTool(rt Runtime) *DiscussTool { return &DiscussTool{rt: rt} }
 func (t *DiscussTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "consult_models",
-		Description: "Ask a panel of models to debate or offer alternative views, then return the combined result.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"prompt": map[string]any{"type": "string"},
-				"models": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "string"},
-				},
-			},
-			"required": []string{"prompt", "models"},
-		},
+		Description: "Ask a panel of models to debate or offer alternative views, then return the combined result. Use this when the task benefits from contrasting approaches or extra scrutiny, not for routine single-path execution.",
+		Parameters: schemaObject(map[string]any{
+			"prompt": schemaString("Question or task for the model panel to consider."),
+			"models": schemaArray("List of model names that should participate in the consultation.", schemaString("Registered model name.")),
+		}, "prompt", "models"),
 	}
 }
 
@@ -181,17 +166,13 @@ func NewScheduleTool(rt Runtime) *ScheduleTool { return &ScheduleTool{rt: rt} }
 func (t *ScheduleTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "schedule_task",
-		Description: "Create a cron-style recurring task that runs the agent later.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":     map[string]any{"type": "string"},
-				"schedule": map[string]any{"type": "string"},
-				"prompt":   map[string]any{"type": "string"},
-				"model":    map[string]any{"type": "string"},
-			},
-			"required": []string{"name", "schedule", "prompt"},
-		},
+		Description: "Create a cron-style recurring task that runs the agent later. Use this for repeatable ongoing work rather than immediate execution.",
+		Parameters: schemaObject(map[string]any{
+			"name":     schemaString("Human-readable name for the recurring task."),
+			"schedule": schemaString("Cron-style schedule expression."),
+			"prompt":   schemaString("Task prompt that should run each time the schedule fires."),
+			"model":    schemaString("Optional model override for scheduled runs."),
+		}, "name", "schedule", "prompt"),
 	}
 }
 
@@ -215,53 +196,43 @@ type CreatePlanTool struct {
 func NewCreatePlanTool(rt Runtime) *CreatePlanTool { return &CreatePlanTool{rt: rt} }
 
 func (t *CreatePlanTool) Definition() types.ToolDefinition {
+	stepsProperties := map[string]any{
+		"id":                    schemaString("Optional stable step id. If omitted, one will be generated."),
+		"title":                 schemaString("Short action-oriented step title."),
+		"details":               schemaString("Optional extra step context or constraints."),
+		"prompt":                schemaString("Specific instruction the executing agent should follow for this step."),
+		"model":                 schemaString("Optional model override for this step."),
+		"depends_on":            schemaArray("Step ids that must succeed before this step may run.", schemaString("Dependency step id.")),
+		"execution_mode":        schemaStringEnum("Whether the step should run immediately in a subagent or be queued.", "subagent", "queued"),
+		"max_attempts":          schemaInteger("Maximum attempts before the step is considered failed."),
+		"retry_backoff_seconds": schemaInteger("Delay between retries in seconds."),
+		"review_required":       schemaBoolean("Whether this step should go through a review stage after execution."),
+		"review_prompt":         schemaString("Review-specific instructions describing what quality concerns to check."),
+		"review_model":          schemaString("Optional model override for the review stage."),
+		"verify_required":       schemaBoolean("Whether this step should go through a verification stage after execution."),
+		"verify_prompt":         schemaString("Verification-specific instructions describing what evidence of success is required."),
+		"verify_model":          schemaString("Optional model override for the verification stage."),
+		"failure_strategy":      schemaStringEnum("How to recover if execution ultimately fails.", "fail", "rollback", "degrade", "rollback_then_degrade"),
+		"rollback_prompt":       schemaString("Instructions for undoing or cleaning up the step when rollback is needed."),
+		"rollback_model":        schemaString("Optional model override for rollback."),
+		"degrade_prompt":        schemaString("Instructions for producing a safe reduced fallback when full execution fails."),
+		"degrade_model":         schemaString("Optional model override for degraded fallback."),
+	}
 	return types.ToolDefinition{
 		Name:        "create_plan",
-		Description: "Create a durable multi-step execution plan with dependencies, retries, reviewer/verifier gates, and recovery strategies.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"goal":                 map[string]any{"type": "string"},
-				"summary":              map[string]any{"type": "string"},
-				"session_id":           map[string]any{"type": "string"},
-				"max_parallel":         map[string]any{"type": "integer"},
-				"default_max_attempts": map[string]any{"type": "integer"},
-				"auto_review":          map[string]any{"type": "boolean"},
-				"auto_verify":          map[string]any{"type": "boolean"},
-				"review_model":         map[string]any{"type": "string"},
-				"verify_model":         map[string]any{"type": "string"},
-				"steps": map[string]any{
-					"type": "array",
-					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"id":                    map[string]any{"type": "string"},
-							"title":                 map[string]any{"type": "string"},
-							"details":               map[string]any{"type": "string"},
-							"prompt":                map[string]any{"type": "string"},
-							"model":                 map[string]any{"type": "string"},
-							"depends_on":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-							"execution_mode":        map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
-							"max_attempts":          map[string]any{"type": "integer"},
-							"retry_backoff_seconds": map[string]any{"type": "integer"},
-							"review_required":       map[string]any{"type": "boolean"},
-							"review_prompt":         map[string]any{"type": "string"},
-							"review_model":          map[string]any{"type": "string"},
-							"verify_required":       map[string]any{"type": "boolean"},
-							"verify_prompt":         map[string]any{"type": "string"},
-							"verify_model":          map[string]any{"type": "string"},
-							"failure_strategy":      map[string]any{"type": "string", "enum": []string{"fail", "rollback", "degrade", "rollback_then_degrade"}},
-							"rollback_prompt":       map[string]any{"type": "string"},
-							"rollback_model":        map[string]any{"type": "string"},
-							"degrade_prompt":        map[string]any{"type": "string"},
-							"degrade_model":         map[string]any{"type": "string"},
-						},
-						"required": []string{"title"},
-					},
-				},
-			},
-			"required": []string{"goal", "steps"},
-		},
+		Description: "Create a durable multi-step execution plan with dependencies, retries, reviewer and verifier gates, and recovery strategies. Use this for multi-step work that should survive across turns or needs explicit state, not for one trivial action.",
+		Parameters: schemaObject(map[string]any{
+			"goal":                 schemaString("Overall objective the plan should accomplish."),
+			"summary":              schemaString("Optional high-level summary or strategy for the plan."),
+			"session_id":           schemaString("Optional session id to associate with the plan."),
+			"max_parallel":         schemaInteger("Maximum number of runnable steps that may execute in parallel."),
+			"default_max_attempts": schemaInteger("Default retry budget for steps that do not set max_attempts explicitly."),
+			"auto_review":          schemaBoolean("Whether steps should default into a review stage after execution."),
+			"auto_verify":          schemaBoolean("Whether steps should default into a verification stage after execution."),
+			"review_model":         schemaString("Default model for review stages."),
+			"verify_model":         schemaString("Default model for verification stages."),
+			"steps":                schemaArray("Ordered plan steps. Each step should be concrete, executable, and scoped tightly enough to finish or fail clearly.", schemaObject(stepsProperties, "title")),
+		}, "goal", "steps"),
 	}
 }
 
@@ -350,14 +321,10 @@ func NewGetPlanTool(rt Runtime) *GetPlanTool { return &GetPlanTool{rt: rt} }
 func (t *GetPlanTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "get_plan",
-		Description: "Inspect a saved execution plan and its current step state.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"plan_id": map[string]any{"type": "string"},
-			},
-			"required": []string{"plan_id"},
-		},
+		Description: "Inspect a saved execution plan and its current step state. Use this before editing or advancing a plan when you need exact current status.",
+		Parameters: schemaObject(map[string]any{
+			"plan_id": schemaString("Identifier of the plan to inspect."),
+		}, "plan_id"),
 	}
 }
 
@@ -380,14 +347,11 @@ func NewListPlansTool(rt Runtime) *ListPlansTool { return &ListPlansTool{rt: rt}
 func (t *ListPlansTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_plans",
-		Description: "List durable execution plans, optionally filtered by overall plan status.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":  map[string]any{"type": "integer"},
-				"status": map[string]any{"type": "string"},
-			},
-		},
+		Description: "List durable execution plans, optionally filtered by overall plan status. Useful for discovering whether relevant work is already in progress before creating a new plan.",
+		Parameters: schemaObject(map[string]any{
+			"limit":  schemaInteger("Maximum number of plans to return."),
+			"status": schemaString("Optional status filter such as active, failed, or completed."),
+		}),
 	}
 }
 
@@ -411,38 +375,34 @@ func NewUpdatePlanStepTool(rt Runtime) *UpdatePlanStepTool { return &UpdatePlanS
 func (t *UpdatePlanStepTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "update_plan_step",
-		Description: "Revise a plan step, including retry policy, reviewer/verifier gates, recovery behavior, notes, status, and result.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"plan_id":               map[string]any{"type": "string"},
-				"step_id":               map[string]any{"type": "string"},
-				"status":                map[string]any{"type": "string"},
-				"title":                 map[string]any{"type": "string"},
-				"details":               map[string]any{"type": "string"},
-				"prompt":                map[string]any{"type": "string"},
-				"model":                 map[string]any{"type": "string"},
-				"execution_mode":        map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
-				"depends_on":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"max_attempts":          map[string]any{"type": "integer"},
-				"retry_backoff_seconds": map[string]any{"type": "integer"},
-				"review_required":       map[string]any{"type": "boolean"},
-				"review_prompt":         map[string]any{"type": "string"},
-				"review_model":          map[string]any{"type": "string"},
-				"verify_required":       map[string]any{"type": "boolean"},
-				"verify_prompt":         map[string]any{"type": "string"},
-				"verify_model":          map[string]any{"type": "string"},
-				"failure_strategy":      map[string]any{"type": "string", "enum": []string{"fail", "rollback", "degrade", "rollback_then_degrade"}},
-				"rollback_prompt":       map[string]any{"type": "string"},
-				"rollback_model":        map[string]any{"type": "string"},
-				"degrade_prompt":        map[string]any{"type": "string"},
-				"degrade_model":         map[string]any{"type": "string"},
-				"note":                  map[string]any{"type": "string"},
-				"result":                map[string]any{"type": "string"},
-				"error":                 map[string]any{"type": "string"},
-			},
-			"required": []string{"plan_id", "step_id"},
-		},
+		Description: "Revise a plan step, including retry policy, reviewer and verifier gates, recovery behavior, notes, status, and result. Use this when the plan needs to adapt after new information arrives.",
+		Parameters: schemaObject(map[string]any{
+			"plan_id":               schemaString("Identifier of the parent plan."),
+			"step_id":               schemaString("Identifier of the step to revise."),
+			"status":                schemaString("Optional new step status."),
+			"title":                 schemaString("Optional replacement step title."),
+			"details":               schemaString("Optional replacement step details."),
+			"prompt":                schemaString("Optional replacement execution prompt for the step."),
+			"model":                 schemaString("Optional replacement step model."),
+			"execution_mode":        schemaStringEnum("Optional replacement execution mode.", "subagent", "queued"),
+			"depends_on":            schemaArray("Optional replacement dependency list.", schemaString("Dependency step id.")),
+			"max_attempts":          schemaInteger("Optional replacement retry budget."),
+			"retry_backoff_seconds": schemaInteger("Optional replacement retry delay."),
+			"review_required":       schemaBoolean("Whether the step should require review."),
+			"review_prompt":         schemaString("Instructions for the review stage."),
+			"review_model":          schemaString("Optional review model override."),
+			"verify_required":       schemaBoolean("Whether the step should require verification."),
+			"verify_prompt":         schemaString("Instructions for the verification stage."),
+			"verify_model":          schemaString("Optional verification model override."),
+			"failure_strategy":      schemaStringEnum("Recovery strategy if the step fails.", "fail", "rollback", "degrade", "rollback_then_degrade"),
+			"rollback_prompt":       schemaString("Rollback instructions for failure recovery."),
+			"rollback_model":        schemaString("Optional rollback model override."),
+			"degrade_prompt":        schemaString("Fallback instructions for degraded completion."),
+			"degrade_model":         schemaString("Optional degraded-fallback model override."),
+			"note":                  schemaString("Additional note to append to the step history."),
+			"result":                schemaString("Recorded result text for the step."),
+			"error":                 schemaString("Recorded failure text for the step."),
+		}, "plan_id", "step_id"),
 	}
 }
 
@@ -515,16 +475,12 @@ func NewExecutePlanStepTool(rt Runtime) *ExecutePlanStepTool { return &ExecutePl
 func (t *ExecutePlanStepTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "execute_plan_step",
-		Description: "Execute one specific step from a saved plan, including retries plus any verifier/reviewer checks and recovery strategy.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"plan_id": map[string]any{"type": "string"},
-				"step_id": map[string]any{"type": "string"},
-				"mode":    map[string]any{"type": "string", "enum": []string{"subagent", "queued"}},
-			},
-			"required": []string{"plan_id", "step_id"},
-		},
+		Description: "Execute one specific step from a saved plan, including retries plus any verifier, reviewer, and recovery logic attached to that step. Use this when you want to drive one step deliberately instead of advancing the whole plan.",
+		Parameters: schemaObject(map[string]any{
+			"plan_id": schemaString("Identifier of the parent plan."),
+			"step_id": schemaString("Identifier of the step to execute."),
+			"mode":    schemaStringEnum("Optional execution-mode override for this run.", "subagent", "queued"),
+		}, "plan_id", "step_id"),
 	}
 }
 
@@ -549,15 +505,11 @@ func NewAdvancePlanTool(rt Runtime) *AdvancePlanTool { return &AdvancePlanTool{r
 func (t *AdvancePlanTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "advance_plan",
-		Description: "Advance a saved plan by executing or queueing runnable steps in dependency order, with parallel waves, retries, review, verification, and recovery.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"plan_id": map[string]any{"type": "string"},
-				"limit":   map[string]any{"type": "integer"},
-			},
-			"required": []string{"plan_id"},
-		},
+		Description: "Advance a saved plan by executing or queueing runnable steps in dependency order, with parallel waves, retries, review, verification, and recovery. Prefer this when the plan should make broad forward progress automatically.",
+		Parameters: schemaObject(map[string]any{
+			"plan_id": schemaString("Identifier of the plan to advance."),
+			"limit":   schemaInteger("Maximum number of runnable steps to advance in this call."),
+		}, "plan_id"),
 	}
 }
 
@@ -581,31 +533,20 @@ func NewRememberTool(rt Runtime) *RememberTool { return &RememberTool{rt: rt} }
 func (t *RememberTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "remember",
-		Description: "Store a durable memory for later semantic retrieval and layered recall.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"key":     map[string]any{"type": "string"},
-				"layer":   map[string]any{"type": "string"},
-				"area":    map[string]any{"type": "string"},
-				"kind":    map[string]any{"type": "string"},
-				"subject": map[string]any{"type": "string"},
-				"summary": map[string]any{"type": "string"},
-				"content": map[string]any{"type": "string"},
-				"source":  map[string]any{"type": "string"},
-				"importance": map[string]any{
-					"type": "integer",
-				},
-				"confidence": map[string]any{
-					"type": "number",
-				},
-				"tags": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "string"},
-				},
-			},
-			"required": []string{"content"},
-		},
+		Description: "Store a durable memory for later semantic retrieval and layered recall. Use this for stable facts, preferences, constraints, contact knowledge, or project state that should survive the current turn.",
+		Parameters: schemaObject(map[string]any{
+			"key":        schemaString("Optional stable key for upsert-like memory updates."),
+			"layer":      schemaString("Optional memory layer such as owner, people, project, or workflow."),
+			"area":       schemaString("Optional sub-area within the layer."),
+			"kind":       schemaString("Optional memory kind such as rule, preference, fact, or contact_profile."),
+			"subject":    schemaString("Optional subject identifier the memory is about."),
+			"summary":    schemaString("Optional short summary of the memory."),
+			"content":    schemaString("The durable memory content to store."),
+			"source":     schemaString("Optional source describing where the memory came from."),
+			"importance": schemaInteger("Optional relative importance score."),
+			"confidence": schemaNumber("Optional confidence score for the memory."),
+			"tags":       schemaArray("Optional tags for retrieval and filtering.", schemaString("Memory tag.")),
+		}, "content"),
 	}
 }
 
@@ -650,15 +591,11 @@ func NewRecallTool(rt Runtime) *RecallTool { return &RecallTool{rt: rt} }
 func (t *RecallTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "recall",
-		Description: "Search durable memory semantically for facts, preferences, people, projects, and prior workflow.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"query": map[string]any{"type": "string"},
-				"limit": map[string]any{"type": "integer"},
-			},
-			"required": []string{"query"},
-		},
+		Description: "Search durable memory semantically for facts, preferences, people, projects, and prior workflow. Prefer this when continuity matters and you suspect the agent may already know relevant history.",
+		Parameters: schemaObject(map[string]any{
+			"query": schemaString("Natural-language query describing what memory to retrieve."),
+			"limit": schemaInteger("Maximum number of memory hits to return."),
+		}, "query"),
 	}
 }
 
@@ -682,15 +619,12 @@ func NewSessionListTool(rt Runtime) *SessionListTool { return &SessionListTool{r
 func (t *SessionListTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_sessions",
-		Description: "List saved sessions across channels so Qorvexus can recover context from other conversations, workstreams, or prior threads.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":     map[string]any{"type": "integer"},
-				"channel":   map[string]any{"type": "string"},
-				"sender_id": map[string]any{"type": "string"},
-			},
-		},
+		Description: "List saved sessions across channels so Qorvexus can recover context from other conversations, workstreams, or prior threads. Use this before get_session when you do not already know the right session id.",
+		Parameters: schemaObject(map[string]any{
+			"limit":     schemaInteger("Maximum number of sessions to return."),
+			"channel":   schemaString("Optional channel filter such as telegram or slack."),
+			"sender_id": schemaString("Optional sender identity filter."),
+		}),
 	}
 }
 
@@ -717,17 +651,13 @@ func NewSessionViewTool(rt Runtime) *SessionViewTool { return &SessionViewTool{r
 func (t *SessionViewTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "get_session",
-		Description: "Read another saved session by id, including recent messages and metadata, when Qorvexus needs cross-session continuity.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id":     map[string]any{"type": "string"},
-				"limit_messages": map[string]any{"type": "integer"},
-				"include_system": map[string]any{"type": "boolean"},
-				"include_tool":   map[string]any{"type": "boolean"},
-			},
-			"required": []string{"session_id"},
-		},
+		Description: "Read another saved session by id, including recent messages and metadata, when Qorvexus needs cross-session continuity. Use it after list_sessions or when a known session id should be reopened for context.",
+		Parameters: schemaObject(map[string]any{
+			"session_id":     schemaString("Identifier of the session to inspect."),
+			"limit_messages": schemaInteger("Maximum number of recent messages to include."),
+			"include_system": schemaBoolean("Whether to include system prompts in the returned view."),
+			"include_tool":   schemaBoolean("Whether to include tool messages in the returned view."),
+		}, "session_id"),
 	}
 }
 
@@ -753,17 +683,13 @@ func NewEnqueueTaskTool(rt Runtime) *EnqueueTaskTool { return &EnqueueTaskTool{r
 func (t *EnqueueTaskTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "enqueue_task",
-		Description: "Queue a background task for asynchronous execution.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":       map[string]any{"type": "string"},
-				"prompt":     map[string]any{"type": "string"},
-				"model":      map[string]any{"type": "string"},
-				"session_id": map[string]any{"type": "string"},
-			},
-			"required": []string{"name", "prompt"},
-		},
+		Description: "Queue a background task for asynchronous execution. Use this when the work should continue later without blocking the current turn.",
+		Parameters: schemaObject(map[string]any{
+			"name":       schemaString("Human-readable task name."),
+			"prompt":     schemaString("Task prompt that the background worker should execute."),
+			"model":      schemaString("Optional model override for the queued task."),
+			"session_id": schemaString("Optional session id whose context the queued task should continue."),
+		}, "name", "prompt"),
 	}
 }
 
@@ -789,17 +715,13 @@ func NewSocialSendTool(rt Runtime) *SocialSendTool { return &SocialSendTool{rt: 
 func (t *SocialSendTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "send_social_message",
-		Description: "Send a message immediately through a configured social connector when acting as Qorvexus, the owner's autonomous assistant.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"channel":   map[string]any{"type": "string"},
-				"thread_id": map[string]any{"type": "string"},
-				"recipient": map[string]any{"type": "string"},
-				"text":      map[string]any{"type": "string"},
-			},
-			"required": []string{"channel", "text"},
-		},
+		Description: "Send a message immediately through a configured social connector when acting as Qorvexus, the owner's autonomous assistant. Use this only when an outbound message should go out now. If timing, wording, or authority is uncertain, prefer hold_social_message first.",
+		Parameters: schemaObject(map[string]any{
+			"channel":   schemaString("Configured connector or channel name."),
+			"thread_id": schemaString("Optional thread or conversation id to reply within."),
+			"recipient": schemaString("Optional direct recipient or channel-specific destination."),
+			"text":      schemaString("Outbound message text to send."),
+		}, "channel", "text"),
 	}
 }
 
@@ -823,11 +745,8 @@ func NewSocialListTool(rt Runtime) *SocialListTool { return &SocialListTool{rt: 
 func (t *SocialListTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_social_connectors",
-		Description: "List configured social connectors/channels currently available for outbound communication.",
-		Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-		},
+		Description: "List configured social connectors and channels currently available for outbound communication. Use this before sending when the available routes are unknown.",
+		Parameters:  schemaObject(map[string]any{}),
 	}
 }
 
@@ -844,18 +763,14 @@ func NewSocialHoldTool(rt Runtime) *SocialHoldTool { return &SocialHoldTool{rt: 
 func (t *SocialHoldTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "hold_social_message",
-		Description: "Save an outbound message into the assistant outbox instead of sending it immediately. Useful when Qorvexus wants to prepare, revise, or wait.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"channel":   map[string]any{"type": "string"},
-				"thread_id": map[string]any{"type": "string"},
-				"recipient": map[string]any{"type": "string"},
-				"text":      map[string]any{"type": "string"},
-				"reason":    map[string]any{"type": "string"},
-			},
-			"required": []string{"channel", "text"},
-		},
+		Description: "Save an outbound message into the assistant outbox instead of sending it immediately. Prefer this when Qorvexus should prepare, revise, wait for approval, or avoid premature outreach.",
+		Parameters: schemaObject(map[string]any{
+			"channel":   schemaString("Configured connector or channel name."),
+			"thread_id": schemaString("Optional thread or conversation id."),
+			"recipient": schemaString("Optional direct recipient or channel-specific destination."),
+			"text":      schemaString("Outbound draft message text to hold."),
+			"reason":    schemaString("Why the message is being held instead of sent immediately."),
+		}, "channel", "text"),
 	}
 }
 
@@ -884,15 +799,12 @@ func NewGrantOwnerIdentityTool(rt Runtime) *GrantOwnerIdentityTool {
 func (t *GrantOwnerIdentityTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "grant_owner_identity",
-		Description: "Authorize a channel identity as owner when an already-authenticated owner wants to add a new account, device, or chat route.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"channel":     map[string]any{"type": "string"},
-				"sender_id":   map[string]any{"type": "string"},
-				"sender_name": map[string]any{"type": "string"},
-			},
-		},
+		Description: "Authorize a channel identity as owner when an already-authenticated owner wants to add a new account, device, or chat route. This is a high-trust operation and should be used deliberately.",
+		Parameters: schemaObject(map[string]any{
+			"channel":     schemaString("Channel where the new owner identity exists."),
+			"sender_id":   schemaString("Exact sender id that should be granted owner status."),
+			"sender_name": schemaString("Optional human-readable sender name."),
+		}),
 	}
 }
 
@@ -919,14 +831,11 @@ func NewSocialOutboxListTool(rt Runtime) *SocialOutboxListTool { return &SocialO
 func (t *SocialOutboxListTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_social_outbox",
-		Description: "List held or pending outbound social messages in the assistant outbox.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":  map[string]any{"type": "integer"},
-				"status": map[string]any{"type": "string"},
-			},
-		},
+		Description: "List held or pending outbound social messages in the assistant outbox. Use this to review drafts before deciding whether to send, keep, or discard them.",
+		Parameters: schemaObject(map[string]any{
+			"limit":  schemaInteger("Maximum number of outbox items to return."),
+			"status": schemaString("Optional status filter such as held or pending."),
+		}),
 	}
 }
 
@@ -954,16 +863,12 @@ func NewSocialOutboxManageTool(rt Runtime) *SocialOutboxManageTool {
 func (t *SocialOutboxManageTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "manage_social_outbox",
-		Description: "Manage an assistant outbox entry by sending it, keeping it held, or discarding it.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"outbox_id":   map[string]any{"type": "string"},
-				"action":      map[string]any{"type": "string"},
-				"edited_text": map[string]any{"type": "string"},
-			},
-			"required": []string{"outbox_id"},
-		},
+		Description: "Manage an assistant outbox entry by sending it, keeping it held, or discarding it. Use edited_text when the draft should be revised before the chosen action.",
+		Parameters: schemaObject(map[string]any{
+			"outbox_id":   schemaString("Identifier of the outbox entry to manage."),
+			"action":      schemaString("Desired action such as send, hold, or discard."),
+			"edited_text": schemaString("Optional replacement text to apply before managing the outbox entry."),
+		}, "outbox_id"),
 	}
 }
 
@@ -988,11 +893,8 @@ func NewSocialGraphTool(rt Runtime) *SocialGraphTool { return &SocialGraphTool{r
 func (t *SocialGraphTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "get_social_contact_graph",
-		Description: "Read the structured relationship graph for social contacts, including interaction counts, autonomy boundaries, commitments, and follow-up load.",
-		Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-		},
+		Description: "Read the structured relationship graph for social contacts, including interaction counts, autonomy boundaries, commitments, and follow-up load. Use this before proactive outreach or relationship-sensitive decisions.",
+		Parameters:  schemaObject(map[string]any{}),
 	}
 }
 
@@ -1011,14 +913,11 @@ func NewSocialFollowUpListTool(rt Runtime) *SocialFollowUpListTool {
 func (t *SocialFollowUpListTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_social_followups",
-		Description: "List active social follow-up strategies and pending relationship work tracked by Qorvexus.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":  map[string]any{"type": "integer"},
-				"status": map[string]any{"type": "string"},
-			},
-		},
+		Description: "List active social follow-up strategies and pending relationship work tracked by Qorvexus. Useful when the assistant needs to continue relationship maintenance intentionally.",
+		Parameters: schemaObject(map[string]any{
+			"limit":  schemaInteger("Maximum number of follow-up records to return."),
+			"status": schemaString("Optional status filter."),
+		}),
 	}
 }
 
@@ -1042,11 +941,8 @@ func NewReadConfigTool(rt Runtime) *ReadConfigTool { return &ReadConfigTool{rt: 
 func (t *ReadConfigTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "read_runtime_config",
-		Description: "Read the current runtime configuration file for self-inspection and planning.",
-		Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-		},
+		Description: "Read the current runtime configuration file for self-inspection and planning. Prefer this before write_runtime_config so changes are based on the latest full config.",
+		Parameters:  schemaObject(map[string]any{}),
 	}
 }
 
@@ -1061,14 +957,10 @@ func NewWriteConfigTool(rt Runtime) *WriteConfigTool { return &WriteConfigTool{r
 func (t *WriteConfigTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "write_runtime_config",
-		Description: "Write a full updated runtime configuration. Use carefully and only after deliberate reasoning.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"config": map[string]any{"type": "string"},
-			},
-			"required": []string{"config"},
-		},
+		Description: "Write a full updated runtime configuration. This replaces the config file content, so it should usually be based on a fresh read_runtime_config result. After changing config, use restart_runtime so the running service reloads it.",
+		Parameters: schemaObject(map[string]any{
+			"config": schemaString("Full replacement config file contents."),
+		}, "config"),
 	}
 }
 
@@ -1089,16 +981,12 @@ func NewUpsertSkillTool(rt Runtime) *UpsertSkillTool { return &UpsertSkillTool{r
 func (t *UpsertSkillTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "upsert_skill",
-		Description: "Create or update a SKILL.md file so the agent can extend its own behavior.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":        map[string]any{"type": "string"},
-				"description": map[string]any{"type": "string"},
-				"body":        map[string]any{"type": "string"},
-			},
-			"required": []string{"name", "description", "body"},
-		},
+		Description: "Create or update a SKILL.md file so the agent can extend its own behavior. Prefer narrowly scoped, reusable instructions instead of stuffing long-term behavior into the base prompt.",
+		Parameters: schemaObject(map[string]any{
+			"name":        schemaString("Skill name, usually matching the skill directory name."),
+			"description": schemaString("Short human-readable description of what the skill is for."),
+			"body":        schemaString("Complete SKILL.md body to write."),
+		}, "name", "description", "body"),
 	}
 }
 
@@ -1121,16 +1009,12 @@ func NewSelfBacklogAddTool(rt Runtime) *SelfBacklogAddTool { return &SelfBacklog
 func (t *SelfBacklogAddTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "add_self_improvement",
-		Description: "Record a self-improvement item for the agent to work on later.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title":       map[string]any{"type": "string"},
-				"description": map[string]any{"type": "string"},
-				"kind":        map[string]any{"type": "string"},
-			},
-			"required": []string{"title", "description"},
-		},
+		Description: "Record a self-improvement item for the agent to work on later. Use this when the improvement is worth tracking but not worth executing immediately.",
+		Parameters: schemaObject(map[string]any{
+			"title":       schemaString("Short title of the improvement idea."),
+			"description": schemaString("Concrete description of the problem or improvement."),
+			"kind":        schemaString("Optional category such as prompt, tool, workflow, or bugfix."),
+		}, "title", "description"),
 	}
 }
 
@@ -1153,13 +1037,10 @@ func NewSelfBacklogListTool(rt Runtime) *SelfBacklogListTool { return &SelfBackl
 func (t *SelfBacklogListTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "list_self_improvements",
-		Description: "List queued self-improvement items and recent ideas for evolving the agent.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit": map[string]any{"type": "integer"},
-			},
-		},
+		Description: "List queued self-improvement items and recent ideas for evolving the agent. Useful before adding a duplicate improvement or choosing the next one to promote.",
+		Parameters: schemaObject(map[string]any{
+			"limit": schemaInteger("Maximum number of improvement items to return."),
+		}),
 	}
 }
 
@@ -1184,16 +1065,12 @@ func NewPromoteSelfImprovementTool(rt Runtime) *PromoteSelfImprovementTool {
 func (t *PromoteSelfImprovementTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "promote_self_improvement",
-		Description: "Turn a self-improvement idea into an asynchronous execution task so the agent can work on it later.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title":       map[string]any{"type": "string"},
-				"description": map[string]any{"type": "string"},
-				"model":       map[string]any{"type": "string"},
-			},
-			"required": []string{"title", "description"},
-		},
+		Description: "Turn a self-improvement idea into an asynchronous execution task so the agent can work on it later. Use this when the idea is ready to become concrete work.",
+		Parameters: schemaObject(map[string]any{
+			"title":       schemaString("Short title of the improvement task."),
+			"description": schemaString("Concrete description of the improvement work to perform."),
+			"model":       schemaString("Optional model override for the promoted task."),
+		}, "title", "description"),
 	}
 }
 
@@ -1218,13 +1095,10 @@ func NewMineSelfImprovementsTool(rt Runtime) *MineSelfImprovementsTool {
 func (t *MineSelfImprovementsTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "mine_self_improvements",
-		Description: "Generate self-improvement candidates from recent audit history and failures.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit": map[string]any{"type": "integer"},
-			},
-		},
+		Description: "Generate self-improvement candidates from recent audit history and failures. Use this when the assistant should inspect its own recent misses for reusable fixes.",
+		Parameters: schemaObject(map[string]any{
+			"limit": schemaInteger("Maximum number of mined candidates to return."),
+		}),
 	}
 }
 
@@ -1249,18 +1123,14 @@ func NewCaptureSelfImprovementTool(rt Runtime) *CaptureSelfImprovementTool {
 func (t *CaptureSelfImprovementTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "capture_self_improvement",
-		Description: "Capture a mined improvement into the backlog and optionally promote it into an execution task.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title":       map[string]any{"type": "string"},
-				"description": map[string]any{"type": "string"},
-				"kind":        map[string]any{"type": "string"},
-				"promote":     map[string]any{"type": "boolean"},
-				"model":       map[string]any{"type": "string"},
-			},
-			"required": []string{"title", "description"},
-		},
+		Description: "Capture a mined improvement into the backlog and optionally promote it into an execution task. Use this to preserve a good mined idea even if execution will happen later.",
+		Parameters: schemaObject(map[string]any{
+			"title":       schemaString("Short title of the improvement."),
+			"description": schemaString("Concrete description of the improvement."),
+			"kind":        schemaString("Optional category such as prompt, tool, workflow, or bugfix."),
+			"promote":     schemaBoolean("Whether to immediately promote the captured item into an execution task."),
+			"model":       schemaString("Optional model override if promote is true."),
+		}, "title", "description"),
 	}
 }
 
@@ -1285,13 +1155,10 @@ func NewRestartRuntimeTool(rt Runtime) *RestartRuntimeTool { return &RestartRunt
 func (t *RestartRuntimeTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "restart_runtime",
-		Description: "Ask the supervisor to restart the running runtime so config or skill changes take effect.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"reason": map[string]any{"type": "string"},
-			},
-		},
+		Description: "Ask the supervisor to restart the running runtime so config or skill changes take effect. Use this after write_runtime_config or upsert_skill when the live service must reload those changes.",
+		Parameters: schemaObject(map[string]any{
+			"reason": schemaString("Optional human-readable reason for the restart request."),
+		}),
 	}
 }
 
@@ -1314,14 +1181,11 @@ func NewApplySelfUpdateTool(rt Runtime) *ApplySelfUpdateTool { return &ApplySelf
 func (t *ApplySelfUpdateTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "apply_self_update",
-		Description: "Build a fresh Qorvexus binary from the current source tree and ask the supervisor to restart into it.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"run_tests": map[string]any{"type": "boolean"},
-				"reason":    map[string]any{"type": "string"},
-			},
-		},
+		Description: "Build a fresh Qorvexus binary from the current source tree and ask the supervisor to restart into it. Use this after source-code changes that should become live. Prefer restart_runtime instead when only config or skills changed.",
+		Parameters: schemaObject(map[string]any{
+			"run_tests": schemaBoolean("Whether to run tests before applying the self-update."),
+			"reason":    schemaString("Optional human-readable reason for the self-update."),
+		}),
 	}
 }
 

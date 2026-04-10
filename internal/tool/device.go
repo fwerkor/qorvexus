@@ -40,14 +40,11 @@ func NewSystemSnapshotTool() *SystemSnapshotTool { return &SystemSnapshotTool{} 
 func (t *SystemSnapshotTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "system_snapshot",
-		Description: "Collect a structured snapshot of the local device, including OS info, resource health, network interfaces, and optionally top processes.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"include_processes": map[string]any{"type": "boolean"},
-				"process_limit":     map[string]any{"type": "integer"},
-			},
-		},
+		Description: "Collect a structured snapshot of the local device, including OS details, resource health, network interfaces, and optionally top processes. Prefer this when you need situational awareness before acting on the machine.",
+		Parameters: schemaObject(map[string]any{
+			"include_processes": schemaBoolean("Whether to include a lightweight list of top processes in the snapshot."),
+			"process_limit":     schemaInteger("Maximum number of processes to include when include_processes is true."),
+		}),
 	}
 }
 
@@ -148,20 +145,16 @@ func NewFilesystemTool(cfg config.ToolsConfig) *FilesystemTool { return &Filesys
 func (t *FilesystemTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "filesystem",
-		Description: "Inspect or modify the local filesystem using structured actions such as list, read, write, append, stat, move, mkdir, and remove.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"action":      map[string]any{"type": "string", "enum": []string{"list", "read", "write", "append", "stat", "move", "mkdir", "remove"}},
-				"path":        map[string]any{"type": "string"},
-				"destination": map[string]any{"type": "string"},
-				"content":     map[string]any{"type": "string"},
-				"recursive":   map[string]any{"type": "boolean"},
-				"overwrite":   map[string]any{"type": "boolean"},
-				"max_bytes":   map[string]any{"type": "integer"},
-			},
-			"required": []string{"action", "path"},
-		},
+		Description: "Inspect or modify the local filesystem using structured actions such as list, read, write, append, stat, move, mkdir, and remove. Prefer this over raw shell commands when the task is fundamentally file-oriented. Be especially careful with write, move, and remove because they change local state directly.",
+		Parameters: schemaObject(map[string]any{
+			"action":      schemaStringEnum("Filesystem action to perform.", "list", "read", "write", "append", "stat", "move", "mkdir", "remove"),
+			"path":        schemaString("Path to the file or directory to inspect or modify."),
+			"destination": schemaString("Destination path for action=move."),
+			"content":     schemaString("Text content to write or append for action=write or action=append."),
+			"recursive":   schemaBoolean("Whether mkdir or remove should recurse. For remove, this can delete entire directory trees."),
+			"overwrite":   schemaBoolean("Whether write or move may replace an existing destination."),
+			"max_bytes":   schemaInteger("Maximum bytes to read back for action=read before truncating the result."),
+		}, "action", "path"),
 	}
 }
 
@@ -350,23 +343,19 @@ func NewProcessTool(cfg config.ToolsConfig, engine *policy.Engine) *ProcessTool 
 func (t *ProcessTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "manage_process",
-		Description: "List, inspect, start, and signal local processes for stronger device control without dropping to ad-hoc shell commands. Use action=start for long-running or stateful commands such as apt update, package installs, servers, watchers, and builds that should continue in the background.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"action":          map[string]any{"type": "string", "enum": []string{"list", "inspect", "start", "signal"}},
-				"pid":             map[string]any{"type": "integer"},
-				"command":         map[string]any{"type": "string"},
-				"workdir":         map[string]any{"type": "string"},
-				"stdout_path":     map[string]any{"type": "string"},
-				"stderr_path":     map[string]any{"type": "string"},
-				"filter":          map[string]any{"type": "string"},
-				"limit":           map[string]any{"type": "integer"},
-				"signal":          map[string]any{"type": "string"},
-				"timeout_seconds": map[string]any{"type": "integer"},
-			},
-			"required": []string{"action"},
-		},
+		Description: "List, inspect, start, and signal local processes without dropping to ad-hoc shell commands. Prefer action=start for long-running or stateful commands such as apt update, package installs, servers, watchers, and builds that should continue in the background. Use run_command instead only when the job is short and you need the result immediately.",
+		Parameters: schemaObject(map[string]any{
+			"action":          schemaStringEnum("Process-management action to perform.", "list", "inspect", "start", "signal"),
+			"pid":             schemaInteger("Target process id for inspect or signal."),
+			"command":         schemaString("Shell command to launch for action=start."),
+			"workdir":         schemaString("Optional working directory for action=start."),
+			"stdout_path":     schemaString("Optional log file path for captured stdout when starting a process."),
+			"stderr_path":     schemaString("Optional log file path for captured stderr when starting a process."),
+			"filter":          schemaString("Substring filter applied to command lines when action=list."),
+			"limit":           schemaInteger("Maximum number of processes to return when action=list."),
+			"signal":          schemaString("Signal name such as TERM or KILL for action=signal."),
+			"timeout_seconds": schemaInteger("Reserved for short bounded process-management operations."),
+		}, "action"),
 	}
 }
 

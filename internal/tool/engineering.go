@@ -63,14 +63,11 @@ func NewTestFailureLocatorTool(cfg config.ToolsConfig, engine *policy.Engine) *T
 func (t *RepoIndexTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "repo_index",
-		Description: "Scan a repository or project directory and return a structured engineering index: git metadata, language mix, key files, top directories, and overall file inventory.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path":      map[string]any{"type": "string"},
-				"max_files": map[string]any{"type": "integer"},
-			},
-		},
+		Description: "Scan a repository or project directory and return a structured engineering index: git metadata, language mix, key files, top directories, and overall file inventory. Prefer this early when you need fast orientation before searching or editing.",
+		Parameters: schemaObject(map[string]any{
+			"path":      schemaString("Repository or project directory to scan. Defaults to the current workspace when omitted."),
+			"max_files": schemaInteger("Maximum number of files to inspect before stopping."),
+		}),
 	}
 }
 
@@ -104,26 +101,20 @@ func (t *RepoIndexTool) Invoke(ctx context.Context, raw json.RawMessage) (string
 func (t *RepoSearchTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "repo_search",
-		Description: "Search a codebase structurally by file name or file content and return line-aware matches with context instead of plain grep text.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"query":          map[string]any{"type": "string"},
-				"path":           map[string]any{"type": "string"},
-				"mode":           map[string]any{"type": "string", "enum": []string{"content", "filename", "both"}},
-				"regex":          map[string]any{"type": "boolean"},
-				"case_sensitive": map[string]any{"type": "boolean"},
-				"glob":           map[string]any{"type": "string"},
-				"file_extensions": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "string"},
-				},
-				"limit":          map[string]any{"type": "integer"},
-				"context_lines":  map[string]any{"type": "integer"},
-				"max_file_bytes": map[string]any{"type": "integer"},
-			},
-			"required": []string{"query"},
-		},
+		Description: "Search a codebase structurally by file name or file content and return line-aware matches with context instead of plain grep text. Prefer this over run_command grep output when you want model-friendly search results that are easier to reason over.",
+		Parameters: schemaObject(map[string]any{
+			"query":          schemaString("Search text or regex pattern."),
+			"path":           schemaString("Repository root or subdirectory to search."),
+			"mode":           schemaStringEnum("Whether to search file content, filenames, or both.", "content", "filename", "both"),
+			"regex":          schemaBoolean("Interpret query as a regular expression instead of plain text."),
+			"case_sensitive": schemaBoolean("Whether matching should respect letter case."),
+			"glob":           schemaString("Optional glob filter such as *.go or internal/**."),
+			"file_extensions": schemaArray("Optional file-extension allowlist such as [\"go\", \"md\"].",
+				schemaString("File extension without the dot.")),
+			"limit":          schemaInteger("Maximum number of matches to return."),
+			"context_lines":  schemaInteger("How many surrounding lines to include around each content match."),
+			"max_file_bytes": schemaInteger("Skip or cap very large files beyond this size."),
+		}, "query"),
 	}
 }
 
@@ -184,17 +175,13 @@ func (t *RepoSearchTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 func (t *ApplyDiffTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "apply_diff",
-		Description: "Apply a unified diff or git-style patch to the local repository and return a structured summary of the affected files.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"patch":      map[string]any{"type": "string"},
-				"path":       map[string]any{"type": "string"},
-				"check_only": map[string]any{"type": "boolean"},
-				"reverse":    map[string]any{"type": "boolean"},
-			},
-			"required": []string{"patch"},
-		},
+		Description: "Apply a unified diff or git-style patch to the local repository and return a structured summary of affected files. Prefer this for targeted code edits when you already know the patch to make. Use check_only first when you want to validate applicability before mutating the worktree.",
+		Parameters: schemaObject(map[string]any{
+			"patch":      schemaString("Unified diff or git-style patch text to apply."),
+			"path":       schemaString("Repository path to treat as the patch root. Defaults to the current workspace."),
+			"check_only": schemaBoolean("Validate whether the patch can apply cleanly without changing files."),
+			"reverse":    schemaBoolean("Apply the patch in reverse, effectively undoing it if possible."),
+		}, "patch"),
 	}
 }
 
@@ -292,19 +279,13 @@ func (t *ApplyDiffTool) Invoke(ctx context.Context, raw json.RawMessage) (string
 func (t *ChangeSummaryTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "summarize_changes",
-		Description: "Summarize the current repository diff in a structured way: changed files, statuses, line counts, and edited hunk locations.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{"type": "string"},
-				"paths": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "string"},
-				},
-				"base_ref":  map[string]any{"type": "string"},
-				"max_files": map[string]any{"type": "integer"},
-			},
-		},
+		Description: "Summarize the current repository diff in a structured way, including changed files, statuses, line counts, and edited hunk locations. Prefer this when you need to review or explain worktree changes without dumping raw git diff text.",
+		Parameters: schemaObject(map[string]any{
+			"path":      schemaString("Repository path whose diff should be summarized."),
+			"paths":     schemaArray("Optional subset of file paths to summarize.", schemaString("Path relative to the repository root.")),
+			"base_ref":  schemaString("Optional git base ref to compare against instead of the default worktree diff."),
+			"max_files": schemaInteger("Maximum number of changed files to include in the summary."),
+		}),
 	}
 }
 
@@ -340,18 +321,15 @@ func (t *ChangeSummaryTool) Invoke(ctx context.Context, raw json.RawMessage) (st
 func (t *TestFailureLocatorTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "locate_test_failure",
-		Description: "Parse failing test output, or run a test command and localize the likely source files, lines, and snippets that explain the failure.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"command":          map[string]any{"type": "string"},
-				"output":           map[string]any{"type": "string"},
-				"workdir":          map[string]any{"type": "string"},
-				"timeout_seconds":  map[string]any{"type": "integer"},
-				"context_lines":    map[string]any{"type": "integer"},
-				"max_output_bytes": map[string]any{"type": "integer"},
-			},
-		},
+		Description: "Parse failing test output, or run a test command, and localize likely source files, lines, and snippets that explain the failure. Prefer passing existing output when you already have it; use command only when the tool should execute the test itself.",
+		Parameters: schemaObject(map[string]any{
+			"command":          schemaString("Optional test command to run, such as go test ./..."),
+			"output":           schemaString("Existing failing test output to analyze directly without rerunning tests."),
+			"workdir":          schemaString("Repository directory where the command should run or where source lookup should happen."),
+			"timeout_seconds":  schemaInteger("Timeout for command execution when command is provided."),
+			"context_lines":    schemaInteger("How many surrounding source lines to include around localized failures."),
+			"max_output_bytes": schemaInteger("Maximum bytes of command output to keep before truncating."),
+		}),
 	}
 }
 
