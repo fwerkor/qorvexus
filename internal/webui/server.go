@@ -394,11 +394,10 @@ func (s *Server) handleSocialWebhook(w http.ResponseWriter, r *http.Request, ada
 		writeJSON(w, http.StatusOK, map[string]any{"ignored": true, "channel": adapter.Name()})
 		return
 	}
-	if _, err := s.app.HandleSocialEnvelope(r.Context(), env); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": adapter.Name()})
+	go func() {
+		_, _ = s.app.HandleSocialEnvelope(context.Background(), env)
+	}()
 }
 
 func SaveConfigText(path string, raw string) error {
