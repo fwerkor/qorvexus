@@ -32,3 +32,19 @@ func TestQueueAddAndRunNext(t *testing.T) {
 		t.Fatalf("expected succeeded, got %s", got)
 	}
 }
+
+func TestQueueHasActiveSession(t *testing.T) {
+	queue := New(filepath.Join(t.TempDir(), "queue.json"), stubRunner{})
+	if _, err := queue.Add(Task{Name: "demo", Prompt: "hello", SessionID: "cron-task-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !queue.HasActiveSession("cron-task-1") {
+		t.Fatal("expected queued task session to be active")
+	}
+	if _, err := queue.RunNext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if queue.HasActiveSession("cron-task-1") {
+		t.Fatal("expected succeeded task session to no longer be active")
+	}
+}

@@ -83,6 +83,20 @@ func (q *Queue) List() []Task {
 	return out
 }
 
+func (q *Queue) HasActiveSession(sessionID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, task := range q.tasks {
+		if task.SessionID != sessionID {
+			continue
+		}
+		if task.Status == StatusQueued || task.Status == StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *Queue) RunNext(ctx context.Context) (bool, error) {
 	q.mu.Lock()
 	index := -1

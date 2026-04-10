@@ -600,11 +600,15 @@ func (a *appRuntime) AdvancePlan(ctx context.Context, planID string, limit int) 
 }
 
 func (a *appRuntime) RunScheduled(_ context.Context, task scheduler.Task) error {
+	sessionID := "cron-" + task.ID
+	if a.queue.HasActiveSession(sessionID) {
+		return nil
+	}
 	_, err := a.queue.Add(taskqueue.Task{
 		Name:      task.Name,
 		Prompt:    task.Prompt,
 		Model:     task.Model,
-		SessionID: "cron-" + task.ID,
+		SessionID: sessionID,
 	})
 	return err
 }
