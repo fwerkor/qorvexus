@@ -30,6 +30,37 @@ const telegramMaxMessageChars = 4096
 
 var telegramParseModes = []string{"MarkdownV2", "Markdown", ""}
 
+var (
+	telegramMarkdownV2Escaper = strings.NewReplacer(
+		`\\`, `\\\\`,
+		"_", `\_`,
+		"*", `\*`,
+		"[", `\[`,
+		"]", `\]`,
+		"(", `\(`,
+		")", `\)`,
+		"~", `\~`,
+		"`", "\\`",
+		">", `\>`,
+		"#", `\#`,
+		"+", `\+`,
+		"-", `\-`,
+		"=", `\=`,
+		"|", `\|`,
+		"{", `\{`,
+		"}", `\}`,
+		".", `\.`,
+		"!", `\!`,
+	)
+	telegramMarkdownEscaper = strings.NewReplacer(
+		`\\`, `\\\\`,
+		"_", `\_`,
+		"*", `\*`,
+		"`", "\\`",
+		"[", `\[`,
+	)
+)
+
 type WebhookAdapter struct {
 	path          string
 	webhookSecret string
@@ -153,27 +184,35 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 	if chatID == "" {
 		return "", fmt.Errorf("telegram requires thread_id or recipient as chat id")
 	}
-	chunks := splitTelegramMessage(msg.Text, telegramMaxMessageChars)
-	for _, chunk := range chunks {
-		if err := c.sendWithFallback(ctx, chatID, chunk); err != nil {
-			return "", err
-		}
+	if err := c.sendWithFallback(ctx, chatID, msg.Text); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("sent %d telegram message(s) to %s", len(chunks), chatID), nil
+	return fmt.Sprintf("sent telegram message(s) to %s", chatID), nil
 }
 
 func (c *Connector) sendWithFallback(ctx context.Context, chatID string, text string) error {
 	var lastErr error
 	for idx, parseMode := range telegramParseModes {
-		err := c.sendChunk(ctx, chatID, text, parseMode)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		var sendErr *telegramSendError
-		if !errors.As(err, &sendErr) || !sendErr.markdownParseFailure() || idx == len(telegramParseModes)-1 {
+		prepared := prepareTelegramText(text, parseMode)
+		chunks := splitTelegramMessage(prepared, telegramMaxMessageChars)
+		retryNextMode := false
+		for chunkIdx, chunk := range chunks {
+			err := c.sendChunk(ctx, chatID, chunk, parseMode)
+			if err == nil {
+				continue
+			}
+			lastErr = err
+			var sendErr *telegramSendError
+			if chunkIdx == 0 && errors.As(err, &sendErr) && sendErr.markdownParseFailure() && idx < len(telegramParseModes)-1 {
+				retryNextMode = true
+				break
+			}
 			return err
 		}
+		if retryNextMode {
+			continue
+		}
+		return nil
 	}
 	return lastErr
 }
@@ -288,6 +327,17 @@ func (e *telegramSendError) markdownParseFailure() bool {
 		strings.Contains(detail, "can't parse") ||
 		strings.Contains(detail, "can't find end") ||
 		strings.Contains(detail, "unsupported start tag")
+}
+
+func prepareTelegramText(text string, parseMode string) string {
+	switch strings.TrimSpace(parseMode) {
+	case "MarkdownV2":
+		return telegramMarkdownV2Escaper.Replace(text)
+	case "Markdown":
+		return telegramMarkdownEscaper.Replace(text)
+	default:
+		return text
+	}
 }
 
 func splitTelegramMessage(text string, limit int) []string {
