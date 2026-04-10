@@ -18,6 +18,7 @@ var defaultPathEntries = []string{
 	"/sbin",
 	"/bin",
 	"/snap/bin",
+	"/run/current-system/sw/bin",
 	"/usr/local/go/bin",
 }
 
