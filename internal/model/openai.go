@@ -168,6 +168,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 	return &CompletionResponse{
 		Message: fromOpenAIMessage(msg),
 		Usage:   normalizeUsage(parsed.Usage),
+		Raw:     strings.TrimSpace(string(raw)),
 	}, nil
 }
 
@@ -224,6 +225,7 @@ func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*Embedd
 	out := &EmbeddingResponse{
 		Model: parsed.Model,
 		Usage: normalizeUsage(parsed.Usage),
+		Raw:   strings.TrimSpace(string(raw)),
 	}
 	for _, item := range parsed.Data {
 		out.Vectors = append(out.Vectors, item.Embedding)
@@ -298,6 +300,10 @@ func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
 						texts = append(texts, text)
 					}
 				}
+			case "function_call", "tool_call", "tool_use":
+				if call, ok := toolCallFromContentPart(partMap, len(out.ToolCalls)); ok {
+					out.ToolCalls = append(out.ToolCalls, call)
+				}
 			}
 		}
 		out.Content = strings.TrimSpace(strings.Join(texts, "\n\n"))
@@ -310,6 +316,47 @@ func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
 		})
 	}
 	return types.SanitizeAssistantMessage(out)
+}
+
+func toolCallFromContentPart(part map[string]any, index int) (types.ToolCall, bool) {
+	callID := strings.TrimSpace(toString(part["call_id"]))
+	if callID == "" {
+		callID = strings.TrimSpace(toString(part["id"]))
+	}
+	name := strings.TrimSpace(toString(part["name"]))
+	args := strings.TrimSpace(toString(part["arguments"]))
+	if function, ok := part["function"].(map[string]any); ok {
+		if name == "" {
+			name = strings.TrimSpace(toString(function["name"]))
+		}
+		if args == "" {
+			args = strings.TrimSpace(toString(function["arguments"]))
+		}
+	}
+	if input, ok := part["input"].(map[string]any); ok && args == "" {
+		if raw, err := json.Marshal(input); err == nil {
+			args = string(raw)
+		}
+	}
+	if rawArgs, ok := part["input"].([]any); ok && args == "" {
+		if raw, err := json.Marshal(rawArgs); err == nil {
+			args = string(raw)
+		}
+	}
+	if name == "" {
+		return types.ToolCall{}, false
+	}
+	if callID == "" {
+		callID = fmt.Sprintf("content-call-%d", index+1)
+	}
+	if args == "" {
+		args = "{}"
+	}
+	return types.ToolCall{
+		ID:        callID,
+		Name:      name,
+		Arguments: args,
+	}, true
 }
 
 func toString(v any) string {

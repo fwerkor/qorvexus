@@ -18,6 +18,7 @@ type CompletionRequest struct {
 type CompletionResponse struct {
 	Message types.Message
 	Usage   map[string]int
+	Raw     string
 }
 
 type EmbeddingRequest struct {
@@ -29,6 +30,7 @@ type EmbeddingResponse struct {
 	Model   string
 	Vectors [][]float64
 	Usage   map[string]int
+	Raw     string
 }
 
 type Client interface {

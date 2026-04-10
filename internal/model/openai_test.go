@@ -37,6 +37,52 @@ func TestFromOpenAIMessageSanitizesThinkingTagsInStringContent(t *testing.T) {
 	}
 }
 
+func TestFromOpenAIMessageParsesFunctionCallContentParts(t *testing.T) {
+	msg := fromOpenAIMessage(openAIResponseMessage{
+		Role: "assistant",
+		Content: []any{
+			map[string]any{"type": "text", "text": "我来查一下。"},
+			map[string]any{
+				"type":      "function_call",
+				"call_id":   "call_123",
+				"name":      "list_sessions",
+				"arguments": "{\"limit\":5}",
+			},
+		},
+	})
+	if msg.Content != "我来查一下。" {
+		t.Fatalf("unexpected content: %+v", msg)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %+v", msg.ToolCalls)
+	}
+	if msg.ToolCalls[0].Name != "list_sessions" || msg.ToolCalls[0].Arguments != "{\"limit\":5}" {
+		t.Fatalf("unexpected tool call: %+v", msg.ToolCalls[0])
+	}
+}
+
+func TestFromOpenAIMessageParsesNestedFunctionToolCallParts(t *testing.T) {
+	msg := fromOpenAIMessage(openAIResponseMessage{
+		Role: "assistant",
+		Content: []any{
+			map[string]any{
+				"type": "tool_call",
+				"id":   "call_456",
+				"function": map[string]any{
+					"name":      "get_session",
+					"arguments": "{\"session_id\":\"sess-1\"}",
+				},
+			},
+		},
+	})
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %+v", msg.ToolCalls)
+	}
+	if msg.ToolCalls[0].ID != "call_456" || msg.ToolCalls[0].Name != "get_session" {
+		t.Fatalf("unexpected tool call: %+v", msg.ToolCalls[0])
+	}
+}
+
 func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -80,6 +126,9 @@ func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	if strings.TrimSpace(resp.Message.Content) != "你好" {
 		t.Fatalf("unexpected message content: %+v", resp.Message)
 	}
+	if !strings.Contains(resp.Raw, `"choices"`) {
+		t.Fatalf("expected raw response body to be captured, got %q", resp.Raw)
+	}
 	if got := resp.Usage["prompt_tokens"]; got != 10 {
 		t.Fatalf("expected prompt_tokens=10, got %d", got)
 	}
@@ -119,6 +168,9 @@ func TestEmbedAcceptsNestedUsageObjects(t *testing.T) {
 	}
 	if len(resp.Vectors) != 1 || len(resp.Vectors[0]) != 2 {
 		t.Fatalf("unexpected vectors: %#v", resp.Vectors)
+	}
+	if !strings.Contains(resp.Raw, `"embedding"`) {
+		t.Fatalf("expected raw embedding response body to be captured, got %q", resp.Raw)
 	}
 	if got := resp.Usage["prompt_tokens_details.cached_tokens"]; got != 1 {
 		t.Fatalf("expected cached token count to flatten, got %d", got)
