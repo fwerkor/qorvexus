@@ -17,7 +17,7 @@ type Compressor struct {
 }
 
 func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, messages []types.Message) ([]types.Message, error) {
-	if c.MaxChars <= 0 || len(messages) < 6 {
+	if c.MaxChars <= 0 {
 		return messages, nil
 	}
 	total := 0
@@ -51,7 +51,7 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 		}
 		nonSystem = append(nonSystem, msg)
 	}
-	if len(nonSystem) < 4 {
+	if len(nonSystem) < 2 {
 		return messages, nil
 	}
 

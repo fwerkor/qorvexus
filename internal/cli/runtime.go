@@ -646,7 +646,7 @@ func (a *appRuntime) Recall(_ context.Context, query string, limit int) (string,
 	if err != nil {
 		return "", err
 	}
-	raw, err := json.MarshalIndent(results, "", "  ")
+	raw, err := json.MarshalIndent(memory.PublicEntries(results), "", "  ")
 	if err != nil {
 		return "", err
 	}

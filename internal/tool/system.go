@@ -153,14 +153,14 @@ func NewPlaywrightTool(cfg config.ToolsConfig, manager *PlaywrightManager) *Play
 func (t *PlaywrightTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "playwright",
-		Description: "Run a custom Playwright script for browser work that is too bespoke for browser_workflow. Use this only when you need custom control flow or logic. For common browsing tasks such as navigation, form fill, screenshots, downloads, and pagination, prefer browser_workflow because it is more structured and easier to keep reliable.",
+		Description: "Run a custom Playwright script only when browser_workflow is not expressive enough. The script already receives playwright, chromium/firefox/webkit, browserType, browser, context, page, and qorvexus; do not launch another browser unless necessary. Defaults fill browser=chromium, headless, profile, storage, and timeout. Prefer page.goto(url, {waitUntil: 'domcontentloaded'}) plus explicit selectors over networkidle.",
 		Parameters: schemaObject(map[string]any{
-			"script":             schemaString("JavaScript Playwright script to execute."),
+			"script":             schemaString("JavaScript Playwright script body to execute. Return a string/object. Use existing page/context; helper qorvexus.artifactPath(name, ext) builds artifact paths."),
 			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused across runs."),
 			"storage_state":      schemaString("Optional named storage-state snapshot to load before the run."),
 			"persist_profile":    schemaBoolean("Whether to keep browser profile changes after the run. Useful when login state should survive."),
 			"save_storage_state": schemaBoolean("Whether to save updated storage state after the run for later reuse."),
-			"browser":            schemaString("Optional browser engine override such as chromium."),
+			"browser":            schemaString("Optional browser engine override. Defaults to chromium."),
 			"headless":           schemaBoolean("Whether to run headless. Defaults follow runtime config."),
 			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds for the automation run."),
 		}, "script"),

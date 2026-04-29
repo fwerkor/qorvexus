@@ -956,3 +956,98 @@ func (c *failingAfterToolClient) Complete(_ context.Context, _ model.CompletionR
 	}
 	return nil, errors.New("model backend unavailable")
 }
+
+type contextOverflowClient struct{}
+
+func (contextOverflowClient) Complete(_ context.Context, _ model.CompletionRequest) (*model.CompletionResponse, error) {
+	return nil, errors.New("exceeds the available context size")
+}
+
+func TestRunnerTruncatesLargeUserPromptAndSavesArtifact(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "ok"}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			DataDir: tempDir,
+			Agent:   config.AgentConfig{DefaultModel: "primary", MaxTurns: 1},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	prompt := strings.Repeat("a", largeContextLimitChars) + "TAIL"
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-large-input",
+		Prompt:    prompt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.lastRequest.Messages) == 0 {
+		t.Fatal("expected model request")
+	}
+	found := false
+	for _, msg := range client.lastRequest.Messages {
+		if msg.Role != types.RoleUser {
+			continue
+		}
+		found = true
+		if strings.Contains(msg.Content, "TAIL") {
+			t.Fatalf("expected large prompt tail to be omitted, got %q", msg.Content[len(msg.Content)-80:])
+		}
+		if !strings.Contains(msg.Content, "content truncated") || !strings.Contains(msg.Content, filepath.Join(tempDir, "artifacts", "large-context")) {
+			t.Fatalf("expected truncation note with artifact path, got %q", msg.Content[len(msg.Content)-200:])
+		}
+	}
+	if !found {
+		t.Fatalf("expected truncated user message in request, got %#v", client.lastRequest.Messages)
+	}
+}
+
+func TestRunnerDropsLatestRoundOnContextOverflow(t *testing.T) {
+	tempDir := t.TempDir()
+	store := session.NewStore(tempDir)
+	err := store.Save(&session.State{
+		ID:    "sess-overflow",
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleSystem, Content: "system"},
+			{Role: types.RoleUser, Content: "old"},
+			{Role: types.RoleAssistant, Content: "old answer"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := model.NewRegistry()
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, contextOverflowClient{})
+	runner := &Runner{
+		Config: &config.Config{
+			DataDir: tempDir,
+			Agent:   config.AgentConfig{DefaultModel: "primary", MaxTurns: 1},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err = runner.Run(context.Background(), Request{
+		SessionID: "sess-overflow",
+		Prompt:    "new huge turn",
+	})
+	if err == nil || !strings.Contains(err.Error(), "discarded latest conversation round") {
+		t.Fatalf("expected context overflow discard error, got %v", err)
+	}
+	state, err := store.Load("sess-overflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Messages) != 3 || state.Messages[2].Content != "old answer" {
+		t.Fatalf("expected latest round to be discarded while preserving older history, got %#v", state.Messages)
+	}
+}

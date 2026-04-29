@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,6 +132,28 @@ func TestStoreUsesSemanticEmbeddingsForRecall(t *testing.T) {
 	}
 	if !strings.Contains(results[0].Content, "Asia/Shanghai") {
 		t.Fatalf("expected timezone memory, got %#v", results[0])
+	}
+}
+
+func TestPublicEntriesOmitEmbeddingVectors(t *testing.T) {
+	entries := []Entry{{
+		ID:             "mem-1",
+		Content:        "owner prefers concise updates",
+		LocalEmbedding: []float64{0.1, 0.2},
+		Embedding:      []float64{0.3, 0.4},
+		EmbeddingModel: "local",
+	}}
+	public := PublicEntries(entries)
+	raw, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "local_embedding") || strings.Contains(text, "\"embedding\"") {
+		t.Fatalf("expected public memory JSON to omit embedding vectors, got %s", text)
+	}
+	if !strings.Contains(text, "embedding_model") {
+		t.Fatalf("expected metadata to remain available, got %s", text)
 	}
 }
 

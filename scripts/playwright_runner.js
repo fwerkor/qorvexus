@@ -129,7 +129,7 @@ function isNonEmptyString(value) {
 }
 
 async function maybeWaitForLoadState(page, loadState, timeoutMs) {
-  await page.waitForLoadState(loadState || "networkidle", { timeout: timeoutMs }).catch(() => {});
+  await page.waitForLoadState(loadState || "domcontentloaded", { timeout: timeoutMs }).catch(() => {});
 }
 
 async function waitForAction(page, action, defaultTimeoutMs) {
@@ -500,7 +500,7 @@ async function triggerSubmit(page, action, timeoutMs) {
     await locator.waitFor({ state: "visible", timeout: timeoutMs });
     if (action.wait_for_navigation) {
       await Promise.all([
-        maybeWaitForLoadState(page, action.load_state || "networkidle", timeoutMs),
+        maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs),
         locator.click({ timeout: timeoutMs }),
       ]);
     } else {
@@ -611,7 +611,42 @@ async function isLocatorDisabled(locator) {
   }
 }
 
+function normalizeActionDefaults(rawAction) {
+  const action = { ...(rawAction || {}) };
+  let type = String(action.type || "").trim().toLowerCase();
+  const aliases = {
+    navigate: "goto",
+    open: "goto",
+    wait: "wait_for",
+    fill: "type",
+    input: "type",
+    text: "extract_text",
+  };
+  type = aliases[type] || type;
+  if (!type) {
+    if (isNonEmptyString(action.url) || isNonEmptyString(action.href)) {
+      type = "goto";
+    } else if ((action.selector || action.text) && (action.value !== undefined || action.input !== undefined)) {
+      type = "type";
+    } else if (action.selector || action.text) {
+      type = "click";
+    }
+  }
+  if (type === "goto" && !action.url && action.href) {
+    action.url = action.href;
+  }
+  if (type === "type" && action.text === undefined && action.value !== undefined) {
+    action.text = action.value;
+  }
+  if (type === "type" && action.text === undefined && action.input !== undefined) {
+    action.text = action.input;
+  }
+  action.type = type;
+  return action;
+}
+
 async function runAction(context, action, state) {
+  action = normalizeActionDefaults(action);
   const type = String(action.type || "").trim().toLowerCase();
   const retryCount = Number.isFinite(action.retry_count) ? action.retry_count : state.retryCount;
   const timeoutMs = action.timeout_seconds ? action.timeout_seconds * 1000 : state.timeoutMs;
@@ -622,7 +657,7 @@ async function runAction(context, action, state) {
     switch (type) {
       case "goto": {
         const response = await page.goto(action.url, {
-          waitUntil: action.wait_until || "networkidle",
+          waitUntil: action.wait_until || "domcontentloaded",
           timeout: timeoutMs,
         });
         refreshTabState(context, state);
@@ -645,7 +680,7 @@ async function runAction(context, action, state) {
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
         if (action.wait_for_navigation) {
           await Promise.all([
-            maybeWaitForLoadState(page, action.load_state || "networkidle", timeoutMs),
+            maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs),
             locator.click({
               button: action.button || "left",
               clickCount: action.click_count || 1,
@@ -692,7 +727,7 @@ async function runAction(context, action, state) {
         if (action.wait_for_selector) {
           await page.locator(action.wait_for_selector).first().waitFor({ state: "visible", timeout: timeoutMs });
         } else if (action.wait_for_navigation !== false) {
-          await maybeWaitForLoadState(page, action.load_state || "networkidle", timeoutMs);
+          await maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs);
         }
         return { type, username: String(action.username || ""), url: page.url(), tab_index: state.currentTabIndex };
       }
@@ -777,7 +812,7 @@ async function runAction(context, action, state) {
           newPage = await context.newPage();
           if (action.url) {
             await newPage.goto(action.url, {
-              waitUntil: action.wait_until || "networkidle",
+              waitUntil: action.wait_until || "domcontentloaded",
               timeout: timeoutMs,
             });
           }
@@ -792,7 +827,7 @@ async function runAction(context, action, state) {
           if (!newPage) {
             throw new Error("open_tab did not create a new tab");
           }
-          await maybeWaitForLoadState(newPage, action.load_state || "networkidle", timeoutMs);
+          await maybeWaitForLoadState(newPage, action.load_state || "domcontentloaded", timeoutMs);
         } else {
           throw new Error("open_tab requires url, selector, or text");
         }
@@ -882,7 +917,7 @@ async function runAction(context, action, state) {
         }
         const submitted = await triggerSubmit(page, action, timeoutMs);
         if (submitted && action.wait_for_navigation) {
-          await maybeWaitForLoadState(page, action.load_state || "networkidle", timeoutMs);
+          await maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs);
         }
         if (action.wait_for_selector) {
           await page.locator(action.wait_for_selector).first().waitFor({ state: "visible", timeout: timeoutMs });
@@ -933,7 +968,7 @@ async function runAction(context, action, state) {
 
           const previousUrl = page.url();
           await Promise.all([
-            maybeWaitForLoadState(page, action.load_state || "networkidle", timeoutMs),
+            maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs),
             nextLocator.click({ timeout: timeoutMs }),
           ]);
 
@@ -952,7 +987,7 @@ async function runAction(context, action, state) {
       case "check_login_state": {
         if (isNonEmptyString(action.goto_url)) {
           await page.goto(action.goto_url, {
-            waitUntil: action.wait_until || "networkidle",
+            waitUntil: action.wait_until || "domcontentloaded",
             timeout: timeoutMs,
           });
         }
@@ -1011,7 +1046,7 @@ async function runActionsMode(page, context, qorvexus) {
   refreshTabState(context, state);
   const results = [];
   if (input.start_url) {
-    results.push(await runAction(context, { type: "goto", url: input.start_url, wait_until: "networkidle" }, state));
+    results.push(await runAction(context, { type: "goto", url: input.start_url, wait_until: "domcontentloaded" }, state));
   }
   for (const action of actions) {
     results.push(await runAction(context, action, state));
@@ -1027,26 +1062,43 @@ async function runActionsMode(page, context, qorvexus) {
   };
 }
 
-async function runScriptMode(page, context, playwright, browserType, qorvexus) {
+async function runScriptMode(page, context, playwright, browserType, browser, qorvexus) {
   const scriptPath = process.env.QORVEXUS_PLAYWRIGHT_SCRIPT_FILE;
   if (!scriptPath) {
     throw new Error("QORVEXUS_PLAYWRIGHT_SCRIPT_FILE is required in script mode");
   }
   const script = fs.readFileSync(scriptPath, "utf8");
-  const wrapped = new Function(
-    "playwright",
-    "browserType",
-    "context",
-    "page",
-    "qorvexus",
-    `return (async () => {\n${script}\n})();`
-  );
-  return wrapped(playwright, browserType, context, page, qorvexus);
+  const browserForScript = browser || {
+    async newContext() {
+      return context;
+    },
+    contexts() {
+      return [context];
+    },
+    isConnected() {
+      return true;
+    },
+    async close() {
+    },
+  };
+  Object.assign(globalThis, {
+    playwright,
+    chromium: playwright.chromium,
+    firefox: playwright.firefox,
+    webkit: playwright.webkit,
+    browserType,
+    browser: browserForScript,
+    context,
+    page,
+    qorvexus,
+  });
+  const wrapped = new Function(`return (async () => {\n${script}\n})();`);
+  return wrapped();
 }
 
 async function main() {
   const mode = (process.env.QORVEXUS_PLAYWRIGHT_MODE || "script").trim().toLowerCase();
-  const browserName = process.env.QORVEXUS_PLAYWRIGHT_BROWSER || "chromium";
+  const browserName = String(process.env.QORVEXUS_PLAYWRIGHT_BROWSER || "chromium").trim().toLowerCase() || "chromium";
   const profileDir = process.env.QORVEXUS_PLAYWRIGHT_PROFILE_DIR || "";
   const storageStatePath = process.env.QORVEXUS_PLAYWRIGHT_STORAGE_STATE_FILE || "";
   const artifactsDir = process.env.QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR || "";
@@ -1138,7 +1190,7 @@ async function main() {
     if (mode === "actions") {
       result = await runActionsMode(page, context, qorvexus);
     } else {
-      result = await runScriptMode(page, context, playwright, browserType, qorvexus);
+      result = await runScriptMode(page, context, playwright, browserType, browser, qorvexus);
     }
 
     if (saveStorageState && storageStatePath) {

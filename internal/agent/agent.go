@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +19,11 @@ import (
 	"qorvexus/internal/skill"
 	"qorvexus/internal/tool"
 	"qorvexus/internal/types"
+)
+
+const (
+	largeContextLimitChars = 100000
+	largeContextKeepChars  = 50000
 )
 
 type Runner struct {
@@ -54,6 +61,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	}
 	st.Messages = types.SanitizeConversation(st.Messages)
 	st.Messages = normalizeSystemMessages(st.Messages, nil)
+	turnQuery := req.Prompt
 	if req.Prompt != "" || len(req.Parts) > 0 {
 		msg := types.Message{Role: types.RoleUser, Content: req.Prompt}
 		if len(req.Parts) > 0 {
@@ -63,10 +71,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 				msg.Content = ""
 			}
 		}
+		msg = r.boundMessageForContext(msg, "user input")
+		turnQuery = messageTextForMemory(msg, req.Prompt)
 		st.Messages = append(st.Messages, msg)
 	}
 	transientContextPrompts := []string{}
-	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, req.Prompt, st.Context); prompt != "" {
+	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, turnQuery, st.Context); prompt != "" {
 		transientContextPrompts = append(transientContextPrompts, prompt)
 	}
 	if prompt := r.buildActivePlanPrompt(st.ID); prompt != "" {
@@ -87,7 +97,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
-		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
+		if r.Compressor != nil {
+			st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
+		}
 		messagesForModel := withTransientContext(normalizeSystemMessages(st.Messages, nil), transientContextPrompts)
 		tools := r.toolsForRequest(req)
 		response, err := client.Complete(ctx, model.CompletionRequest{
@@ -98,13 +110,18 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			Temperature: cfg.Temperature,
 		})
 		if err != nil {
+			if isContextOverflowError(err) {
+				st.Messages = dropLatestRoundMessages(st.Messages)
+				_ = persist()
+				return nil, "", fmt.Errorf("model context overflow; discarded latest conversation round to avoid retry loop: %w", err)
+			}
 			return nil, "", err
 		}
 		msg := response.Message
 		msg = types.SanitizeAssistantMessage(msg)
 		if len(msg.ToolCalls) == 0 {
 			st.Messages = append(st.Messages, msg)
-			r.captureConversationMemories(req.SessionID, req.Prompt, strings.TrimSpace(msg.Content), st.Context)
+			r.captureConversationMemories(req.SessionID, turnQuery, strings.TrimSpace(msg.Content), st.Context)
 			if err := persist(); err != nil {
 				return nil, "", err
 			}
@@ -140,6 +157,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			if result.Error {
 				content = "ERROR: " + content
 			}
+			content = r.boundTextForContext(content, "tool result "+result.Name)
 			st.Messages = append(st.Messages, types.Message{
 				Role:       types.RoleTool,
 				Name:       result.Name,
@@ -169,8 +187,143 @@ func (r *Runner) drainPendingUserMessages(ctx context.Context, req Request, st *
 	if len(pending) == 0 {
 		return nil
 	}
+	for i := range pending {
+		pending[i] = r.boundMessageForContext(pending[i], "pending user input")
+	}
 	st.Messages = append(st.Messages, pending...)
 	return persist()
+}
+
+func (r *Runner) boundMessageForContext(msg types.Message, label string) types.Message {
+	msg.Content = r.boundTextForContext(msg.Content, label)
+	for i := range msg.Parts {
+		if msg.Parts[i].Text != "" {
+			msg.Parts[i].Text = r.boundTextForContext(msg.Parts[i].Text, label+" part")
+		}
+	}
+	return msg
+}
+
+func messageTextForMemory(msg types.Message, fallback string) string {
+	if strings.TrimSpace(msg.Content) != "" {
+		return msg.Content
+	}
+	parts := make([]string, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		if strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	return fallback
+}
+
+func (r *Runner) boundTextForContext(value string, label string) string {
+	if runeLen(value) <= largeContextLimitChars {
+		return value
+	}
+	artifactPath, saveErr := r.saveLargeContextArtifact(value, label)
+	prefix := firstRunes(value, largeContextKeepChars)
+	note := fmt.Sprintf("\n\n[content truncated: original length %d characters; kept first %d characters; remainder omitted]", runeLen(value), largeContextKeepChars)
+	if saveErr == nil && artifactPath != "" {
+		note = fmt.Sprintf("\n\n[content truncated: original length %d characters; kept first %d characters; full content saved at %s]", runeLen(value), largeContextKeepChars, artifactPath)
+	}
+	return prefix + note
+}
+
+func (r *Runner) saveLargeContextArtifact(value string, label string) (string, error) {
+	baseDir := ""
+	if r != nil && r.Config != nil {
+		baseDir = strings.TrimSpace(r.Config.DataDir)
+	}
+	if baseDir == "" {
+		baseDir = os.TempDir()
+	}
+	dir := filepath.Join(baseDir, "artifacts", "large-context")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := sanitizeArtifactName(label)
+	if name == "" {
+		name = "content"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%d.txt", name, time.Now().UnixNano()))
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func sanitizeArtifactName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '/' || r == '.':
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func runeLen(value string) int {
+	return len([]rune(value))
+}
+
+func firstRunes(value string, keep int) string {
+	if keep <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= keep {
+		return value
+	}
+	return string(runes[:keep])
+}
+
+func isContextOverflowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	needles := []string{
+		"exceeds the available context size",
+		"context length exceeded",
+		"maximum context length",
+		"context window",
+		"too many tokens",
+	}
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func dropLatestRoundMessages(messages []types.Message) []types.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == types.RoleUser {
+			return append([]types.Message{}, messages[:i]...)
+		}
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != types.RoleSystem {
+			return append([]types.Message{}, messages[:i]...)
+		}
+	}
+	return messages
 }
 
 func isZeroContext(ctx types.ConversationContext) bool {
@@ -371,8 +524,9 @@ func (r *Runner) buildOwnerProfilePrompt() string {
 		return ""
 	}
 	entries, err := r.Memory.SearchWithOptions(memory.SearchOptions{
-		Layers: []string{"owner"},
-		Limit:  8,
+		Layers:           []string{"owner"},
+		Limit:            20,
+		IncludeSummaries: true,
 	})
 	if err != nil || len(entries) == 0 {
 		return ""
@@ -381,6 +535,9 @@ func (r *Runner) buildOwnerProfilePrompt() string {
 	b.WriteString("Known owner profile:\n")
 	for _, entry := range entries {
 		content := strings.TrimSpace(entry.Content)
+		if content == "" {
+			content = strings.TrimSpace(entry.Summary)
+		}
 		if content == "" {
 			continue
 		}
@@ -573,8 +730,9 @@ func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx typ
 		}
 	}
 	if ownerCore, err := r.Memory.SearchWithOptions(memory.SearchOptions{
-		Layers: []string{"owner"},
-		Limit:  6,
+		Layers:           []string{"owner"},
+		Limit:            12,
+		IncludeSummaries: true,
 	}); err == nil {
 		add(ownerCore)
 	}
@@ -641,8 +799,8 @@ func (r *Runner) collectRelevantMemories(sessionID string, query string, ctx typ
 		}
 		return out[i].Importance > out[j].Importance
 	})
-	if len(out) > 10 {
-		out = out[:10]
+	if len(out) > 16 {
+		out = out[:16]
 	}
 	return out
 }

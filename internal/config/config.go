@@ -284,7 +284,7 @@ func (c *Config) setDefaults(path string) error {
 		c.Agent.ContextWindowChars = 24000
 	}
 	if c.Agent.CompressionThreshold <= 0 || c.Agent.CompressionThreshold >= 1 {
-		c.Agent.CompressionThreshold = 0.75
+		c.Agent.CompressionThreshold = 0.9
 	}
 	if c.Agent.UseDefaultSystemPrompt == nil {
 		c.Agent.UseDefaultSystemPrompt = boolPtr(true)
@@ -495,6 +495,8 @@ When interacting with the local device, prefer structured system, filesystem, an
 Use run_command for short, synchronous shell work only. For long-running or stateful commands such as apt update, package installs, servers, watchers, or builds that may exceed a short timeout, use manage_process with action=start so the job can keep running in the background.
 When doing software engineering work, prefer repository indexing, structured repo search, apply_diff, change summaries, and test failure localization before improvising with raw shell output.
 When browsing the web, prefer the structured browser workflow tool for common tasks, and use raw Playwright scripts only for flows that need custom logic.
+For browser workflow actions, omit browser/headless/timeouts unless an override is needed; chromium is the default browser. Prefer domcontentloaded plus explicit wait_for selectors/text over networkidle.
+For raw Playwright scripts, use the injected page/context/browser variables directly; do not create a second browser unless the task explicitly needs it.
 When you need simple web fetches or APIs without login or JavaScript interaction, prefer http_request instead of browser automation.
 When browsing the web through Playwright, prefer persistent browser profiles so logins, cookies, and session state can survive across runs.
 When continuity matters, inspect saved sessions with list_sessions and get_session so you can recover relevant context from other threads, channels, or prior work before acting.

@@ -55,6 +55,9 @@ agent:
 	if cfg.Agent.ToolMode != "auto" {
 		t.Fatalf("expected default tool mode auto, got %q", cfg.Agent.ToolMode)
 	}
+	if cfg.Agent.CompressionThreshold != 0.9 {
+		t.Fatalf("expected default compression threshold 0.9, got %v", cfg.Agent.CompressionThreshold)
+	}
 	if got := cfg.Models["primary"].Provider; got != "openai-compatible" {
 		t.Fatalf("expected default provider, got %q", got)
 	}

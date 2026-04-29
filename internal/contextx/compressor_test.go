@@ -56,3 +56,31 @@ func TestMaybeCompressPreservesSystemPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestMaybeCompressUsesSizeWithoutTurnCountGate(t *testing.T) {
+	registry := model.NewRegistry()
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, summaryClient{})
+	compressor := &Compressor{
+		Registry:  registry,
+		MaxChars:  10,
+		Threshold: 0.5,
+	}
+	messages := []types.Message{
+		{Role: types.RoleSystem, Content: "Base rules."},
+		{Role: types.RoleUser, Content: strings.Repeat("a", 20)},
+		{Role: types.RoleAssistant, Content: strings.Repeat("b", 20)},
+	}
+
+	out, err := compressor.MaybeCompress(context.Background(), "primary", messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 2 || !strings.Contains(out[1].Content, "Compressed conversation summary:") {
+		t.Fatalf("expected compressed summary, got %#v", out)
+	}
+	for _, msg := range out {
+		if msg.Content == strings.Repeat("a", 20) {
+			t.Fatalf("expected oldest oversized message to be summarized away, got %#v", out)
+		}
+	}
+}

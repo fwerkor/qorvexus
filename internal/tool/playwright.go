@@ -134,19 +134,19 @@ func NewBrowserWorkflowTool(cfg config.ToolsConfig, manager *PlaywrightManager) 
 func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "browser_workflow",
-		Description: "Run a structured browser workflow with retries, persistent login state, multi-tab control, uploads, form autofill, pagination extraction, screenshots, PDFs, and download indexing. Prefer this for standard browser tasks because it is more reliable and inspectable than writing a custom Playwright script.",
+		Description: "Run a structured browser workflow. Prefer this over custom Playwright scripts for normal browsing: goto, click, type, press, wait_for, fill_form, extract_text, extract_table, screenshot, downloads, tabs, login checks, and pagination. Omit browser/headless/timeouts unless you need overrides; defaults are filled automatically. Navigation waits default to domcontentloaded to avoid networkidle hangs; use wait_for for specific page readiness.",
 		Parameters: schemaObject(map[string]any{
 			"start_url":          schemaString("Optional initial URL to open before executing actions."),
 			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused."),
 			"storage_state":      schemaString("Optional named storage-state snapshot to load before the workflow."),
-			"browser":            schemaString("Optional browser engine override such as chromium."),
+			"browser":            schemaString("Optional browser engine override. Defaults to chromium."),
 			"headless":           schemaBoolean("Whether to run headless. Defaults follow runtime config."),
 			"persist_profile":    schemaBoolean("Whether browser profile changes should be kept after the workflow."),
 			"save_storage_state": schemaBoolean("Whether to save updated storage state for later reuse."),
 			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds."),
 			"retry_count":        schemaInteger("Workflow retry count for transient browser failures."),
 			"actions": schemaArray(
-				"Structured browser actions such as goto, open_tab, switch_tab, close_tab, upload_files, fill_form, paginate_extract, check_login_state, screenshot, save_pdf, and download.",
+				"Structured actions. Common shape: [{\"type\":\"goto\",\"url\":\"https://example.com\"},{\"type\":\"extract_text\",\"selector\":\"body\"}]. Prefer selector/text waits over networkidle.",
 				map[string]any{
 					"type":                 "object",
 					"additionalProperties": true,

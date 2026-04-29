@@ -54,6 +54,66 @@ type Entry struct {
 	EmbeddingModel string    `json:"embedding_model,omitempty"`
 }
 
+type PublicEntry struct {
+	ID             string    `json:"id"`
+	Key            string    `json:"key,omitempty"`
+	Layer          string    `json:"layer,omitempty"`
+	Area           string    `json:"area,omitempty"`
+	Kind           string    `json:"kind,omitempty"`
+	Subject        string    `json:"subject,omitempty"`
+	Summary        string    `json:"summary,omitempty"`
+	Content        string    `json:"content"`
+	Source         string    `json:"source,omitempty"`
+	Tags           []string  `json:"tags,omitempty"`
+	Importance     int       `json:"importance,omitempty"`
+	Confidence     float64   `json:"confidence,omitempty"`
+	AccessCount    int       `json:"access_count,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
+	LastAccessedAt time.Time `json:"last_accessed_at,omitempty"`
+	Archived       bool      `json:"archived,omitempty"`
+	State          string    `json:"state,omitempty"`
+	ConflictKey    string    `json:"conflict_key,omitempty"`
+	ConflictStatus string    `json:"conflict_status,omitempty"`
+	SupersededBy   string    `json:"superseded_by,omitempty"`
+	RelatedIDs     []string  `json:"related_ids,omitempty"`
+	SourceCount    int       `json:"source_count,omitempty"`
+	EmbeddingModel string    `json:"embedding_model,omitempty"`
+}
+
+func PublicEntries(entries []Entry) []PublicEntry {
+	out := make([]PublicEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, PublicEntry{
+			ID:             entry.ID,
+			Key:            entry.Key,
+			Layer:          entry.Layer,
+			Area:           entry.Area,
+			Kind:           entry.Kind,
+			Subject:        entry.Subject,
+			Summary:        entry.Summary,
+			Content:        entry.Content,
+			Source:         entry.Source,
+			Tags:           entry.Tags,
+			Importance:     entry.Importance,
+			Confidence:     entry.Confidence,
+			AccessCount:    entry.AccessCount,
+			CreatedAt:      entry.CreatedAt,
+			UpdatedAt:      entry.UpdatedAt,
+			LastAccessedAt: entry.LastAccessedAt,
+			Archived:       entry.Archived,
+			State:          entry.State,
+			ConflictKey:    entry.ConflictKey,
+			ConflictStatus: entry.ConflictStatus,
+			SupersededBy:   entry.SupersededBy,
+			RelatedIDs:     entry.RelatedIDs,
+			SourceCount:    entry.SourceCount,
+			EmbeddingModel: entry.EmbeddingModel,
+		})
+	}
+	return out
+}
+
 type SearchOptions struct {
 	Query             string
 	Limit             int
