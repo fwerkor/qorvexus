@@ -159,7 +159,13 @@ func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat 
 		}}
 		return payload
 	}
-	payload.Messages = mapMessagesForToolFormat(req.Messages, toolFormat)
+	if toolFormat == "openai" {
+		for _, msg := range req.Messages {
+			payload.Messages = append(payload.Messages, mapMessage(msg))
+		}
+	} else {
+		payload.Messages = mapMessagesForToolFormat(req.Messages, toolFormat)
+	}
 	for _, tool := range req.Tools {
 		def := openAIFunctionDef{
 			Name:        tool.Name,

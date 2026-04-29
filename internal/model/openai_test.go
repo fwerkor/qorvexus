@@ -168,6 +168,56 @@ func TestCompleteMapsRuntimeAliasToProviderModel(t *testing.T) {
 	}
 }
 
+func TestOpenAIToolFormatPreservesMessageShape(t *testing.T) {
+	var payload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient(config.ModelConfig{
+		BaseURL:    srv.URL,
+		Model:      "demo",
+		ToolFormat: "openai",
+	})
+	_, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "demo",
+		Messages: []types.Message{
+			{Role: types.RoleSystem, Content: "system"},
+			{Role: types.RoleUser, Content: "first"},
+			{Role: types.RoleUser, Content: "second"},
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "demo_tool", Arguments: "{}"},
+				},
+			},
+			{Role: types.RoleTool, Name: "demo_tool", ToolCallID: "call-1", Content: "done"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("expected payload messages, got %#v", payload["messages"])
+	}
+	if len(messages) != 5 {
+		t.Fatalf("expected OpenAI mode to preserve all messages, got %#v", messages)
+	}
+	toolMessage, ok := messages[4].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected tool message shape: %#v", messages[4])
+	}
+	if toolMessage["role"] != "tool" || toolMessage["tool_call_id"] != "call-1" {
+		t.Fatalf("expected OpenAI mode to preserve tool message fields, got %#v", toolMessage)
+	}
+}
+
 func TestCompleteRetriesWithLegacyFunctionsOnToolTemplateFailure(t *testing.T) {
 	var payloads []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
