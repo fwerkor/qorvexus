@@ -149,22 +149,28 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 			if err := persist(); err != nil {
 				return nil, "", err
 			}
-		}
-		if req.DrainPendingUserMessages != nil {
-			pending, err := req.DrainPendingUserMessages(ctx, st)
-			if err != nil {
+			if err := r.drainPendingUserMessages(ctx, req, st, persist); err != nil {
 				return nil, "", err
-			}
-			if len(pending) > 0 {
-				st.Messages = append(st.Messages, pending...)
-				if err := persist(); err != nil {
-					return nil, "", err
-				}
 			}
 		}
 	}
 	_ = persist()
 	return nil, "", fmt.Errorf("max turns exceeded")
+}
+
+func (r *Runner) drainPendingUserMessages(ctx context.Context, req Request, st *session.State, persist func() error) error {
+	if req.DrainPendingUserMessages == nil {
+		return nil
+	}
+	pending, err := req.DrainPendingUserMessages(ctx, st)
+	if err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	st.Messages = append(st.Messages, pending...)
+	return persist()
 }
 
 func isZeroContext(ctx types.ConversationContext) bool {

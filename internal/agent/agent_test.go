@@ -871,6 +871,19 @@ func TestRunnerDrainsPendingUserMessagesAfterToolExecution(t *testing.T) {
 	if !foundPending {
 		t.Fatalf("expected second model call to include drained user message, got %#v", client.requests[1].Messages)
 	}
+	toolIndex := -1
+	pendingIndex := -1
+	for i, msg := range client.requests[1].Messages {
+		if msg.Role == types.RoleTool && strings.Contains(msg.Content, "echo:demo") {
+			toolIndex = i
+		}
+		if msg.Role == types.RoleUser && strings.Contains(msg.Content, "Second question") {
+			pendingIndex = i
+		}
+	}
+	if toolIndex < 0 || pendingIndex < 0 || pendingIndex <= toolIndex {
+		t.Fatalf("expected pending user message to be delivered immediately after tool result, got %#v", client.requests[1].Messages)
+	}
 }
 
 func TestRunnerPersistsToolProgressBeforeLaterFailure(t *testing.T) {
