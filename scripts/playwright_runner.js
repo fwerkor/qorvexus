@@ -90,6 +90,29 @@ function resolveArtifactPath(artifactsDir, name, fallbackExt) {
   return target;
 }
 
+function readJSONFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (_err) {
+    return null;
+  }
+}
+
+function writeJSONFile(filePath, value) {
+  if (!filePath) {
+    return;
+  }
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+}
+
+function isBlankURL(value) {
+  return !value || value === "about:blank";
+}
+
 async function withRetry(label, attempts, fn) {
   let lastError = null;
   const total = attempts > 0 ? attempts : 1;
@@ -141,7 +164,7 @@ function isNonEmptyString(value) {
 }
 
 function compactText(value, limit) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim();
   if (!limit || text.length <= limit) {
     return text;
   }
@@ -317,6 +340,16 @@ async function firstVisibleLocator(candidates) {
 
 async function locateBySelectorOrText(page, action) {
   const candidates = [];
+  if (Number.isInteger(action.index)) {
+    const snapshot = await observePage(page, { max_items: Math.max(action.index + 1, 80), text_limit: 200 });
+    const item = snapshot.interactive.find((candidate) => candidate.index === action.index);
+    if (item && item.selector) {
+      candidates.push(page.locator(item.selector));
+    }
+    if (item && item.text) {
+      candidates.push(page.getByText(item.text, { exact: true }));
+    }
+  }
   if (isNonEmptyString(action.selector)) {
     candidates.push(page.locator(action.selector));
   }
@@ -675,7 +708,7 @@ async function observePage(page, options = {}) {
       return style && style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
     }
     function textOf(el) {
-      return String(el.innerText || el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("name") || "").replace(/\s+/g, " ").trim().slice(0, 120);
+      return String(el.innerText || el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("name") || "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
     }
     function cssIdent(value) {
       if (window.CSS && typeof window.CSS.escape === "function") {
@@ -687,48 +720,64 @@ async function observePage(page, options = {}) {
       if (el.id) {
         return `#${cssIdent(el.id)}`;
       }
+      const role = el.getAttribute("role");
+      const label = el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder");
+      if (label) {
+        return `${el.tagName.toLowerCase()}[aria-label="${String(label).replace(/"/g, '\\"')}"]`;
+      }
       const name = el.getAttribute("name");
       if (name) {
         return `${el.tagName.toLowerCase()}[name="${String(name).replace(/"/g, '\\"')}"]`;
-      }
-      const aria = el.getAttribute("aria-label");
-      if (aria) {
-        return `${el.tagName.toLowerCase()}[aria-label="${String(aria).replace(/"/g, '\\"')}"]`;
       }
       const href = el.getAttribute("href");
       if (href && el.tagName.toLowerCase() === "a") {
         return `a[href="${String(href).replace(/"/g, '\\"')}"]`;
       }
+      const text = textOf(el);
+      if (text && (el.tagName.toLowerCase() === "button" || role === "button")) {
+        return `button:has-text("${String(text).replace(/"/g, '\\"')}")`;
+      }
       return el.tagName.toLowerCase();
     }
     const nodes = Array.from(document.querySelectorAll("a[href],button,input,textarea,select,[role='button'],[role='link']"))
-      .filter(visible)
-      .slice(0, limit);
-    return nodes.map((el, index) => {
+      .filter(visible);
+    const items = [];
+    for (const el of nodes) {
       const tag = el.tagName.toLowerCase();
       const role = el.getAttribute("role") || (tag === "a" ? "link" : tag === "button" ? "button" : tag);
+      const text = textOf(el);
+      const href = tag === "a" && el.href ? el.href : "";
+      const selector = selectorOf(el);
+      const genericSelector = selector === "button" || selector === "a" || selector === "input";
+      if (!text && !href && genericSelector) {
+        continue;
+      }
       const item = {
-        index,
+        index: items.length,
         role,
-        text: textOf(el),
-        selector: selectorOf(el),
+        text,
+        selector,
       };
-      if (tag === "a" && el.href) {
-        item.href = el.href;
+      if (href) {
+        item.href = href;
       }
       const type = el.getAttribute("type");
       if (type) {
         item.type = type;
       }
-      return item;
-    });
+      items.push(item);
+      if (items.length >= limit) {
+        break;
+      }
+    }
+    return items;
   }, maxItems).catch(() => []);
   return {
     title,
     url,
     text: compactText(visibleText, textLimit),
     interactive,
-    hint: "Use selector/text/label/placeholder from interactive items for the next browser_workflow action.",
+    hint: "Use index, selector, text, label, or placeholder from interactive items for the next browser_workflow action.",
   };
 }
 
@@ -802,7 +851,8 @@ async function runAction(context, action, state) {
       case "click": {
         const locator = await locateBySelectorOrText(page, action);
         if (!locator) {
-          throw new Error("click action requires selector or text");
+          const snapshot = await observePage(page, { max_items: 12, text_limit: 200 });
+          throw new Error(`click target not found on ${snapshot.url || "blank page"}; provide index/selector/text from observe. Visible targets: ${JSON.stringify(snapshot.interactive)}`);
         }
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
         if (action.wait_for_navigation) {
@@ -1196,18 +1246,21 @@ async function runActionsMode(page, context, qorvexus) {
   const results = [];
   if (input.start_url) {
     results.push(await runAction(context, { type: "goto", url: input.start_url, wait_until: "domcontentloaded" }, state));
+  } else if (isBlankURL(page.url()) && qorvexus.lastURL) {
+    results.push(await runAction(context, { type: "goto", url: qorvexus.lastURL, wait_until: "domcontentloaded" }, state));
   }
   for (const action of actions) {
     results.push(await runAction(context, action, state));
   }
   const currentPage = await ensureCurrentPage(context, state);
+  const lastResult = results.length > 0 ? results[results.length - 1] : null;
   return {
     mode: "actions",
     current_url: currentPage.url(),
     current_tab_index: state.currentTabIndex,
     tabs: await collectTabsInfo(context, state),
     downloads: listDownloadedFiles(qorvexus.artifactsDir),
-    snapshot: await observePage(currentPage, { max_items: 40, text_limit: 1200 }),
+    snapshot: lastResult && lastResult.type === "observe" ? undefined : await observePage(currentPage, { max_items: 30, text_limit: 900 }),
     results,
   };
 }
@@ -1252,6 +1305,7 @@ async function main() {
   const profileDir = process.env.QORVEXUS_PLAYWRIGHT_PROFILE_DIR || "";
   const storageStatePath = process.env.QORVEXUS_PLAYWRIGHT_STORAGE_STATE_FILE || "";
   const artifactsDir = process.env.QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR || "";
+  const sessionStatePath = artifactsDir ? path.join(artifactsDir, "session-state.json") : "";
   const persistProfile = envBool("QORVEXUS_PLAYWRIGHT_PERSIST_PROFILE", true);
   const saveStorageState = envBool("QORVEXUS_PLAYWRIGHT_SAVE_STORAGE_STATE", true);
   const headless = envBool("QORVEXUS_PLAYWRIGHT_HEADLESS", true);
@@ -1275,11 +1329,14 @@ async function main() {
   let browser = null;
   let context = null;
   let page = null;
+  const sessionState = readJSONFile(sessionStatePath) || {};
   const qorvexus = {
     browserName,
     profileDir,
     storageStatePath,
     artifactsDir,
+    sessionStatePath,
+    lastURL: sessionState.last_url || "",
     timeoutSeconds,
     actionTimeoutSeconds,
     log(value) {
@@ -1303,6 +1360,17 @@ async function main() {
       if (storageStatePath) {
         await context.storageState({ path: storageStatePath });
       }
+    },
+    saveSessionState(extra) {
+      const currentPage = page || (context && context.pages()[0]);
+      const currentURL = currentPage && typeof currentPage.url === "function" ? currentPage.url() : "";
+      const next = {
+        ...sessionState,
+        ...(extra || {}),
+        last_url: isBlankURL(currentURL) ? (sessionState.last_url || "") : currentURL,
+        updated_at: new Date().toISOString(),
+      };
+      writeJSONFile(sessionStatePath, next);
     },
     async observe(options) {
       return observePage(await this.ensurePage(), options || {});
@@ -1365,6 +1433,7 @@ async function main() {
     if (saveStorageState && storageStatePath) {
       await context.storageState({ path: storageStatePath });
     }
+    qorvexus.saveSessionState();
 
     const text = stringifyResult(result);
     if (text) {
@@ -1376,6 +1445,12 @@ async function main() {
   } finally {
     if (context && saveStorageState && storageStatePath) {
       await context.storageState({ path: storageStatePath }).catch(() => {});
+    }
+    if (context && sessionStatePath) {
+      try {
+        qorvexus.saveSessionState();
+      } catch (_err) {
+      }
     }
     if (context) {
       await context.close();

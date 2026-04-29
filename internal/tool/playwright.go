@@ -134,7 +134,7 @@ func NewBrowserWorkflowTool(cfg config.ToolsConfig, manager *PlaywrightManager) 
 func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "browser_workflow",
-		Description: "Run a structured browser workflow. Prefer this over custom scripts for normal browsing. Use observe first or after navigation to see the current URL, page text, clickable links/buttons, inputs, and selectors. Common actions: observe, goto, click, type, press, wait_for, fill_form, login_form, extract_text, extract_table, screenshot, downloads, tabs, login checks, and pagination. Omit browser/headless/timeouts unless needed; defaults are filled automatically. Navigation waits default to domcontentloaded and individual actions default to short timeouts to avoid hangs.",
+		Description: "Run a structured browser workflow. Prefer this over custom scripts for normal browsing. Use observe first or after navigation to see the current URL, page text, clickable links/buttons, inputs, indexes, and selectors. Later actions may target an observed element by index, selector, text, label, or placeholder. Common actions: observe, goto, click, type, press, wait_for, fill_form, login_form, extract_text, extract_table, screenshot, downloads, tabs, login checks, and pagination. Omit browser/headless/timeouts unless needed; defaults are filled automatically. With a persistent profile, calls without start_url resume the last non-blank URL. Navigation waits default to domcontentloaded and individual actions default to short timeouts to avoid hangs.",
 		Parameters: schemaObject(map[string]any{
 			"start_url":          schemaString("Optional initial URL to open before executing actions."),
 			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused."),
@@ -146,7 +146,7 @@ func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds."),
 			"retry_count":        schemaInteger("Workflow retry count for transient browser failures."),
 			"actions": schemaArray(
-				"Structured actions. Common shape: [{\"type\":\"goto\",\"url\":\"https://example.com\"},{\"type\":\"observe\"},{\"type\":\"click\",\"text\":\"Login\"}]. Prefer observe and explicit selector/text/label/placeholder over guessing hidden elements.",
+				"Structured actions. Common shape: [{\"type\":\"goto\",\"url\":\"https://example.com\"},{\"type\":\"observe\"},{\"type\":\"click\",\"index\":3}]. Prefer observe and target by index/selector/text/label/placeholder over guessing hidden elements.",
 				map[string]any{
 					"type":                 "object",
 					"additionalProperties": true,
