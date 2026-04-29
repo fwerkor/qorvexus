@@ -101,7 +101,7 @@ type openAIEmbeddingResponse struct {
 
 func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	payload := openAIRequest{
-		Model:       c.pick(req.Model, c.cfg.Model),
+		Model:       c.providerModel(req.Model),
 		Messages:    make([]openAIMessage, 0, len(req.Messages)),
 		MaxTokens:   c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
 		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
@@ -183,7 +183,7 @@ func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*Embedd
 		return &EmbeddingResponse{}, nil
 	}
 	payload := openAIEmbeddingRequest{
-		Model: c.pick(req.Model, c.cfg.Model),
+		Model: c.providerModel(req.Model),
 		Input: inputs,
 	}
 	body, err := json.Marshal(payload)
@@ -406,6 +406,24 @@ func (c *OpenAIClient) pick(primary, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+func (c *OpenAIClient) providerModel(requested string) string {
+	configured := strings.TrimSpace(c.cfg.Model)
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return configured
+	}
+	if configured == "" {
+		return requested
+	}
+	if strings.EqualFold(requested, strings.TrimSpace(c.cfg.RuntimeName)) {
+		return configured
+	}
+	if strings.EqualFold(requested, "primary") && !strings.EqualFold(configured, "primary") {
+		return configured
+	}
+	return requested
 }
 
 func (c *OpenAIClient) pickInt(primary, fallback int) int {

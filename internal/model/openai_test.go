@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,6 +135,36 @@ func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	}
 	if got := resp.Usage["completion_tokens_details.reasoning_tokens"]; got != 0 {
 		t.Fatalf("expected nested reasoning token count to flatten, got %d", got)
+	}
+}
+
+func TestCompleteMapsRuntimeAliasToProviderModel(t *testing.T) {
+	var payload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient(config.ModelConfig{
+		RuntimeName: "primary",
+		BaseURL:     srv.URL,
+		Model:       "provider-model-id",
+	})
+	_, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["model"]; got != "provider-model-id" {
+		t.Fatalf("expected provider model id, got %#v", got)
 	}
 }
 

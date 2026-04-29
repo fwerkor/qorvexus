@@ -30,6 +30,7 @@ type SkillsConfig struct {
 }
 
 type ModelConfig struct {
+	RuntimeName string            `yaml:"-"`
 	Provider    string            `yaml:"provider"`
 	BaseURL     string            `yaml:"base_url"`
 	APIKey      string            `yaml:"api_key"`
@@ -218,6 +219,7 @@ func (c *Config) setDefaults(path string) error {
 		}
 	}
 	for name, modelCfg := range c.Models {
+		modelCfg.RuntimeName = name
 		if strings.TrimSpace(modelCfg.Provider) == "" {
 			modelCfg.Provider = "openai-compatible"
 		}
