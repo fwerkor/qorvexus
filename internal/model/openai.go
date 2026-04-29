@@ -101,26 +101,28 @@ type openAIEmbeddingResponse struct {
 }
 
 func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
-	payload := c.buildCompletionPayload(req, c.cfg.ToolFormat)
+	toolFormat := normalizeToolFormat(c.cfg.ToolFormat)
+	payload := c.buildCompletionPayload(req, toolFormat)
 
 	resp, raw, err := c.sendCompletionPayload(ctx, payload)
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode >= 300 && payloadHasTools(payload) && looksLikeToolTemplateFailure(resp.StatusCode, raw) {
-		for _, fallbackFormat := range fallbackToolFormats(c.cfg.ToolFormat) {
-			payload = c.buildCompletionPayload(req, fallbackFormat)
+	if resp.StatusCode >= 300 && looksLikeToolTemplateFailure(resp.StatusCode, raw) {
+		for _, fallbackFormat := range fallbackToolFormats(toolFormat) {
+			toolFormat = fallbackFormat
+			payload = c.buildCompletionPayload(req, toolFormat)
 			resp, raw, err = c.sendCompletionPayload(ctx, payload)
 			if err != nil {
 				return nil, err
 			}
-			if resp.StatusCode < 300 || !payloadHasTools(payload) || !looksLikeToolTemplateFailure(resp.StatusCode, raw) {
+			if resp.StatusCode < 300 || !looksLikeToolTemplateFailure(resp.StatusCode, raw) {
 				break
 			}
 		}
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("model returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return nil, fmt.Errorf("model returned %s: %s (%s)", resp.Status, strings.TrimSpace(string(raw)), payloadSummary(payload, toolFormat))
 	}
 
 	parsed := &openAIResponse{}
@@ -150,9 +152,14 @@ func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat 
 		MaxTokens:   c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
 		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
 	}
-	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, mapMessageForToolFormat(msg, toolFormat))
+	if toolFormat == "plain_text" {
+		payload.Messages = []openAIMessage{{
+			Role:    string(types.RoleUser),
+			Content: renderMessagesAsPlainPrompt(req.Messages),
+		}}
+		return payload
 	}
+	payload.Messages = mapMessagesForToolFormat(req.Messages, toolFormat)
 	for _, tool := range req.Tools {
 		def := openAIFunctionDef{
 			Name:        tool.Name,
@@ -218,15 +225,13 @@ func looksLikeToolTemplateFailure(statusCode int, raw []byte) bool {
 		strings.Contains(text, "tools")
 }
 
-func payloadHasTools(payload openAIRequest) bool {
-	return len(payload.Tools) > 0 || len(payload.Functions) > 0
-}
-
 func fallbackToolFormats(current string) []string {
 	switch normalizeToolFormat(current) {
 	case "legacy_functions":
 		return []string{"none"}
 	case "none":
+		return nil
+	case "plain_text":
 		return nil
 	default:
 		return []string{"legacy_functions", "none"}
@@ -241,9 +246,38 @@ func normalizeToolFormat(value string) string {
 		return "legacy_functions"
 	case "none", "disabled", "off", "no_tools":
 		return "none"
+	case "plain", "plain_text", "text":
+		return "plain_text"
 	default:
 		return "openai"
 	}
+}
+
+func payloadSummary(payload openAIRequest, toolFormat string) string {
+	roles := make([]string, 0, len(payload.Messages))
+	for _, msg := range payload.Messages {
+		role := msg.Role
+		if role == "" {
+			role = "unknown"
+		}
+		detail := role
+		if msg.ToolCallID != "" {
+			detail += ":tool_call_id"
+		}
+		if len(msg.ToolCalls) > 0 {
+			detail += fmt.Sprintf(":tool_calls=%d", len(msg.ToolCalls))
+		}
+		roles = append(roles, detail)
+	}
+	return fmt.Sprintf(
+		"request model=%q tool_format=%q messages=%d roles=%s tools=%d functions=%d",
+		payload.Model,
+		normalizeToolFormat(toolFormat),
+		len(payload.Messages),
+		strings.Join(roles, ","),
+		len(payload.Tools),
+		len(payload.Functions),
+	)
 }
 
 func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
@@ -348,6 +382,19 @@ func mapMessage(msg types.Message) openAIMessage {
 	return out
 }
 
+func mapMessagesForToolFormat(messages []types.Message, toolFormat string) []openAIMessage {
+	out := make([]openAIMessage, 0, len(messages))
+	for _, msg := range messages {
+		mapped := mapMessageForToolFormat(msg, toolFormat)
+		if len(out) > 0 && mapped.Role != string(types.RoleSystem) && out[len(out)-1].Role == mapped.Role {
+			out[len(out)-1].Content = strings.TrimSpace(messageContentAsString(out[len(out)-1].Content) + "\n\n" + messageContentAsString(mapped.Content))
+			continue
+		}
+		out = append(out, mapped)
+	}
+	return out
+}
+
 func mapMessageForToolFormat(msg types.Message, toolFormat string) openAIMessage {
 	if normalizeToolFormat(toolFormat) == "openai" {
 		return mapMessage(msg)
@@ -421,6 +468,65 @@ func renderToolCallsAsText(calls []types.ToolCall) string {
 		lines = append(lines, "- "+name+"("+args+")")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderMessagesAsPlainPrompt(messages []types.Message) string {
+	if len(messages) == 0 {
+		return "Continue."
+	}
+	blocks := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		role := string(msg.Role)
+		if role == "" {
+			role = "message"
+		}
+		content := messageTextContent(msg)
+		if msg.Role == types.RoleTool {
+			name := strings.TrimSpace(msg.Name)
+			if name == "" {
+				name = "tool"
+			}
+			content = strings.TrimSpace("Tool result from " + name + ":\n" + msg.Content)
+		}
+		if len(msg.ToolCalls) > 0 {
+			summary := "Assistant requested tool calls:\n" + renderToolCallsAsText(msg.ToolCalls)
+			if content == "" {
+				content = summary
+			} else {
+				content += "\n\n" + summary
+			}
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		blocks = append(blocks, strings.ToUpper(role[:1])+role[1:]+":\n"+strings.TrimSpace(content))
+	}
+	if len(blocks) == 0 {
+		return "Continue."
+	}
+	return strings.Join(blocks, "\n\n") + "\n\nAssistant:"
+}
+
+func messageContentAsString(content any) string {
+	switch typed := content.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []map[string]any:
+		parts := make([]string, 0, len(typed))
+		for _, part := range typed {
+			if text := strings.TrimSpace(toString(part["text"])); text != "" {
+				parts = append(parts, text)
+			}
+			if image, ok := part["image_url"].(map[string]any); ok {
+				if url := strings.TrimSpace(toString(image["url"])); url != "" {
+					parts = append(parts, "[image: "+url+"]")
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	default:
+		return ""
+	}
 }
 
 func fromOpenAIMessage(msg openAIResponseMessage) types.Message {

@@ -551,6 +551,8 @@ func normalizeToolFormat(value string) string {
 		return "legacy_functions"
 	case "none", "off", "disabled", "no_tools":
 		return "none"
+	case "plain", "plain_text", "text":
+		return "plain_text"
 	default:
 		return strings.TrimSpace(value)
 	}
