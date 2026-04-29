@@ -192,6 +192,9 @@ const controlPanelHTML = `<!doctype html>
     .message.system .message-body { background: #fffaf0; border-color: #ead8aa; }
     .message.tool .message-body { background: #f7f7f8; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
     .message-tools { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    details.tool-detail { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+    details.tool-detail summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    .tool-json { margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
     @media (max-width: 920px) {
       header { align-items: flex-start; height: auto; padding: 12px 14px; flex-direction: column; }
       main { grid-template-columns: 1fr; padding: 12px; }
@@ -455,10 +458,28 @@ const controlPanelHTML = `<!doctype html>
     function renderMessage(msg) {
       const role = String(msg.role || "message");
       const content = messageText(msg) || "(empty)";
-      const calls = (msg.tool_calls || []).map(c => escapeHTML(c.name || c.id || "tool")).join(", ");
-      const callHTML = calls ? "<div class='message-tools'>Tool calls: " + calls + "</div>" : "";
-      const toolID = msg.tool_call_id ? "<div class='message-tools'>Tool result: " + escapeHTML(msg.name || msg.tool_call_id) + "</div>" : "";
-      return "<div class='message " + escapeHTML(role) + "'><div class='message-role'>" + escapeHTML(role) + "</div><div class='message-body'>" + escapeHTML(content) + callHTML + toolID + "</div></div>";
+      const callHTML = renderToolCallDetails(msg.tool_calls || []);
+      const toolHTML = msg.tool_call_id || role === "tool" ? renderToolResultDetail(msg) : "";
+      return "<div class='message " + escapeHTML(role) + "'><div class='message-role'>" + escapeHTML(role) + "</div><div class='message-body'>" + escapeHTML(content) + callHTML + toolHTML + "</div></div>";
+    }
+    function renderToolCallDetails(calls) {
+      if (!calls.length) return "";
+      return calls.map((call, index) => {
+        const name = call.name || call.id || "tool";
+        const args = prettyJSON(call.arguments || "{}");
+        return "<details class='tool-detail'><summary>Tool call " + escapeHTML(index + 1) + ": " + escapeHTML(name) + "</summary><div class='tool-json'>" + escapeHTML(args) + "</div></details>";
+      }).join("");
+    }
+    function renderToolResultDetail(msg) {
+      const label = msg.name || msg.tool_call_id || "tool";
+      const body = msg.content || "";
+      return "<details class='tool-detail'><summary>Tool result: " + escapeHTML(label) + "</summary><div class='tool-json'>" + escapeHTML(prettyJSON(body)) + "</div></details>";
+    }
+    function prettyJSON(value) {
+      if (typeof value !== "string") return JSON.stringify(value, null, 2);
+      const trimmed = value.trim();
+      if (!trimmed) return "";
+      try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch (_) { return value; }
     }
     function messageText(msg) {
       if (!msg) return "";
