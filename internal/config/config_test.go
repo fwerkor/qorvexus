@@ -32,8 +32,8 @@ agent:
 	if len(cfg.Skills.Dirs) == 0 {
 		t.Fatal("expected default skills dirs")
 	}
-	if cfg.Agent.MaxTurns != 12 {
-		t.Fatalf("expected default max turns, got %d", cfg.Agent.MaxTurns)
+	if cfg.Agent.MaxTurns != 0 {
+		t.Fatalf("expected unlimited default max turns, got %d", cfg.Agent.MaxTurns)
 	}
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")

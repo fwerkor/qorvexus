@@ -277,8 +277,8 @@ func (c *Config) setDefaults(path string) error {
 	if c.Agent.VisionFallbackModel == "" {
 		c.Agent.VisionFallbackModel = c.Agent.DefaultModel
 	}
-	if c.Agent.MaxTurns <= 0 {
-		c.Agent.MaxTurns = 12
+	if c.Agent.MaxTurns < 0 {
+		c.Agent.MaxTurns = 0
 	}
 	if c.Agent.ContextWindowChars <= 0 {
 		c.Agent.ContextWindowChars = 24000

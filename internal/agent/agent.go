@@ -83,10 +83,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	if req.MaxTurns > 0 && (maxTurns <= 0 || req.MaxTurns < maxTurns) {
 		maxTurns = req.MaxTurns
 	}
-	if maxTurns <= 0 {
-		maxTurns = 1
-	}
-	for turn := 0; turn < maxTurns; turn++ {
+	for turn := 0; maxTurns <= 0 || turn < maxTurns; turn++ {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
 		messagesForModel := withTransientContext(normalizeSystemMessages(st.Messages, nil), transientContextPrompts)
 		tools := r.toolsForRequest(req)

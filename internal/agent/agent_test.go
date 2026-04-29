@@ -744,6 +744,59 @@ func TestRunnerEmitsAssistantPrefaceBeforeToolExecution(t *testing.T) {
 	}
 }
 
+func TestRunnerDefaultMaxTurnsIsUnlimited(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &sequencedStubClient{
+		replies: []types.Message{
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "echo", Arguments: `{"text":"first"}`},
+				},
+			},
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []types.ToolCall{
+					{ID: "call-2", Name: "echo", Arguments: `{"text":"second"}`},
+				},
+			},
+			{
+				Role:    types.RoleAssistant,
+				Content: "Done after two tool turns.",
+			},
+		},
+	}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tools,
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-unlimited-default",
+		Prompt:    "Use tools twice.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Done after two tool turns." {
+		t.Fatalf("expected final output after multiple tool turns, got %q", out)
+	}
+	if client.calls != 3 {
+		t.Fatalf("expected three model calls, got %d", client.calls)
+	}
+}
+
 func TestRunnerDrainsPendingUserMessagesAfterToolExecution(t *testing.T) {
 	tempDir := t.TempDir()
 	registry := model.NewRegistry()

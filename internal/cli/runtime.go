@@ -703,7 +703,7 @@ func (a *appRuntime) runSubAgentWithSession(ctx context.Context, sessionID strin
 func (a *appRuntime) subAgentMaxTurns() int {
 	maxTurns := a.cfg.Agent.MaxTurns
 	if maxTurns <= 0 {
-		return 4
+		return 0
 	}
 	if maxTurns <= 4 {
 		return maxTurns
