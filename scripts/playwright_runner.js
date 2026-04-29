@@ -842,11 +842,14 @@ function normalizeActionDefaults(rawAction) {
     snapshot: "observe",
     inspect: "observe",
     login: "login_form",
+    scroll: "scroll",
   };
   type = aliases[type] || type;
   if (!type) {
     if (isNonEmptyString(action.url) || isNonEmptyString(action.href)) {
       type = "goto";
+    } else if (isNonEmptyString(action.key)) {
+      type = "press";
     } else if ((action.selector || action.text) && (action.value !== undefined || action.input !== undefined)) {
       type = "type";
     } else if (action.selector || action.text) {
@@ -944,12 +947,29 @@ async function runAction(context, action, state) {
       }
       case "press": {
         const locator = await locateBySelectorOrText(page, action, state);
-        if (!locator) {
-          throw new Error("press action requires selector, text, label, placeholder, or role/name");
+        const key = String(action.key || "Enter");
+        if (locator) {
+          await locator.waitFor({ state: "visible", timeout: timeoutMs });
+          await locator.press(key, { timeout: timeoutMs });
+        } else {
+          await page.keyboard.press(key);
         }
-        await locator.waitFor({ state: "visible", timeout: timeoutMs });
-        await locator.press(String(action.key || "Enter"), { timeout: timeoutMs });
-        return { type, selector: action.selector, key: action.key || "Enter", tab_index: state.currentTabIndex };
+        const settled = await settleAfterAction(page, action, timeoutMs, "", { text: key });
+        return { type, selector: action.selector || "", key, settled, url: page.url(), tab_index: state.currentTabIndex };
+      }
+      case "scroll": {
+        const amount = Number.isFinite(action.amount) ? action.amount : Number.isFinite(action.pixels) ? action.pixels : 900;
+        const direction = String(action.direction || "down").toLowerCase();
+        if (direction === "top" || direction === "home") {
+          await page.keyboard.press("Home");
+        } else if (direction === "bottom" || direction === "end") {
+          await page.keyboard.press("End");
+        } else {
+          const dy = direction === "up" ? -Math.abs(amount) : Math.abs(amount);
+          await page.mouse.wheel(0, dy);
+        }
+        await settleAfterAction(page, action, timeoutMs, "", { text: "scroll" });
+        return { type, direction, amount, url: page.url(), tab_index: state.currentTabIndex };
       }
       case "login_form": {
         const usernameField = action.username_selector
@@ -986,14 +1006,15 @@ async function runAction(context, action, state) {
         return { type, username: String(action.username || ""), url: page.url(), snapshot: await observePage(page, { max_items: 20, text_limit: 500 }), tab_index: state.currentTabIndex };
       }
       case "extract_table": {
-        const table = await extractTable(page, action.selector);
-        return { type, selector: action.selector, name: action.name || "", table, tab_index: state.currentTabIndex };
+        const selector = action.selector || "table";
+        const table = await extractTable(page, selector);
+        return { type, selector, name: action.name || "", table, tab_index: state.currentTabIndex };
       }
       case "extract_text": {
-        const locator = page.locator(action.selector).first();
+        const locator = await locateBySelectorOrText(page, action, state) || page.locator(action.selector || "body").first();
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
         const text = (await locator.textContent()) || "";
-        return { type, selector: action.selector, text: text.trim(), tab_index: state.currentTabIndex };
+        return { type, selector: action.selector || "body", text: text.trim(), tab_index: state.currentTabIndex };
       }
       case "expect_text": {
         if (!action.text) {
@@ -1037,13 +1058,14 @@ async function runAction(context, action, state) {
         return { type, path: target, tab_index: state.currentTabIndex };
       }
       case "download": {
-        if (!action.selector) {
-          throw new Error("download action requires selector");
+        const locator = await locateBySelectorOrText(page, action, state);
+        if (!locator) {
+          throw new Error("download action requires index, selector, text, label, placeholder, or role/name");
         }
         const downloadsDir = path.join(state.artifactsDir, "downloads");
         ensureDir(downloadsDir);
         const downloadPromise = page.waitForEvent("download", { timeout: timeoutMs });
-        await page.locator(action.selector).first().click({ timeout: timeoutMs });
+        await locator.click({ timeout: timeoutMs });
         const download = await downloadPromise;
         const fileName = sanitizeName(download.suggestedFilename(), `download-${Date.now()}`);
         const target = resolveArtifactPath(downloadsDir, fileName, "");
@@ -1070,10 +1092,10 @@ async function runAction(context, action, state) {
               timeout: timeoutMs,
             });
           }
-        } else if (action.selector || action.text) {
+        } else if (Number.isInteger(action.index) || action.selector || action.text || action.label || action.placeholder || (action.role && action.name)) {
           const trigger = await locateBySelectorOrText(page, action, state);
           if (!trigger) {
-            throw new Error("open_tab requires url, selector, or text");
+            throw new Error("open_tab requires url or an observed/indexed target");
           }
           const popupPromise = context.waitForEvent("page", { timeout: timeoutMs }).catch(() => null);
           await trigger.click({ timeout: timeoutMs });
@@ -1145,11 +1167,11 @@ async function runAction(context, action, state) {
         };
       }
       case "upload_files": {
-        if (!action.selector) {
-          throw new Error("upload_files requires selector");
-        }
         const files = normalizeUploadFiles(action);
-        const locator = page.locator(action.selector).first();
+        const locator = await locateBySelectorOrText(page, action, state) || (action.selector ? page.locator(action.selector).first() : null);
+        if (!locator) {
+          throw new Error("upload_files requires index, selector, text, label, placeholder, or role/name");
+        }
         await locator.waitFor({ state: "attached", timeout: timeoutMs });
         await locator.setInputFiles(files);
         return {
