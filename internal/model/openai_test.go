@@ -168,6 +168,113 @@ func TestCompleteMapsRuntimeAliasToProviderModel(t *testing.T) {
 	}
 }
 
+func TestCompleteRetriesWithLegacyFunctionsOnToolTemplateFailure(t *testing.T) {
+	var payloads []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		if len(payloads) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"While executing CallExpression at line 85 in chat template"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient(config.ModelConfig{
+		BaseURL: srv.URL,
+		Model:   "demo",
+	})
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "demo",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "hello"},
+		},
+		Tools: []types.ToolDefinition{
+			{
+				Name:        "demo_tool",
+				Description: "demo",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(resp.Message.Content) != "ok" {
+		t.Fatalf("unexpected content: %q", resp.Message.Content)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected retry with legacy functions, got %d requests", len(payloads))
+	}
+	if _, ok := payloads[0]["tools"]; !ok {
+		t.Fatalf("expected first request to include tools")
+	}
+	if _, ok := payloads[1]["tools"]; ok {
+		t.Fatalf("expected retry request to omit OpenAI tools, got %#v", payloads[1]["tools"])
+	}
+	if _, ok := payloads[1]["functions"]; !ok {
+		t.Fatalf("expected retry request to include legacy functions")
+	}
+}
+
+func TestCompleteRetriesWithoutToolsWhenLegacyFunctionsAlsoFail(t *testing.T) {
+	var payloads []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		if len(payloads) < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"While executing CallExpression at line 85 in chat template"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient(config.ModelConfig{
+		BaseURL: srv.URL,
+		Model:   "demo",
+	})
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "demo",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "hello"},
+		},
+		Tools: []types.ToolDefinition{
+			{
+				Name:        "demo_tool",
+				Description: "demo",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(resp.Message.Content) != "ok" {
+		t.Fatalf("unexpected content: %q", resp.Message.Content)
+	}
+	if len(payloads) != 3 {
+		t.Fatalf("expected OpenAI tools, legacy functions, then no-tools retry, got %d requests", len(payloads))
+	}
+	if _, ok := payloads[2]["tools"]; ok {
+		t.Fatalf("expected final retry request to omit tools, got %#v", payloads[2]["tools"])
+	}
+	if _, ok := payloads[2]["functions"]; ok {
+		t.Fatalf("expected final retry request to omit functions, got %#v", payloads[2]["functions"])
+	}
+}
+
 func TestEmbedAcceptsNestedUsageObjects(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/embeddings" {

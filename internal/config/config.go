@@ -38,6 +38,7 @@ type ModelConfig struct {
 	MaxTokens   int               `yaml:"max_tokens"`
 	Temperature float64           `yaml:"temperature"`
 	Headers     map[string]string `yaml:"headers"`
+	ToolFormat  string            `yaml:"tool_format"`
 	Vision      bool              `yaml:"vision"`
 }
 
@@ -247,6 +248,7 @@ func (c *Config) setDefaults(path string) error {
 				modelCfg.Temperature = 0.1
 			}
 		}
+		modelCfg.ToolFormat = normalizeToolFormat(modelCfg.ToolFormat)
 		c.Models[name] = modelCfg
 	}
 	if c.DataDir == "" {
@@ -539,4 +541,17 @@ func resolveBundledFile(base string, relativePath string) string {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func normalizeToolFormat(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "openai", "tools":
+		return "openai"
+	case "legacy", "legacy_functions", "functions":
+		return "legacy_functions"
+	case "none", "off", "disabled", "no_tools":
+		return "none"
+	default:
+		return strings.TrimSpace(value)
+	}
 }

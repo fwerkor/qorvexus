@@ -29,11 +29,12 @@ func NewOpenAIClient(cfg config.ModelConfig) *OpenAIClient {
 }
 
 type openAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMessage `json:"messages"`
-	Tools       []openAITool    `json:"tools,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
+	Model       string              `json:"model"`
+	Messages    []openAIMessage     `json:"messages"`
+	Tools       []openAITool        `json:"tools,omitempty"`
+	Functions   []openAIFunctionDef `json:"functions,omitempty"`
+	MaxTokens   int                 `json:"max_tokens,omitempty"`
+	Temperature float64             `json:"temperature,omitempty"`
 }
 
 type openAIMessage struct {
@@ -100,54 +101,23 @@ type openAIEmbeddingResponse struct {
 }
 
 func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
-	payload := openAIRequest{
-		Model:       c.providerModel(req.Model),
-		Messages:    make([]openAIMessage, 0, len(req.Messages)),
-		MaxTokens:   c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
-		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
-	}
-	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, mapMessage(msg))
-	}
-	for _, tool := range req.Tools {
-		payload.Tools = append(payload.Tools, openAITool{
-			Type: "function",
-			Function: openAIFunctionDef{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Parameters:  tool.Parameters,
-			},
-		})
-	}
+	payload := c.buildCompletionPayload(req, c.cfg.ToolFormat)
 
-	body, err := json.Marshal(payload)
+	resp, raw, err := c.sendCompletionPayload(ctx, payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, err
 	}
-
-	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	for k, v := range c.cfg.Headers {
-		httpReq.Header.Set(k, v)
-	}
-	key := strings.TrimSpace(c.cfg.APIKey)
-	if key != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+key)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+	if resp.StatusCode >= 300 && payloadHasTools(payload) && looksLikeToolTemplateFailure(resp.StatusCode, raw) {
+		for _, fallbackFormat := range fallbackToolFormats(c.cfg.ToolFormat) {
+			payload = c.buildCompletionPayload(req, fallbackFormat)
+			resp, raw, err = c.sendCompletionPayload(ctx, payload)
+			if err != nil {
+				return nil, err
+			}
+			if resp.StatusCode < 300 || !payloadHasTools(payload) || !looksLikeToolTemplateFailure(resp.StatusCode, raw) {
+				break
+			}
+		}
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("model returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
@@ -170,6 +140,99 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 		Usage:   normalizeUsage(parsed.Usage),
 		Raw:     strings.TrimSpace(string(raw)),
 	}, nil
+}
+
+func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat string) openAIRequest {
+	payload := openAIRequest{
+		Model:       c.providerModel(req.Model),
+		Messages:    make([]openAIMessage, 0, len(req.Messages)),
+		MaxTokens:   c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
+		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
+	}
+	for _, msg := range req.Messages {
+		payload.Messages = append(payload.Messages, mapMessage(msg))
+	}
+	if strings.TrimSpace(toolFormat) == "" {
+		toolFormat = "openai"
+	}
+	for _, tool := range req.Tools {
+		def := openAIFunctionDef{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  tool.Parameters,
+		}
+		switch strings.ToLower(strings.TrimSpace(toolFormat)) {
+		case "none", "disabled", "off", "no_tools":
+			continue
+		case "legacy_functions", "legacy", "functions":
+			payload.Functions = append(payload.Functions, def)
+		default:
+			payload.Tools = append(payload.Tools, openAITool{
+				Type:     "function",
+				Function: def,
+			})
+		}
+	}
+	return payload
+}
+
+func (c *OpenAIClient) sendCompletionPayload(ctx context.Context, payload openAIRequest) (*http.Response, []byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	for k, v := range c.cfg.Headers {
+		httpReq.Header.Set(k, v)
+	}
+	key := strings.TrimSpace(c.cfg.APIKey)
+	if key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read response: %w", err)
+	}
+	return resp, raw, nil
+}
+
+func looksLikeToolTemplateFailure(statusCode int, raw []byte) bool {
+	if statusCode != http.StatusInternalServerError {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(string(raw)))
+	return strings.Contains(text, "while executing callexpression") ||
+		strings.Contains(text, "chat template") ||
+		strings.Contains(text, "jinja") ||
+		strings.Contains(text, "tools")
+}
+
+func payloadHasTools(payload openAIRequest) bool {
+	return len(payload.Tools) > 0 || len(payload.Functions) > 0
+}
+
+func fallbackToolFormats(current string) []string {
+	switch strings.ToLower(strings.TrimSpace(current)) {
+	case "legacy_functions", "legacy", "functions":
+		return []string{"none"}
+	case "none", "disabled", "off", "no_tools":
+		return nil
+	default:
+		return []string{"legacy_functions", "none"}
+	}
 }
 
 func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
