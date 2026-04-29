@@ -146,6 +146,52 @@ const controlPanelHTML = `<!doctype html>
     .col-4 { grid-column: span 4; }
     .col-6 { grid-column: span 6; }
     .col-12 { grid-column: span 12; }
+    .chat-shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; min-height: calc(100vh - 116px); }
+    .session-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); min-height: 0; }
+    .session-tools { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+    .session-items { max-height: calc(100vh - 244px); overflow: auto; }
+    .session-item {
+      display: grid;
+      gap: 4px;
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: #fff;
+      color: var(--ink);
+      text-align: left;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .session-item:hover, .session-item.active { background: var(--accent-soft); }
+    .session-id { font-weight: 700; overflow-wrap: anywhere; }
+    .session-preview { color: var(--muted); font-size: 12px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .session-meta { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 8px; }
+    .chat-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .chat-header { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .chat-title { min-width: 0; }
+    .chat-title strong { display: block; overflow-wrap: anywhere; }
+    .chat-title span { color: var(--muted); font-size: 12px; }
+    .chat-stream { padding: 14px; overflow: auto; max-height: calc(100vh - 186px); display: grid; align-content: start; gap: 12px; }
+    .chat-group { display: grid; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+    .chat-group:last-child { border-bottom: 0; padding-bottom: 0; }
+    .chat-group-head { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 10px; }
+    .message { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: start; }
+    .message-role { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0; padding-top: 8px; }
+    .message-body {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fbfcfd;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+    .message.user .message-body { background: #f2f7ff; border-color: #cfe0f8; }
+    .message.assistant .message-body { background: #f6fbf8; border-color: #cde9dc; }
+    .message.system .message-body { background: #fffaf0; border-color: #ead8aa; }
+    .message.tool .message-body { background: #f7f7f8; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    .message-tools { margin-top: 8px; color: var(--muted); font-size: 12px; }
     @media (max-width: 920px) {
       header { align-items: flex-start; height: auto; padding: 12px 14px; flex-direction: column; }
       main { grid-template-columns: 1fr; padding: 12px; }
@@ -153,6 +199,10 @@ const controlPanelHTML = `<!doctype html>
       nav button { min-width: 118px; text-align: center; }
       .span-8, .span-6, .span-4, .col-3, .col-4, .col-6 { grid-column: span 12; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chat-shell { grid-template-columns: 1fr; }
+      .session-items { max-height: 300px; }
+      .chat-stream { max-height: none; }
+      .message { grid-template-columns: 1fr; gap: 4px; }
     }
   </style>
 </head>
@@ -167,6 +217,7 @@ const controlPanelHTML = `<!doctype html>
   <main>
     <nav>
       <button id="tab-status" class="active" onclick="showView('status')">Status</button>
+      <button id="tab-chats" onclick="showView('chats')">Chats</button>
       <button id="tab-tasks" onclick="showView('tasks')">Tasks</button>
       <button id="tab-config" onclick="showView('config')">Config</button>
       <button id="tab-logs" onclick="showView('logs')">Logs</button>
@@ -192,6 +243,33 @@ const controlPanelHTML = `<!doctype html>
           <div class="head"><h2>Connectors</h2><button class="secondary" onclick="loadConnectors()">Refresh</button></div>
           <pre id="connectors">Loading...</pre>
         </div>
+      </div>
+    </section>
+    <section id="view-chats" class="view">
+      <div class="chat-shell">
+        <aside class="session-list">
+          <div class="session-tools">
+            <input id="session-search" placeholder="Search sessions or messages" oninput="renderChatSessions()">
+            <div class="actions">
+              <button class="secondary" onclick="selectSession('__all__')">All</button>
+              <button class="secondary" onclick="loadChatSessions(true)">Refresh</button>
+              <label style="display:flex;align-items:center;gap:6px;margin:0;color:var(--muted)"><input id="session-auto" type="checkbox" checked style="width:auto;min-height:0"> Auto</label>
+            </div>
+          </div>
+          <div id="session-list" class="session-items"></div>
+        </aside>
+        <section class="chat-panel">
+          <div class="chat-header">
+            <div class="chat-title">
+              <strong id="chat-heading">All sessions</strong>
+              <span id="chat-subtitle">Live transcript</span>
+            </div>
+            <div class="actions">
+              <button class="secondary" onclick="scrollChatBottom()">Bottom</button>
+            </div>
+          </div>
+          <div id="chat-stream" class="chat-stream"></div>
+        </section>
       </div>
     </section>
     <section id="view-tasks" class="view">
@@ -262,6 +340,8 @@ const controlPanelHTML = `<!doctype html>
     const text = (id, value) => { document.getElementById(id).textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2); };
     const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
     const fmtTime = (value) => value ? new Date(value).toLocaleString() : "";
+    let chatSessions = [];
+    let selectedSessionID = "__all__";
     function showView(name) {
       document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.id === "tab-" + name));
@@ -299,12 +379,97 @@ const controlPanelHTML = `<!doctype html>
     async function loadSessions() {
       const data = await api("/api/sessions");
       document.getElementById("sessions").innerHTML = table(data.slice(0, 20), [
-        {label:"ID", key:"id"},
+        {label:"ID", html:r => "<button class='secondary' onclick='openChatSession(" + JSON.stringify(r.id) + ")'>" + escapeHTML(r.id) + "</button>"},
         {label:"Model", key:"model"},
         {label:"Channel", html:r => escapeHTML(r.context?.channel || "")},
         {label:"Updated", html:r => escapeHTML(fmtTime(r.updated_at))},
         {label:"Messages", html:r => escapeHTML((r.messages || []).length)},
       ]);
+    }
+    async function loadChatSessions(keepScroll = false) {
+      const stream = document.getElementById("chat-stream");
+      const nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
+      chatSessions = await api("/api/sessions");
+      renderChatSessions();
+      renderChatTranscript();
+      if (!keepScroll || nearBottom) scrollChatBottom();
+    }
+    function openChatSession(id) {
+      showView("chats");
+      selectSession(id);
+    }
+    function selectSession(id) {
+      selectedSessionID = id || "__all__";
+      renderChatSessions();
+      renderChatTranscript();
+      scrollChatBottom();
+    }
+    function sessionPreview(session) {
+      const messages = session.messages || [];
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i] || {};
+        const content = messageText(msg).trim();
+        if (content) return content.slice(0, 160);
+        if ((msg.tool_calls || []).length) return "Tool calls: " + msg.tool_calls.map(c => c.name || c.id || "tool").join(", ");
+      }
+      return "No messages yet.";
+    }
+    function renderChatSessions() {
+      const q = document.getElementById("session-search")?.value?.toLowerCase().trim() || "";
+      const sessions = chatSessions.filter(s => {
+        if (!q) return true;
+        const haystack = [s.id, s.model, s.context?.channel, s.context?.sender_name, sessionPreview(s), ...(s.messages || []).map(messageText)].join("\n").toLowerCase();
+        return haystack.includes(q);
+      });
+      const allActive = selectedSessionID === "__all__" ? " active" : "";
+      const allButton = "<button class='session-item" + allActive + "' onclick='selectSession(\"__all__\")'><span class='session-id'>All sessions</span><span class='session-preview'>" + sessions.length + " visible sessions</span><span class='session-meta'><span>live</span><span>" + totalMessageCount(sessions) + " messages</span></span></button>";
+      document.getElementById("session-list").innerHTML = allButton + sessions.map(s => {
+        const active = selectedSessionID === s.id ? " active" : "";
+        return "<button class='session-item" + active + "' onclick='selectSession(" + JSON.stringify(s.id) + ")'>" +
+          "<span class='session-id'>" + escapeHTML(s.id) + "</span>" +
+          "<span class='session-preview'>" + escapeHTML(sessionPreview(s)) + "</span>" +
+          "<span class='session-meta'><span>" + escapeHTML(s.context?.channel || s.model || "") + "</span><span>" + escapeHTML(fmtTime(s.updated_at)) + "</span></span>" +
+        "</button>";
+      }).join("");
+    }
+    function totalMessageCount(sessions) {
+      return sessions.reduce((sum, s) => sum + ((s.messages || []).length), 0);
+    }
+    function renderChatTranscript() {
+      const sessions = selectedSessionID === "__all__" ? chatSessions : chatSessions.filter(s => s.id === selectedSessionID);
+      const heading = selectedSessionID === "__all__" ? "All sessions" : selectedSessionID;
+      document.getElementById("chat-heading").textContent = heading;
+      document.getElementById("chat-subtitle").textContent = sessions.length + " session(s), " + totalMessageCount(sessions) + " message(s)";
+      if (!sessions.length) {
+        document.getElementById("chat-stream").innerHTML = "<div class='empty'>No session selected.</div>";
+        return;
+      }
+      document.getElementById("chat-stream").innerHTML = sessions.map(renderSessionTranscript).join("");
+    }
+    function renderSessionTranscript(session) {
+      const messages = session.messages || [];
+      const head = "<div class='chat-group-head'><strong>" + escapeHTML(session.id) + "</strong><span>" + escapeHTML([session.model, session.context?.channel, fmtTime(session.updated_at)].filter(Boolean).join(" | ")) + "</span></div>";
+      const body = messages.length ? messages.map(renderMessage).join("") : "<div class='empty'>No messages.</div>";
+      return "<div class='chat-group'>" + head + body + "</div>";
+    }
+    function renderMessage(msg) {
+      const role = String(msg.role || "message");
+      const content = messageText(msg) || "(empty)";
+      const calls = (msg.tool_calls || []).map(c => escapeHTML(c.name || c.id || "tool")).join(", ");
+      const callHTML = calls ? "<div class='message-tools'>Tool calls: " + calls + "</div>" : "";
+      const toolID = msg.tool_call_id ? "<div class='message-tools'>Tool result: " + escapeHTML(msg.name || msg.tool_call_id) + "</div>" : "";
+      return "<div class='message " + escapeHTML(role) + "'><div class='message-role'>" + escapeHTML(role) + "</div><div class='message-body'>" + escapeHTML(content) + callHTML + toolID + "</div></div>";
+    }
+    function messageText(msg) {
+      if (!msg) return "";
+      if (String(msg.content || "").trim()) return String(msg.content || "");
+      const parts = msg.parts || [];
+      if (!parts.length) return "";
+      return parts.map(p => p.text || (p.image_url ? "[image] " + p.image_url : "")).filter(Boolean).join("\n");
+    }
+    function scrollChatBottom() {
+      const el = document.getElementById("chat-stream");
+      if (el) el.scrollTop = el.scrollHeight;
     }
     async function loadQueue() {
       const data = await api("/api/queue");
@@ -361,8 +526,12 @@ const controlPanelHTML = `<!doctype html>
     async function loadSocial() { text("social", await api("/api/social/recent")); }
     async function loadConnectors() { text("connectors", await api("/api/social/connectors")); }
     async function refreshAll() {
-      await Promise.allSettled([loadStatus(), loadSessions(), loadQueue(), loadPlans(), loadAudit(), loadSocial(), loadConnectors()]);
+      await Promise.allSettled([loadStatus(), loadSessions(), loadChatSessions(true), loadQueue(), loadPlans(), loadAudit(), loadSocial(), loadConnectors()]);
     }
+    setInterval(() => {
+      const checkbox = document.getElementById("session-auto");
+      if (checkbox && checkbox.checked) loadChatSessions(true).catch(() => {});
+    }, 3000);
     refreshAll();
     loadConfig();
   </script>
