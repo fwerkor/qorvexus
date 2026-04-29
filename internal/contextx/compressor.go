@@ -40,8 +40,23 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 		return messages, nil
 	}
 
-	slicePoint := len(messages) / 2
-	old := messages[:slicePoint]
+	systemParts := []string{}
+	nonSystem := make([]types.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == types.RoleSystem {
+			if content := strings.TrimSpace(msg.Content); content != "" {
+				systemParts = append(systemParts, content)
+			}
+			continue
+		}
+		nonSystem = append(nonSystem, msg)
+	}
+	if len(nonSystem) < 4 {
+		return messages, nil
+	}
+
+	slicePoint := len(nonSystem) / 2
+	old := nonSystem[:slicePoint]
 	var transcript strings.Builder
 	for _, msg := range old {
 		fmt.Fprintf(&transcript, "%s: %s\n", msg.Role, msg.Content)
@@ -60,12 +75,17 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 		return messages, nil
 	}
 
-	compressed := []types.Message{
-		{
+	compressed := make([]types.Message, 0, len(systemParts)+1+len(nonSystem[slicePoint:]))
+	if len(systemParts) > 0 {
+		compressed = append(compressed, types.Message{
 			Role:    types.RoleSystem,
-			Content: "Compressed conversation summary:\n" + strings.TrimSpace(resp.Message.Content),
-		},
+			Content: strings.Join(systemParts, "\n\n"),
+		})
 	}
-	compressed = append(compressed, messages[slicePoint:]...)
+	compressed = append(compressed, types.Message{
+		Role:    types.RoleUser,
+		Content: "Compressed conversation summary:\n" + strings.TrimSpace(resp.Message.Content),
+	})
+	compressed = append(compressed, nonSystem[slicePoint:]...)
 	return compressed, nil
 }
