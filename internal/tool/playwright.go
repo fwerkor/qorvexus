@@ -39,7 +39,7 @@ type PlaywrightBootstrapStatus struct {
 
 func NewPlaywrightManager(cfg config.ToolsConfig) *PlaywrightManager {
 	return &PlaywrightManager{
-		cfg:        cfg,
+		cfg:        normalizePlaywrightPaths(cfg),
 		readyBrows: map[string]bool{},
 	}
 }
@@ -472,4 +472,23 @@ func sortStrings(values []string) {
 			}
 		}
 	}
+}
+
+func normalizePlaywrightPaths(cfg config.ToolsConfig) config.ToolsConfig {
+	cfg.PlaywrightProfileDir = absPath(cfg.PlaywrightProfileDir)
+	cfg.PlaywrightStateDir = absPath(cfg.PlaywrightStateDir)
+	cfg.PlaywrightArtifactsDir = absPath(cfg.PlaywrightArtifactsDir)
+	cfg.PlaywrightRuntimeDir = absPath(cfg.PlaywrightRuntimeDir)
+	return cfg
+}
+
+func absPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
