@@ -41,7 +41,7 @@ agent:
 	if cfg.Agent.UseDefaultSystemPrompt == nil || !*cfg.Agent.UseDefaultSystemPrompt {
 		t.Fatalf("expected default system prompt switch to be enabled, got %#v", cfg.Agent.UseDefaultSystemPrompt)
 	}
-	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session", "grant_owner_identity", "manage_process", "run_command", "Keep responses as concise as possible"} {
+	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session", "grant_owner_identity", "manage_process", "run_command", "Keep responses as concise as possible", "do not keep the chat silent", "queue background work"} {
 		if !strings.Contains(cfg.Agent.SystemPrompt, needle) {
 			t.Fatalf("expected default system prompt to mention %q, got %q", needle, cfg.Agent.SystemPrompt)
 		}
