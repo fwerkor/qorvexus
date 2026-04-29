@@ -195,6 +195,8 @@ const controlPanelHTML = `<!doctype html>
     details.tool-detail { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
     details.tool-detail summary { cursor: pointer; color: var(--muted); font-size: 12px; }
     .tool-json { margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .chat-compose { border-top: 1px solid var(--line); padding: 12px 14px; display: grid; gap: 8px; }
+    .chat-compose textarea { min-height: 88px; max-height: 220px; font-size: 13px; font-family: inherit; }
     @media (max-width: 920px) {
       header { align-items: flex-start; height: auto; padding: 12px 14px; flex-direction: column; }
       main { grid-template-columns: 1fr; padding: 12px; }
@@ -268,10 +270,19 @@ const controlPanelHTML = `<!doctype html>
               <span id="chat-subtitle">Live transcript</span>
             </div>
             <div class="actions">
+              <button class="danger" onclick="deleteSelectedSession()">Delete</button>
               <button class="secondary" onclick="scrollChatBottom()">Bottom</button>
             </div>
           </div>
           <div id="chat-stream" class="chat-stream"></div>
+          <div class="chat-compose">
+            <textarea id="chat-input" placeholder="Send a message to the selected session"></textarea>
+            <div class="actions">
+              <input id="chat-model" placeholder="model override" style="width:220px">
+              <button onclick="sendChatMessage()">Send</button>
+              <span id="chat-action-status" class="meta"></span>
+            </div>
+          </div>
         </section>
       </div>
     </section>
@@ -405,6 +416,7 @@ const controlPanelHTML = `<!doctype html>
       selectedSessionID = id || "__all__";
       renderChatSessions();
       renderChatTranscript();
+      updateChatActions();
       scrollChatBottom();
     }
     function sessionPreview(session) {
@@ -443,6 +455,7 @@ const controlPanelHTML = `<!doctype html>
       const heading = selectedSessionID === "__all__" ? "All sessions" : selectedSessionID;
       document.getElementById("chat-heading").textContent = heading;
       document.getElementById("chat-subtitle").textContent = sessions.length + " session(s), " + totalMessageCount(sessions) + " message(s)";
+      updateChatActions();
       if (!sessions.length) {
         document.getElementById("chat-stream").innerHTML = "<div class='empty'>No session selected.</div>";
         return;
@@ -491,6 +504,51 @@ const controlPanelHTML = `<!doctype html>
     function scrollChatBottom() {
       const el = document.getElementById("chat-stream");
       if (el) el.scrollTop = el.scrollHeight;
+    }
+    function updateChatActions() {
+      const single = selectedSessionID && selectedSessionID !== "__all__";
+      const input = document.getElementById("chat-input");
+      const model = document.getElementById("chat-model");
+      const status = document.getElementById("chat-action-status");
+      if (input) input.disabled = !single;
+      if (model) model.disabled = !single;
+      if (status && !single) status.textContent = "Select one session to send or delete.";
+      if (status && single) status.textContent = "";
+    }
+    async function sendChatMessage() {
+      if (!selectedSessionID || selectedSessionID === "__all__") return;
+      const input = document.getElementById("chat-input");
+      const status = document.getElementById("chat-action-status");
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      status.textContent = "Sending...";
+      const payload = {
+        session_id: selectedSessionID,
+        model: document.getElementById("chat-model").value.trim(),
+        prompt
+      };
+      try {
+        const data = await api("/api/run", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(payload) });
+        input.value = "";
+        status.textContent = "Sent.";
+        await loadChatSessions(false);
+      } catch (err) {
+        status.textContent = err.message || String(err);
+      }
+    }
+    async function deleteSelectedSession() {
+      if (!selectedSessionID || selectedSessionID === "__all__") return;
+      if (!confirm("Delete session " + selectedSessionID + "?")) return;
+      const status = document.getElementById("chat-action-status");
+      status.textContent = "Deleting...";
+      try {
+        await api("/api/sessions/delete", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ id: selectedSessionID }) });
+        selectedSessionID = "__all__";
+        status.textContent = "Deleted.";
+        await Promise.all([loadSessions(), loadChatSessions(false)]);
+      } catch (err) {
+        status.textContent = err.message || String(err);
+      }
     }
     async function loadQueue() {
       const data = await api("/api/queue");

@@ -23,6 +23,7 @@ type App interface {
 	Status() Status
 	RunPrompt(ctx context.Context, prompt string, model string, sessionID string) (string, error)
 	ListSessions() ([]session.State, error)
+	DeleteSession(id string) error
 	ListQueue() []taskqueue.Task
 	SearchMemory(query string, limit int) (string, error)
 	ListSelfImprovements(ctx context.Context, limit int) (string, error)
@@ -85,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/run", s.handleRun)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
+	mux.HandleFunc("/api/sessions/delete", s.handleSessionDelete)
 	mux.HandleFunc("/api/queue", s.handleQueue)
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/self", s.handleSelf)
@@ -151,6 +153,29 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(input.ID) == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.app.DeleteSession(input.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {

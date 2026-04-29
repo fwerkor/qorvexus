@@ -1681,6 +1681,10 @@ func (a *appRuntime) ListSessions() ([]session.State, error) {
 	return a.sessions.List()
 }
 
+func (a *appRuntime) DeleteSession(id string) error {
+	return a.sessions.Delete(id)
+}
+
 func (a *appRuntime) ListQueue() []taskqueue.Task {
 	if a.queue == nil {
 		return nil

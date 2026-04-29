@@ -16,8 +16,9 @@ import (
 )
 
 type blockingSocialApp struct {
-	called chan social.Envelope
-	block  chan struct{}
+	called  chan social.Envelope
+	block   chan struct{}
+	deleted string
 }
 
 func (a *blockingSocialApp) Status() Status { return Status{} }
@@ -27,6 +28,11 @@ func (a *blockingSocialApp) RunPrompt(context.Context, string, string, string) (
 }
 
 func (a *blockingSocialApp) ListSessions() ([]session.State, error) { return nil, nil }
+
+func (a *blockingSocialApp) DeleteSession(id string) error {
+	a.deleted = id
+	return nil
+}
 
 func (a *blockingSocialApp) ListQueue() []taskqueue.Task { return nil }
 
@@ -151,4 +157,24 @@ func TestHandleSocialWebhookReturnsImmediatelyAndProcessesAsync(t *testing.T) {
 	}
 
 	close(app.block)
+}
+
+func TestHandleSessionDelete(t *testing.T) {
+	app := &blockingSocialApp{}
+	server, err := NewServer(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/delete", strings.NewReader(`{"id":"telegram-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if app.deleted != "telegram-123" {
+		t.Fatalf("expected session delete call, got %q", app.deleted)
+	}
 }
