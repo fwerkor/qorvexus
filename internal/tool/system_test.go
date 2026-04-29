@@ -217,6 +217,34 @@ cat "$QORVEXUS_PLAYWRIGHT_ACTIONS_FILE"
 	}
 }
 
+func TestHTTPToolSummarizesHTMLInsideJSON(t *testing.T) {
+	body := `{"errors":["找不到请求的 URL 或资源。"],"extras":{"html":"<div><svg><path d=\"huge\"/></svg><h1>糟糕！该页面不存在</h1><a href=\"/t/topic/213\">多用户智能体 Qorvexus 来啦！</a><a href=\"/latest\">更多</a></div>"}}`
+	text := sanitizeHTTPBodyForModel(body, "application/json", 4096)
+	if strings.Contains(text, "<svg") || strings.Contains(text, "<path") {
+		t.Fatalf("expected decorative html/svg to be omitted, got %s", text)
+	}
+	if !strings.Contains(text, "糟糕") {
+		t.Fatalf("expected readable text to remain, got %s", text)
+	}
+	if !strings.Contains(text, "/t/topic/213") {
+		t.Fatalf("expected links to remain, got %s", text)
+	}
+}
+
+func TestCompactPlaywrightOutputCollapsesRepeatedHiddenLocatorLogs(t *testing.T) {
+	raw := "page.waitForSelector: Timeout\nCall log:\n"
+	for i := 0; i < 20; i++ {
+		raw += "  -   locator resolved to hidden <input name=\"username\"/>\n"
+	}
+	got := compactPlaywrightOutput(raw, 4096)
+	if strings.Count(got, "locator resolved to hidden") > 2 {
+		t.Fatalf("expected repeated locator logs to be compacted, got %s", got)
+	}
+	if !strings.Contains(got, "omitted 18 repeated hidden-locator") {
+		t.Fatalf("expected omitted count, got %s", got)
+	}
+}
+
 func TestPlaywrightManagerAutoInstallsRuntime(t *testing.T) {
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")

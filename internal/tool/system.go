@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -134,11 +136,130 @@ func (t *HTTPTool) Invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
 		return "", err
 	}
-	text := buf.String()
+	text := sanitizeHTTPBodyForModel(buf.String(), resp.Header.Get("Content-Type"), t.cfg.MaxCommandBytes)
 	if len(text) > t.cfg.MaxCommandBytes {
 		text = text[:t.cfg.MaxCommandBytes] + "\n[truncated]"
 	}
 	return fmt.Sprintf("status: %s\n\n%s", resp.Status, text), nil
+}
+
+var (
+	htmlScriptStylePattern = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>|<svg\b[^>]*>.*?</svg>`)
+	htmlTagPattern         = regexp.MustCompile(`(?is)<[^>]+>`)
+	htmlWhitespacePattern  = regexp.MustCompile(`\s+`)
+	htmlAnchorPattern      = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
+)
+
+type httpHTMLSummary struct {
+	Text             string     `json:"text,omitempty"`
+	Links            []httpLink `json:"links,omitempty"`
+	OmittedHTMLChars int        `json:"omitted_html_chars,omitempty"`
+}
+
+type httpLink struct {
+	Text string `json:"text,omitempty"`
+	Href string `json:"href"`
+}
+
+func sanitizeHTTPBodyForModel(body string, contentType string, limit int) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var decoded any
+	if json.Unmarshal([]byte(body), &decoded) == nil {
+		cleaned := sanitizeJSONHTMLFields(decoded)
+		raw, err := json.MarshalIndent(cleaned, "", "  ")
+		if err == nil {
+			return string(raw)
+		}
+	}
+	if looksLikeHTML(body, contentType) {
+		summary := summarizeHTML(body, limit)
+		raw, err := json.MarshalIndent(summary, "", "  ")
+		if err == nil {
+			return string(raw)
+		}
+	}
+	return body
+}
+
+func sanitizeJSONHTMLFields(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if text, ok := item.(string); ok && shouldSummarizeHTMLField(key, text) {
+				out[key] = summarizeHTML(text, 4096)
+				continue
+			}
+			out[key] = sanitizeJSONHTMLFields(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = sanitizeJSONHTMLFields(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func shouldSummarizeHTMLField(key string, value string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "html" || key == "body" || key == "markup" || key == "svg" {
+		return looksLikeHTML(value, "")
+	}
+	return len(value) > 2000 && looksLikeHTML(value, "")
+}
+
+func looksLikeHTML(value string, contentType string) bool {
+	contentType = strings.ToLower(contentType)
+	if strings.Contains(contentType, "text/html") {
+		return true
+	}
+	value = strings.ToLower(value)
+	return strings.Contains(value, "<html") || strings.Contains(value, "<div") || strings.Contains(value, "<a ") || strings.Contains(value, "<svg")
+}
+
+func summarizeHTML(value string, limit int) httpHTMLSummary {
+	cleaned := htmlScriptStylePattern.ReplaceAllString(value, " ")
+	links := extractHTMLLinks(cleaned, 40)
+	text := htmlTagPattern.ReplaceAllString(cleaned, " ")
+	text = html.UnescapeString(htmlWhitespacePattern.ReplaceAllString(text, " "))
+	text = strings.TrimSpace(text)
+	textLimit := 3000
+	if limit > 0 && limit < textLimit {
+		textLimit = limit
+	}
+	if len([]rune(text)) > textLimit {
+		runes := []rune(text)
+		text = string(runes[:textLimit]) + "..."
+	}
+	return httpHTMLSummary{
+		Text:             text,
+		Links:            links,
+		OmittedHTMLChars: len(value),
+	}
+}
+
+func extractHTMLLinks(value string, maxLinks int) []httpLink {
+	matches := htmlAnchorPattern.FindAllStringSubmatch(value, maxLinks)
+	links := make([]httpLink, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		text := htmlTagPattern.ReplaceAllString(match[2], " ")
+		text = html.UnescapeString(htmlWhitespacePattern.ReplaceAllString(text, " "))
+		links = append(links, httpLink{
+			Text: strings.TrimSpace(text),
+			Href: html.UnescapeString(strings.TrimSpace(match[1])),
+		})
+	}
+	return links
 }
 
 type PlaywrightTool struct {

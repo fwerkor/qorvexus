@@ -106,6 +106,18 @@ async function withRetry(label, attempts, fn) {
   throw new Error(`${label} failed after ${total} attempt(s): ${lastError ? lastError.message : "unknown error"}`);
 }
 
+async function withOverallTimeout(promise, timeoutMs, label) {
+  let timeoutHandle = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(`${label} exceeded ${Math.round(timeoutMs / 1000)} seconds`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 function escapeCssAttribute(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }
@@ -126,6 +138,14 @@ function normalizeBoolean(value) {
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function compactText(value, limit) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!limit || text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit)}...`;
 }
 
 async function maybeWaitForLoadState(page, loadState, timeoutMs) {
@@ -273,14 +293,46 @@ async function locatorExists(locator) {
   }
 }
 
-async function locateBySelectorOrText(page, action) {
-  if (isNonEmptyString(action.selector)) {
-    return page.locator(action.selector).first();
+async function locatorVisible(locator) {
+  try {
+    return await locator.first().isVisible();
+  } catch (_err) {
+    return false;
   }
-  if (isNonEmptyString(action.text)) {
-    return page.getByText(action.text, { exact: Boolean(action.exact) }).first();
+}
+
+async function firstVisibleLocator(candidates) {
+  for (const candidate of candidates) {
+    if (candidate && await locatorVisible(candidate)) {
+      return candidate.first();
+    }
+  }
+  for (const candidate of candidates) {
+    if (candidate && await locatorExists(candidate)) {
+      return candidate.first();
+    }
   }
   return null;
+}
+
+async function locateBySelectorOrText(page, action) {
+  const candidates = [];
+  if (isNonEmptyString(action.selector)) {
+    candidates.push(page.locator(action.selector));
+  }
+  if (isNonEmptyString(action.text)) {
+    candidates.push(page.getByText(action.text, { exact: Boolean(action.exact) }));
+  }
+  if (isNonEmptyString(action.label)) {
+    candidates.push(page.getByLabel(action.label, { exact: Boolean(action.exact) }));
+  }
+  if (isNonEmptyString(action.placeholder)) {
+    candidates.push(page.getByPlaceholder(action.placeholder, { exact: Boolean(action.exact) }));
+  }
+  if (isNonEmptyString(action.role) && isNonEmptyString(action.name)) {
+    candidates.push(page.getByRole(action.role, { name: action.name, exact: Boolean(action.exact) }));
+  }
+  return firstVisibleLocator(candidates);
 }
 
 async function isEvidenceVisible(page, descriptor, timeoutMs) {
@@ -405,16 +457,15 @@ async function resolveFormField(page, fieldName) {
     page.locator(broadSelector).first(),
   ];
 
-  for (const candidate of candidates) {
-    if (await locatorExists(candidate)) {
-      return candidate;
-    }
+  const visible = await firstVisibleLocator(candidates);
+  if (visible) {
+    return visible;
   }
 
   const labels = page.locator("label").filter({ hasText: fieldName }).first();
-  if (await locatorExists(labels)) {
+  if (await locatorVisible(labels) || await locatorExists(labels)) {
     const labelledControl = labels.locator("input,textarea,select").first();
-    if (await locatorExists(labelledControl)) {
+    if (await locatorVisible(labelledControl) || await locatorExists(labelledControl)) {
       return labelledControl;
     }
     const labelFor = await labels.getAttribute("for");
@@ -611,6 +662,76 @@ async function isLocatorDisabled(locator) {
   }
 }
 
+async function observePage(page, options = {}) {
+  const maxItems = Number.isFinite(options.max_items) && options.max_items > 0 ? options.max_items : 40;
+  const textLimit = Number.isFinite(options.text_limit) && options.text_limit > 0 ? options.text_limit : 1200;
+  const title = await page.title().catch(() => "");
+  const url = typeof page.url === "function" ? page.url() : "";
+  const visibleText = await page.locator("body").innerText({ timeout: 1000 }).catch(() => "");
+  const interactive = await page.evaluate((limit) => {
+    function visible(el) {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style && style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+    }
+    function textOf(el) {
+      return String(el.innerText || el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("name") || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    }
+    function cssIdent(value) {
+      if (window.CSS && typeof window.CSS.escape === "function") {
+        return window.CSS.escape(value);
+      }
+      return String(value).replace(/["\\]/g, "\\$&");
+    }
+    function selectorOf(el) {
+      if (el.id) {
+        return `#${cssIdent(el.id)}`;
+      }
+      const name = el.getAttribute("name");
+      if (name) {
+        return `${el.tagName.toLowerCase()}[name="${String(name).replace(/"/g, '\\"')}"]`;
+      }
+      const aria = el.getAttribute("aria-label");
+      if (aria) {
+        return `${el.tagName.toLowerCase()}[aria-label="${String(aria).replace(/"/g, '\\"')}"]`;
+      }
+      const href = el.getAttribute("href");
+      if (href && el.tagName.toLowerCase() === "a") {
+        return `a[href="${String(href).replace(/"/g, '\\"')}"]`;
+      }
+      return el.tagName.toLowerCase();
+    }
+    const nodes = Array.from(document.querySelectorAll("a[href],button,input,textarea,select,[role='button'],[role='link']"))
+      .filter(visible)
+      .slice(0, limit);
+    return nodes.map((el, index) => {
+      const tag = el.tagName.toLowerCase();
+      const role = el.getAttribute("role") || (tag === "a" ? "link" : tag === "button" ? "button" : tag);
+      const item = {
+        index,
+        role,
+        text: textOf(el),
+        selector: selectorOf(el),
+      };
+      if (tag === "a" && el.href) {
+        item.href = el.href;
+      }
+      const type = el.getAttribute("type");
+      if (type) {
+        item.type = type;
+      }
+      return item;
+    });
+  }, maxItems).catch(() => []);
+  return {
+    title,
+    url,
+    text: compactText(visibleText, textLimit),
+    interactive,
+    hint: "Use selector/text/label/placeholder from interactive items for the next browser_workflow action.",
+  };
+}
+
 function normalizeActionDefaults(rawAction) {
   const action = { ...(rawAction || {}) };
   let type = String(action.type || "").trim().toLowerCase();
@@ -621,6 +742,9 @@ function normalizeActionDefaults(rawAction) {
     fill: "type",
     input: "type",
     text: "extract_text",
+    snapshot: "observe",
+    inspect: "observe",
+    login: "login_form",
   };
   type = aliases[type] || type;
   if (!type) {
@@ -668,6 +792,9 @@ async function runAction(context, action, state) {
           tab_index: state.currentTabIndex,
         };
       }
+      case "observe": {
+        return { type, snapshot: await observePage(page, action), tab_index: state.currentTabIndex };
+      }
       case "wait_for": {
         const waited = await waitForAction(page, action, timeoutMs);
         return { type, waited, tab_index: state.currentTabIndex };
@@ -698,7 +825,10 @@ async function runAction(context, action, state) {
         return { type, selector: action.selector || "", text: action.text || "", url: page.url(), tab_index: state.currentTabIndex };
       }
       case "type": {
-        const locator = page.locator(action.selector).first();
+        const locator = await locateBySelectorOrText(page, action);
+        if (!locator) {
+          throw new Error("type action requires selector, text, label, placeholder, or role/name");
+        }
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
         if (action.clear !== false) {
           await locator.fill(String(action.text || ""), { timeout: timeoutMs });
@@ -708,28 +838,47 @@ async function runAction(context, action, state) {
         return { type, selector: action.selector, text_length: String(action.text || "").length, tab_index: state.currentTabIndex };
       }
       case "press": {
-        const locator = page.locator(action.selector).first();
+        const locator = await locateBySelectorOrText(page, action);
+        if (!locator) {
+          throw new Error("press action requires selector, text, label, placeholder, or role/name");
+        }
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
         await locator.press(String(action.key || "Enter"), { timeout: timeoutMs });
         return { type, selector: action.selector, key: action.key || "Enter", tab_index: state.currentTabIndex };
       }
       case "login_form": {
-        if (!action.username_selector || !action.password_selector) {
-          throw new Error("login_form requires username_selector and password_selector");
+        const usernameField = action.username_selector
+          ? await locateBySelectorOrText(page, { selector: action.username_selector })
+          : await firstVisibleLocator([
+            page.locator("input[type='text'],input[type='email'],input[name*='user' i],input[name*='login' i],input[name*='email' i]"),
+            page.getByLabel(/user|login|email|账号|用户名|邮箱/i),
+            page.getByPlaceholder(/user|login|email|账号|用户名|邮箱/i),
+          ]);
+        const passwordField = action.password_selector
+          ? await locateBySelectorOrText(page, { selector: action.password_selector })
+          : await firstVisibleLocator([
+            page.locator("input[type='password']"),
+            page.getByLabel(/password|密码/i),
+            page.getByPlaceholder(/password|密码/i),
+          ]);
+        if (!usernameField || !passwordField) {
+          return { type, status: "form_not_found", snapshot: await observePage(page, { max_items: 30 }), tab_index: state.currentTabIndex };
         }
-        await page.locator(action.username_selector).first().fill(String(action.username || ""), { timeout: timeoutMs });
-        await page.locator(action.password_selector).first().fill(String(action.password || ""), { timeout: timeoutMs });
+        await usernameField.fill(String(action.username || ""), { timeout: timeoutMs });
+        await passwordField.fill(String(action.password || ""), { timeout: timeoutMs });
         if (action.submit_selector) {
           await page.locator(action.submit_selector).first().click({ timeout: timeoutMs });
+        } else if (action.submit_text) {
+          await page.getByText(action.submit_text, { exact: Boolean(action.submit_exact) }).first().click({ timeout: timeoutMs });
         } else {
-          await page.locator(action.password_selector).first().press("Enter", { timeout: timeoutMs });
+          await passwordField.press("Enter", { timeout: timeoutMs });
         }
         if (action.wait_for_selector) {
           await page.locator(action.wait_for_selector).first().waitFor({ state: "visible", timeout: timeoutMs });
         } else if (action.wait_for_navigation !== false) {
           await maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs);
         }
-        return { type, username: String(action.username || ""), url: page.url(), tab_index: state.currentTabIndex };
+        return { type, username: String(action.username || ""), url: page.url(), snapshot: await observePage(page, { max_items: 20, text_limit: 500 }), tab_index: state.currentTabIndex };
       }
       case "extract_table": {
         const table = await extractTable(page, action.selector);
@@ -1038,7 +1187,7 @@ async function runActionsMode(page, context, qorvexus) {
     artifactsDir: qorvexus.artifactsDir,
     downloads: [],
     retryCount: Number.isFinite(input.retry_count) && input.retry_count > 0 ? input.retry_count : 1,
-    timeoutMs: qorvexus.timeoutSeconds * 1000,
+    timeoutMs: qorvexus.actionTimeoutSeconds * 1000,
     currentPage: page,
     pages: context.pages(),
     currentTabIndex: 0,
@@ -1058,6 +1207,7 @@ async function runActionsMode(page, context, qorvexus) {
     current_tab_index: state.currentTabIndex,
     tabs: await collectTabsInfo(context, state),
     downloads: listDownloadedFiles(qorvexus.artifactsDir),
+    snapshot: await observePage(currentPage, { max_items: 40, text_limit: 1200 }),
     results,
   };
 }
@@ -1106,6 +1256,7 @@ async function main() {
   const saveStorageState = envBool("QORVEXUS_PLAYWRIGHT_SAVE_STORAGE_STATE", true);
   const headless = envBool("QORVEXUS_PLAYWRIGHT_HEADLESS", true);
   const timeoutSeconds = envInt("QORVEXUS_PLAYWRIGHT_TIMEOUT_SECONDS", 120);
+  const actionTimeoutSeconds = envInt("QORVEXUS_PLAYWRIGHT_ACTION_TIMEOUT_SECONDS", Math.min(timeoutSeconds, 10));
 
   ensureDir(artifactsDir);
   if (profileDir && persistProfile) {
@@ -1130,6 +1281,7 @@ async function main() {
     storageStatePath,
     artifactsDir,
     timeoutSeconds,
+    actionTimeoutSeconds,
     log(value) {
       process.stdout.write(`${String(value)}\n`);
     },
@@ -1152,13 +1304,27 @@ async function main() {
         await context.storageState({ path: storageStatePath });
       }
     },
+    async observe(options) {
+      return observePage(await this.ensurePage(), options || {});
+    },
+    async click(target, options) {
+      const pageForAction = await this.ensurePage();
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, text: target, ...(options || {}) } : (target || {}));
+      if (!locator) {
+        throw new Error("click helper could not find target");
+      }
+      await locator.click({ timeout: actionTimeoutSeconds * 1000 });
+    },
+    async fill(target, value, options) {
+      const pageForAction = await this.ensurePage();
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, label: target, placeholder: target, ...(options || {}) } : (target || {}));
+      if (!locator) {
+        throw new Error("fill helper could not find target");
+      }
+      await locator.fill(String(value || ""), { timeout: actionTimeoutSeconds * 1000 });
+    },
     withRetry,
   };
-
-  const timeoutHandle = setTimeout(() => {
-    console.error(`Playwright run exceeded ${timeoutSeconds} seconds`);
-    process.exit(124);
-  }, timeoutSeconds * 1000);
 
   try {
     if (persistProfile) {
@@ -1179,7 +1345,7 @@ async function main() {
       context = await browser.newContext(contextOptions);
     }
 
-    context.setDefaultTimeout(timeoutSeconds * 1000);
+    context.setDefaultTimeout(actionTimeoutSeconds * 1000);
     if (context.pages().length > 0) {
       page = context.pages()[0];
     } else {
@@ -1188,9 +1354,12 @@ async function main() {
 
     let result;
     if (mode === "actions") {
-      result = await runActionsMode(page, context, qorvexus);
+      result = await withOverallTimeout(runActionsMode(page, context, qorvexus), timeoutSeconds * 1000, "Playwright run");
     } else {
-      result = await runScriptMode(page, context, playwright, browserType, browser, qorvexus);
+      result = await withOverallTimeout(runScriptMode(page, context, playwright, browserType, browser, qorvexus), timeoutSeconds * 1000, "Playwright run");
+      if (result === undefined) {
+        result = { mode: "script", snapshot: await observePage(page, { max_items: 40, text_limit: 1200 }) };
+      }
     }
 
     if (saveStorageState && storageStatePath) {
@@ -1205,7 +1374,9 @@ async function main() {
       }
     }
   } finally {
-    clearTimeout(timeoutHandle);
+    if (context && saveStorageState && storageStatePath) {
+      await context.storageState({ path: storageStatePath }).catch(() => {});
+    }
     if (context) {
       await context.close();
     }

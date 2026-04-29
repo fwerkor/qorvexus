@@ -134,7 +134,7 @@ func NewBrowserWorkflowTool(cfg config.ToolsConfig, manager *PlaywrightManager) 
 func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "browser_workflow",
-		Description: "Run a structured browser workflow. Prefer this over custom Playwright scripts for normal browsing: goto, click, type, press, wait_for, fill_form, extract_text, extract_table, screenshot, downloads, tabs, login checks, and pagination. Omit browser/headless/timeouts unless you need overrides; defaults are filled automatically. Navigation waits default to domcontentloaded to avoid networkidle hangs; use wait_for for specific page readiness.",
+		Description: "Run a structured browser workflow. Prefer this over custom scripts for normal browsing. Use observe first or after navigation to see the current URL, page text, clickable links/buttons, inputs, and selectors. Common actions: observe, goto, click, type, press, wait_for, fill_form, login_form, extract_text, extract_table, screenshot, downloads, tabs, login checks, and pagination. Omit browser/headless/timeouts unless needed; defaults are filled automatically. Navigation waits default to domcontentloaded and individual actions default to short timeouts to avoid hangs.",
 		Parameters: schemaObject(map[string]any{
 			"start_url":          schemaString("Optional initial URL to open before executing actions."),
 			"profile":            schemaString("Optional persistent browser profile name so cookies and login state can be reused."),
@@ -146,7 +146,7 @@ func (t *BrowserWorkflowTool) Definition() types.ToolDefinition {
 			"timeout_seconds":    schemaInteger("Optional overall timeout in seconds."),
 			"retry_count":        schemaInteger("Workflow retry count for transient browser failures."),
 			"actions": schemaArray(
-				"Structured actions. Common shape: [{\"type\":\"goto\",\"url\":\"https://example.com\"},{\"type\":\"extract_text\",\"selector\":\"body\"}]. Prefer selector/text waits over networkidle.",
+				"Structured actions. Common shape: [{\"type\":\"goto\",\"url\":\"https://example.com\"},{\"type\":\"observe\"},{\"type\":\"click\",\"text\":\"Login\"}]. Prefer observe and explicit selector/text/label/placeholder over guessing hidden elements.",
 				map[string]any{
 					"type":                 "object",
 					"additionalProperties": true,
@@ -294,7 +294,7 @@ func runPlaywrightExecution(ctx context.Context, cfg config.ToolsConfig, manager
 	}
 	defer os.Remove(payloadPath)
 
-	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds+15)*time.Second)
 	defer cancel()
 	cmd, err := commandenv.ShellCommandContext(cmdCtx, cfg.CommandShell, cfg.PlaywrightCommand)
 	if err != nil {
@@ -313,6 +313,7 @@ func runPlaywrightExecution(ctx context.Context, cfg config.ToolsConfig, manager
 		"QORVEXUS_PLAYWRIGHT_BROWSER="+browser,
 		"QORVEXUS_PLAYWRIGHT_HEADLESS="+strconv.FormatBool(headless),
 		"QORVEXUS_PLAYWRIGHT_TIMEOUT_SECONDS="+strconv.Itoa(req.TimeoutSeconds),
+		"QORVEXUS_PLAYWRIGHT_ACTION_TIMEOUT_SECONDS="+strconv.Itoa(minPlaywrightInt(req.TimeoutSeconds, 10)),
 		"QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR="+artifactsDir,
 		"QORVEXUS_PLAYWRIGHT_RUNTIME_DIR="+runtimeStatus.RuntimeDir,
 	)
@@ -320,8 +321,8 @@ func runPlaywrightExecution(ctx context.Context, cfg config.ToolsConfig, manager
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-	out := strings.TrimSpace(stdout.String())
-	if serr := strings.TrimSpace(stderr.String()); serr != "" {
+	out := compactPlaywrightOutput(strings.TrimSpace(stdout.String()), cfg.MaxCommandBytes)
+	if serr := compactPlaywrightOutput(strings.TrimSpace(stderr.String()), cfg.MaxCommandBytes/2); serr != "" {
 		if out != "" {
 			out += "\n"
 		}
@@ -472,6 +473,44 @@ func sortStrings(values []string) {
 			}
 		}
 	}
+}
+
+func compactPlaywrightOutput(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	out := make([]string, 0, len(lines))
+	hiddenRepeats := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "locator resolved to hidden") {
+			hiddenRepeats++
+			if hiddenRepeats > 2 {
+				continue
+			}
+		}
+		if strings.HasPrefix(trimmed, "at ") && strings.Contains(trimmed, "node:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if hiddenRepeats > 2 {
+		out = append(out, fmt.Sprintf("  - omitted %d repeated hidden-locator log lines", hiddenRepeats-2))
+	}
+	compact := strings.TrimSpace(strings.Join(out, "\n"))
+	if limit > 0 && len(compact) > limit {
+		compact = compact[:limit] + "\n[truncated]"
+	}
+	return compact
+}
+
+func minPlaywrightInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func normalizePlaywrightPaths(cfg config.ToolsConfig) config.ToolsConfig {
