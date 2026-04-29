@@ -117,6 +117,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 	)
 	registry := model.NewRegistry()
 	recorder := model.NewRecorder(filepath.Join(cfg.DataDir, "traces", "model_calls.jsonl"))
+	modelQueue := &sync.Mutex{}
 	for name, modelCfg := range cfg.Models {
 		var client model.Client
 		switch strings.ToLower(modelCfg.Provider) {
@@ -125,7 +126,10 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		default:
 			return nil, fmt.Errorf("unsupported provider %q for model %s", modelCfg.Provider, name)
 		}
-		registry.Register(name, modelCfg, model.NewAliasMappedClient(modelCfg, recorder.Wrap(client)))
+		client = recorder.Wrap(client)
+		client = model.NewAliasMappedClient(modelCfg, client)
+		client = model.NewQueuedClient(client, modelQueue)
+		registry.Register(name, modelCfg, client)
 	}
 
 	skills, err := skill.NewLoader().LoadDirs(cfg.Skills.Dirs)
@@ -2619,6 +2623,9 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		Message:     env.Text,
 		OccurredAt:  time.Now().UTC(),
 	})
+	if handled, out, err := a.handleSocialCommand(toolCtx, sessionID, env); handled {
+		return out, err
+	}
 	if !a.beginSocialTurn(sessionID, env) {
 		return "", nil
 	}
@@ -2696,6 +2703,55 @@ func (a *appRuntime) HandleEnvelope(ctx context.Context, env social.Envelope) (s
 		if len(currentBatch) == 0 {
 			return lastOut, nil
 		}
+	}
+}
+
+func (a *appRuntime) handleSocialCommand(ctx context.Context, sessionID string, env social.Envelope) (bool, string, error) {
+	command := strings.TrimSpace(env.Text)
+	if command == "" || !strings.HasPrefix(command, "/") {
+		return false, "", nil
+	}
+	name := strings.ToLower(strings.Fields(command)[0])
+	if at := strings.Index(name, "@"); at >= 0 {
+		name = name[:at]
+	}
+	switch name {
+	case "/clear", "/reset":
+		if a.sessions != nil {
+			if err := a.sessions.Delete(sessionID); err != nil {
+				a.notifySocialContinuationError(ctx, env, err)
+				return true, "", err
+			}
+		}
+		text := "会话已清除。"
+		if _, err := a.connectors.Send(ctx, env.Channel, social.OutboundMessage{
+			Channel:   env.Channel,
+			ThreadID:  env.ThreadID,
+			Recipient: env.SenderID,
+			Text:      text,
+			Context:   env.Context,
+		}); err != nil {
+			return true, "", err
+		}
+		a.logAudit(ctx, "clear_social_session", "ok", sessionID, map[string]any{
+			"channel":   env.Channel,
+			"thread_id": env.ThreadID,
+		})
+		return true, text, nil
+	case "/help":
+		text := "可用指令：/clear 清除当前会话，/reset 同 /clear。"
+		if _, err := a.connectors.Send(ctx, env.Channel, social.OutboundMessage{
+			Channel:   env.Channel,
+			ThreadID:  env.ThreadID,
+			Recipient: env.SenderID,
+			Text:      text,
+			Context:   env.Context,
+		}); err != nil {
+			return true, "", err
+		}
+		return true, text, nil
+	default:
+		return false, "", nil
 	}
 }
 

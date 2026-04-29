@@ -75,6 +75,52 @@ func TestHandleEnvelopeSendsFailureNoticeAfterPrefaceError(t *testing.T) {
 	}
 }
 
+func TestHandleEnvelopeClearCommandDeletesSession(t *testing.T) {
+	tempDir := t.TempDir()
+	store := session.NewStore(tempDir)
+	if err := store.Save(&session.State{
+		ID:    "telegram-thread-1",
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "old"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	connectors := social.NewRegistry()
+	conn := &capturingConnector{}
+	connectors.Register(conn)
+	app := &appRuntime{
+		cfg:         &config.Config{DataDir: tempDir},
+		sessions:    store,
+		connectors:  connectors,
+		socialGraph: social.NewGraphStore(filepath.Join(tempDir, "graph.json")),
+		socialTurns: map[string]*socialTurnState{},
+	}
+
+	out, err := app.HandleEnvelope(context.Background(), social.Envelope{
+		Channel:  "telegram",
+		ThreadID: "thread-1",
+		SenderID: "user-1",
+		Text:     "/clear",
+		Context: types.ConversationContext{
+			Channel:      "telegram",
+			ThreadID:     "thread-1",
+			SenderID:     "user-1",
+			ReplyAsAgent: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == "" || len(conn.messages) != 1 {
+		t.Fatalf("expected clear confirmation, out=%q messages=%#v", out, conn.messages)
+	}
+	if _, err := store.Load("telegram-thread-1"); err == nil {
+		t.Fatal("expected /clear to delete the session")
+	}
+}
+
 func TestHandleEnvelopeSendsFailureNoticeWhenFinalDeliveryFailsAfterToolCall(t *testing.T) {
 	tempDir := t.TempDir()
 	autoSend := true

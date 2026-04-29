@@ -75,6 +75,17 @@ func (s *Store) Save(state *State) error {
 	return nil
 }
 
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cache, id)
+	err := os.Remove(filepath.Join(s.root, id+".json"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) List() ([]State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

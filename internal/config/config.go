@@ -57,6 +57,7 @@ type AgentConfig struct {
 	CompressionThreshold   float64          `yaml:"compression_threshold"`
 	SystemPrompt           string           `yaml:"system_prompt"`
 	UseDefaultSystemPrompt *bool            `yaml:"use_default_system_prompt"`
+	ToolMode               string           `yaml:"tool_mode"`
 	Discussion             DiscussionConfig `yaml:"discussion"`
 }
 
@@ -290,6 +291,9 @@ func (c *Config) setDefaults(path string) error {
 	}
 	if strings.TrimSpace(c.Agent.SystemPrompt) == "" && *c.Agent.UseDefaultSystemPrompt {
 		c.Agent.SystemPrompt = defaultSystemPrompt()
+	}
+	if strings.TrimSpace(c.Agent.ToolMode) == "" {
+		c.Agent.ToolMode = "auto"
 	}
 	if len(c.Agent.Discussion.DefaultPanel) == 0 {
 		c.Agent.Discussion.DefaultPanel = []string{c.Agent.DefaultModel}

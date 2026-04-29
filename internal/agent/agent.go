@@ -65,12 +65,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		}
 		st.Messages = append(st.Messages, msg)
 	}
-	transientSystemPrompts := []string{}
+	transientContextPrompts := []string{}
 	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, req.Prompt, st.Context); prompt != "" {
-		transientSystemPrompts = append(transientSystemPrompts, prompt)
+		transientContextPrompts = append(transientContextPrompts, prompt)
 	}
 	if prompt := r.buildActivePlanPrompt(st.ID); prompt != "" {
-		transientSystemPrompts = append(transientSystemPrompts, prompt)
+		transientContextPrompts = append(transientContextPrompts, prompt)
 	}
 	persist := func() error {
 		if r.Sessions == nil {
@@ -88,11 +88,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	}
 	for turn := 0; turn < maxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
-		messagesForModel := normalizeSystemMessages(st.Messages, transientSystemPrompts)
+		messagesForModel := withTransientContext(normalizeSystemMessages(st.Messages, nil), transientContextPrompts)
+		tools := r.toolsForRequest(req)
 		response, err := client.Complete(ctx, model.CompletionRequest{
 			Model:       cfg.Model,
 			Messages:    messagesForModel,
-			Tools:       r.Tools.Definitions(),
+			Tools:       tools,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
 		})
@@ -195,6 +196,76 @@ func normalizeSystemMessages(messages []types.Message, extras []string) []types.
 	}
 	combined := strings.Join(systemParts, "\n\n")
 	return append([]types.Message{{Role: types.RoleSystem, Content: combined}}, out...)
+}
+
+func withTransientContext(messages []types.Message, prompts []string) []types.Message {
+	contextText := strings.TrimSpace(strings.Join(nonEmptyStrings(prompts), "\n\n"))
+	if contextText == "" {
+		return messages
+	}
+	contextMsg := types.Message{
+		Role:    types.RoleUser,
+		Content: "Context for this turn only:\n" + contextText,
+	}
+	out := make([]types.Message, 0, len(messages)+1)
+	if len(messages) > 0 && messages[0].Role == types.RoleSystem {
+		out = append(out, messages[0], contextMsg)
+		out = append(out, messages[1:]...)
+		return out
+	}
+	out = append(out, contextMsg)
+	out = append(out, messages...)
+	return out
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
+}
+
+func (r *Runner) toolsForRequest(req Request) []types.ToolDefinition {
+	if r.Tools == nil {
+		return nil
+	}
+	mode := "auto"
+	if r != nil && r.Config != nil {
+		mode = strings.ToLower(strings.TrimSpace(r.Config.Agent.ToolMode))
+	}
+	switch mode {
+	case "off", "none", "disabled":
+		return nil
+	case "always":
+		return r.Tools.Definitions()
+	}
+	if looksLikeSimpleReply(req.Prompt) {
+		return nil
+	}
+	return r.Tools.Definitions()
+}
+
+func looksLikeSimpleReply(prompt string) bool {
+	text := strings.ToLower(strings.TrimSpace(prompt))
+	if text == "" {
+		return false
+	}
+	runes := []rune(text)
+	if len(runes) > 80 {
+		return false
+	}
+	simpleNeedles := []string{
+		"回复我", "回我", "说", "只回复", "直接回复", "reply", "say", "echo",
+	}
+	for _, needle := range simpleNeedles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) pickModel(req Request) string {

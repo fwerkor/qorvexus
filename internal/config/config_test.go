@@ -52,6 +52,9 @@ agent:
 	if cfg.Agent.SummarizerModel != "" {
 		t.Fatalf("expected summarizer model to remain optional by default, got %q", cfg.Agent.SummarizerModel)
 	}
+	if cfg.Agent.ToolMode != "auto" {
+		t.Fatalf("expected default tool mode auto, got %q", cfg.Agent.ToolMode)
+	}
 	if got := cfg.Models["primary"].Provider; got != "openai-compatible" {
 		t.Fatalf("expected default provider, got %q", got)
 	}

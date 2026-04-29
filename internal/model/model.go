@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"qorvexus/internal/config"
 	"qorvexus/internal/types"
@@ -40,6 +41,37 @@ type Client interface {
 
 type EmbeddingClient interface {
 	Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error)
+}
+
+type QueuedClient struct {
+	inner Client
+	mu    *sync.Mutex
+}
+
+func NewQueuedClient(inner Client, mu *sync.Mutex) Client {
+	if inner == nil {
+		return nil
+	}
+	if mu == nil {
+		mu = &sync.Mutex{}
+	}
+	return &QueuedClient{inner: inner, mu: mu}
+}
+
+func (c *QueuedClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.inner.Complete(ctx, req)
+}
+
+func (c *QueuedClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	embedder, ok := c.inner.(EmbeddingClient)
+	if !ok {
+		return nil, nil
+	}
+	return embedder.Embed(ctx, req)
 }
 
 type AliasMappedClient struct {

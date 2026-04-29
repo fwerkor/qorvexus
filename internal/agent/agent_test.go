@@ -140,21 +140,16 @@ func TestRunnerInjectsRelevantMemoryIntoPrompt(t *testing.T) {
 
 	found := false
 	for _, msg := range client.lastRequest.Messages {
-		if msg.Role == types.RoleSystem && strings.Contains(msg.Content, "Never send external messages without explicit owner approval.") {
+		if msg.Role == types.RoleUser && strings.Contains(msg.Content, "Never send external messages without explicit owner approval.") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected relevant memory to be injected into system prompt, got %#v", client.lastRequest.Messages)
+		t.Fatalf("expected relevant memory to be injected as transient user context, got %#v", client.lastRequest.Messages)
 	}
-	if len(client.lastRequest.Messages) < 2 || client.lastRequest.Messages[0].Role != types.RoleSystem {
-		t.Fatalf("expected system prompt to be first, got %#v", client.lastRequest.Messages)
-	}
-	for i, msg := range client.lastRequest.Messages[1:] {
-		if msg.Role == types.RoleSystem {
-			t.Fatalf("expected no system messages after the first, found one at %d in %#v", i+1, client.lastRequest.Messages)
-		}
+	if strings.Contains(client.lastRequest.Messages[0].Content, "Relevant long-term memory:") {
+		t.Fatalf("expected relevant memory to stay out of system prompt, got %#v", client.lastRequest.Messages)
 	}
 }
 
@@ -202,6 +197,39 @@ func TestRunnerNormalizesPersistedSystemMessagesBeforeModelCall(t *testing.T) {
 		if msg.Role == types.RoleSystem {
 			t.Fatalf("expected no late system messages after normalization, found one at %d in %#v", i+1, client.lastRequest.Messages)
 		}
+	}
+}
+
+func TestRunnerOmitsToolsForSimpleReplyRequestsInAutoMode(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "1"}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	tools := tool.NewRegistry()
+	tools.Register(echoTool{})
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+				ToolMode:     "auto",
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tools,
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "simple-reply",
+		Prompt:    "回复我一个1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.lastRequest.Tools) != 0 {
+		t.Fatalf("expected simple reply request to omit tools, got %#v", client.lastRequest.Tools)
 	}
 }
 
@@ -374,7 +402,7 @@ func TestRunnerInjectsCurrentContactMemoryIntoPrompt(t *testing.T) {
 
 	foundContact := false
 	for _, msg := range client.lastRequest.Messages {
-		if msg.Role != types.RoleSystem {
+		if msg.Role != types.RoleUser {
 			continue
 		}
 		if strings.Contains(msg.Content, "Current contact memory:") &&
@@ -385,7 +413,7 @@ func TestRunnerInjectsCurrentContactMemoryIntoPrompt(t *testing.T) {
 		}
 	}
 	if !foundContact {
-		t.Fatalf("expected current contact memory to be injected into system prompt, got %#v", client.lastRequest.Messages)
+		t.Fatalf("expected current contact memory to be injected as transient user context, got %#v", client.lastRequest.Messages)
 	}
 }
 
@@ -480,7 +508,7 @@ func TestRunnerInjectsActivePlanIntoPrompt(t *testing.T) {
 
 	found := false
 	for _, msg := range client.lastRequest.Messages {
-		if msg.Role == types.RoleSystem && strings.Contains(msg.Content, "Active execution plans:") && strings.Contains(msg.Content, "Implement planner store") {
+		if msg.Role == types.RoleUser && strings.Contains(msg.Content, "Active execution plans:") && strings.Contains(msg.Content, "Implement planner store") {
 			found = true
 			break
 		}
