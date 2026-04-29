@@ -115,6 +115,9 @@ func (t *SubAgentTool) Definition() types.ToolDefinition {
 }
 
 func (t *SubAgentTool) Invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	if SubAgentDepthFrom(ctx) > 0 {
+		return "", fmt.Errorf("nested subagents are disabled; finish the current delegated task directly or create a durable plan step")
+	}
 	var input struct {
 		Name   string `json:"name"`
 		Prompt string `json:"prompt"`

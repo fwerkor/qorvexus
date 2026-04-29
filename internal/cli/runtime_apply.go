@@ -65,6 +65,11 @@ func (a *appRuntime) ApplySelfUpdate(ctx context.Context, runTests bool, reason 
 	defer cancel()
 
 	notes := []string{fmt.Sprintf("source root: %s", sourceRoot)}
+	preflightNotes, err := a.prepareSelfUpdateSource(applyCtx, sourceRoot)
+	if err != nil {
+		return "", err
+	}
+	notes = append(notes, preflightNotes...)
 	if runTests {
 		out, err := a.runLocalCommand(applyCtx, sourceRoot, "go", "test", "./...")
 		if err != nil {
@@ -98,6 +103,42 @@ func (a *appRuntime) ApplySelfUpdate(ctx context.Context, runTests bool, reason 
 		result = append(result, "build output:\n"+buildOut)
 	}
 	return strings.Join(result, "\n"), nil
+}
+
+func (a *appRuntime) prepareSelfUpdateSource(ctx context.Context, sourceRoot string) ([]string, error) {
+	if strings.TrimSpace(sourceRoot) == "" {
+		return nil, fmt.Errorf("source root is empty")
+	}
+	required := []string{
+		filepath.Join(sourceRoot, "go.mod"),
+		filepath.Join(sourceRoot, "cmd", "qorvexus", "main.go"),
+	}
+	for _, path := range required {
+		if _, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("self-update source tree is incomplete; missing %s: %w", path, err)
+		}
+	}
+
+	steps := []struct {
+		label string
+		args  []string
+	}{
+		{label: "go mod download", args: []string{"mod", "download"}},
+		{label: "go generate ./internal/socialpluginautoload", args: []string{"generate", "./internal/socialpluginautoload"}},
+		{label: "go fmt ./...", args: []string{"fmt", "./..."}},
+	}
+	notes := []string{}
+	for _, step := range steps {
+		out, err := a.runLocalCommand(ctx, sourceRoot, "go", step.args...)
+		if err != nil {
+			return nil, formatCommandError("self-update preflight "+step.label, out, err)
+		}
+		if strings.TrimSpace(out) != "" {
+			notes = append(notes, step.label+" output:\n"+out)
+		}
+	}
+	notes = append(notes, "self-update preflight completed")
+	return notes, nil
 }
 
 func (a *appRuntime) buildSelfBinary(ctx context.Context, sourceRoot string) (string, string, error) {

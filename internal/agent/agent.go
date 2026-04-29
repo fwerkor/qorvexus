@@ -36,6 +36,7 @@ type Request struct {
 	Prompt                   string
 	Parts                    []types.ContentPart
 	Context                  *types.ConversationContext
+	MaxTurns                 int
 	OnAssistantMessage       func(context.Context, types.Message) error
 	DrainPendingUserMessages func(context.Context, *session.State) ([]types.Message, error)
 }
@@ -76,10 +77,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		return r.Sessions.Save(st)
 	}
 
-	for turn := 0; turn < r.Config.Agent.MaxTurns; turn++ {
+	maxTurns := r.Config.Agent.MaxTurns
+	if req.MaxTurns > 0 && (maxTurns <= 0 || req.MaxTurns < maxTurns) {
+		maxTurns = req.MaxTurns
+	}
+	if maxTurns <= 0 {
+		maxTurns = 1
+	}
+	for turn := 0; turn < maxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
 		response, err := client.Complete(ctx, model.CompletionRequest{
-			Model:       modelName,
+			Model:       cfg.Model,
 			Messages:    st.Messages,
 			Tools:       r.Tools.Definitions(),
 			MaxTokens:   cfg.MaxTokens,

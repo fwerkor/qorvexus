@@ -305,7 +305,7 @@ func TestPollerUsesBotPath(t *testing.T) {
 	}
 }
 
-func TestConnectorSendUsesMarkdownV2ParseMode(t *testing.T) {
+func TestConnectorSendUsesHTMLParseModeForRenderableMarkdown(t *testing.T) {
 	var payload map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -321,20 +321,23 @@ func TestConnectorSendUsesMarkdownV2ParseMode(t *testing.T) {
 	conn.apiBaseURL = srv.URL
 	_, err := conn.Send(context.Background(), social.OutboundMessage{
 		ThreadID: "123",
-		Text:     "*hello* `code`",
+		Text:     "**hello** `code`",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := payload["parse_mode"]; got != "MarkdownV2" {
-		t.Fatalf("expected MarkdownV2 parse_mode, got %#v", got)
+	if got := payload["parse_mode"]; got != "HTML" {
+		t.Fatalf("expected HTML parse_mode, got %#v", got)
+	}
+	if got := payload["text"]; got != "<b>hello</b> <code>code</code>" {
+		t.Fatalf("expected rendered telegram HTML, got %#v", got)
 	}
 	if got := payload["chat_id"]; got != "123" {
 		t.Fatalf("expected chat id 123, got %#v", got)
 	}
 }
 
-func TestConnectorSendFallsBackToMarkdownWhenMarkdownV2Fails(t *testing.T) {
+func TestConnectorSendFallsBackToMarkdownV2WhenHTMLFails(t *testing.T) {
 	var payloads []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -363,17 +366,17 @@ func TestConnectorSendFallsBackToMarkdownWhenMarkdownV2Fails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(payloads) != 2 {
-		t.Fatalf("expected MarkdownV2 send and Markdown retry, got %d payloads", len(payloads))
+		t.Fatalf("expected HTML send and MarkdownV2 retry, got %d payloads", len(payloads))
 	}
-	if got := payloads[0]["parse_mode"]; got != "MarkdownV2" {
-		t.Fatalf("expected first attempt to use MarkdownV2 parse_mode, got %#v", got)
+	if got := payloads[0]["parse_mode"]; got != "HTML" {
+		t.Fatalf("expected first attempt to use HTML parse_mode, got %#v", got)
 	}
-	if got := payloads[1]["parse_mode"]; got != "Markdown" {
-		t.Fatalf("expected second attempt to use Markdown parse_mode, got %#v", got)
+	if got := payloads[1]["parse_mode"]; got != "MarkdownV2" {
+		t.Fatalf("expected second attempt to use MarkdownV2 parse_mode, got %#v", got)
 	}
 }
 
-func TestConnectorSendFallsBackToPlainTextAfterBothMarkdownModesFail(t *testing.T) {
+func TestConnectorSendFallsBackToPlainTextAfterMarkupModesFail(t *testing.T) {
 	var payloads []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -383,7 +386,7 @@ func TestConnectorSendFallsBackToPlainTextAfterBothMarkdownModesFail(t *testing.
 		}
 		payloads = append(payloads, payload)
 		w.Header().Set("Content-Type", "application/json")
-		if len(payloads) < 3 {
+		if len(payloads) < 4 {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"ok":false,"description":"Bad Request: can't parse entities"}`))
 			return
@@ -401,17 +404,20 @@ func TestConnectorSendFallsBackToPlainTextAfterBothMarkdownModesFail(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(payloads) != 3 {
-		t.Fatalf("expected MarkdownV2, Markdown, and plain-text attempts, got %d payloads", len(payloads))
+	if len(payloads) != 4 {
+		t.Fatalf("expected HTML, MarkdownV2, Markdown, and plain-text attempts, got %d payloads", len(payloads))
 	}
-	if got := payloads[0]["parse_mode"]; got != "MarkdownV2" {
-		t.Fatalf("expected first attempt to use MarkdownV2 parse_mode, got %#v", got)
+	if got := payloads[0]["parse_mode"]; got != "HTML" {
+		t.Fatalf("expected first attempt to use HTML parse_mode, got %#v", got)
 	}
-	if got := payloads[1]["parse_mode"]; got != "Markdown" {
-		t.Fatalf("expected second attempt to use Markdown parse_mode, got %#v", got)
+	if got := payloads[1]["parse_mode"]; got != "MarkdownV2" {
+		t.Fatalf("expected second attempt to use MarkdownV2 parse_mode, got %#v", got)
 	}
-	if _, ok := payloads[2]["parse_mode"]; ok {
-		t.Fatalf("expected final fallback attempt without parse_mode, got %#v", payloads[2]["parse_mode"])
+	if got := payloads[2]["parse_mode"]; got != "Markdown" {
+		t.Fatalf("expected third attempt to use Markdown parse_mode, got %#v", got)
+	}
+	if _, ok := payloads[3]["parse_mode"]; ok {
+		t.Fatalf("expected final fallback attempt without parse_mode, got %#v", payloads[3]["parse_mode"])
 	}
 }
 

@@ -48,7 +48,7 @@ func (s *Store) summarizeWithModel(layer string, area string, subject string, en
 	if s.opts.Models == nil || strings.TrimSpace(s.opts.SummaryModel) == "" {
 		return "", "", false
 	}
-	client, _, ok := s.opts.Models.Get(s.opts.SummaryModel)
+	client, cfg, ok := s.opts.Models.Get(s.opts.SummaryModel)
 	if !ok || client == nil {
 		return "", "", false
 	}
@@ -64,7 +64,7 @@ func (s *Store) summarizeWithModel(layer string, area string, subject string, en
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.SummaryTimeout)
 	defer cancel()
-	resp, err := client.Complete(ctx, typesToCompletionRequest(s.opts.SummaryModel, b.String()))
+	resp, err := client.Complete(ctx, typesToCompletionRequest(cfg.Model, b.String()))
 	if err != nil || resp == nil {
 		return "", "", false
 	}

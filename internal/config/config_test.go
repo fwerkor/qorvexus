@@ -133,6 +133,31 @@ social:
 	}
 }
 
+func TestPlaywrightCommandUsesSourceRootWhenConfigLivesInDataDir(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(sourceRoot, "scripts", "playwright_runner.js")
+	if err := os.WriteFile(scriptPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("QORVEXUS_SOURCE_ROOT", sourceRoot)
+
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, "config.yaml")
+	if err := os.WriteFile(path, []byte("models:\n  primary:\n    api_key: \"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cfg.Tools.PlaywrightCommand, scriptPath) {
+		t.Fatalf("expected playwright command to use source root script %q, got %q", scriptPath, cfg.Tools.PlaywrightCommand)
+	}
+}
+
 func TestLoadAppliesQQBotDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

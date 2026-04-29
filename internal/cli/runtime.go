@@ -287,7 +287,15 @@ func (a *appRuntime) EnsureBrowserRuntime(ctx context.Context) (string, error) {
 }
 
 func (a *appRuntime) RunSubAgent(ctx context.Context, name string, prompt string, model string) (string, error) {
-	return a.runSubAgentWithSession(ctx, subAgentSessionID(name), model, prompt)
+	name = strings.TrimSpace(name)
+	prompt = strings.TrimSpace(prompt)
+	if name == "" {
+		return "", fmt.Errorf("subagent name is required")
+	}
+	if prompt == "" {
+		return "", fmt.Errorf("subagent prompt is required")
+	}
+	return a.runSubAgentWithSession(ctx, subAgentSessionID(name), model, buildSubAgentPrompt(name, prompt))
 }
 
 func (a *appRuntime) ConsultModels(ctx context.Context, prompt string, panel []string) (string, error) {
@@ -676,13 +684,27 @@ func (a *appRuntime) RunQueuedTask(ctx context.Context, task taskqueue.Task) (st
 }
 
 func (a *appRuntime) runSubAgentWithSession(ctx context.Context, sessionID string, modelName string, prompt string) (string, error) {
-	_, out, err := a.runner.Run(a.toolExecutionContext(ctx, sessionID), agent.Request{
+	runCtx := a.toolExecutionContext(ctx, sessionID)
+	runCtx = tool.WithSubAgentDepth(runCtx, tool.SubAgentDepthFrom(ctx)+1)
+	_, out, err := a.runner.Run(runCtx, agent.Request{
 		SessionID: sessionID,
 		Model:     modelName,
 		Prompt:    prompt,
 		Context:   a.conversationContextForSubagent(ctx),
+		MaxTurns:  a.subAgentMaxTurns(),
 	})
 	return out, err
+}
+
+func (a *appRuntime) subAgentMaxTurns() int {
+	maxTurns := a.cfg.Agent.MaxTurns
+	if maxTurns <= 0 {
+		return 4
+	}
+	if maxTurns <= 4 {
+		return maxTurns
+	}
+	return 4
 }
 
 func (a *appRuntime) executePlanStep(ctx context.Context, planID string, stepID string, mode string) (planStepExecutionItem, error) {
@@ -732,20 +754,12 @@ func (a *appRuntime) queuePlanStep(ctx context.Context, item plan.Plan, step pla
 		return planStepExecutionItem{}, fmt.Errorf("queue is disabled")
 	}
 	sessionID := planStepSessionID(item.ID, step.ID)
-	task, err := a.queue.Add(taskqueue.Task{
-		Name:      "plan-step: " + step.Title,
-		Prompt:    buildPlanStepPrompt(item, step),
-		Model:     resolvePlanStepModel(a.cfg, step),
-		SessionID: sessionID,
-		PlanID:    item.ID,
-		StepID:    step.ID,
-	})
-	if err != nil {
-		return planStepExecutionItem{}, err
-	}
 	updated, err := a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		if currentStep.Status != plan.StepStatusPlanned {
+			return fmt.Errorf("step %q is %s, expected planned", step.ID, currentStep.Status)
+		}
 		currentStep.Status = plan.StepStatusQueued
-		currentStep.TaskID = task.ID
+		currentStep.TaskID = ""
 		currentStep.SessionID = sessionID
 		currentStep.Error = ""
 		currentStep.Result = ""
@@ -756,7 +770,42 @@ func (a *appRuntime) queuePlanStep(ctx context.Context, item plan.Plan, step pla
 	if err != nil {
 		return planStepExecutionItem{}, err
 	}
-	updatedStep, _ := plan.FindStep(updated, step.ID)
+	updatedStep, ok := plan.FindStep(updated, step.ID)
+	if !ok {
+		return planStepExecutionItem{}, fmt.Errorf("step %q not found in plan %q after queue claim", step.ID, item.ID)
+	}
+	task, err := a.queue.Add(taskqueue.Task{
+		Name:      "plan-step: " + step.Title,
+		Prompt:    buildPlanStepPrompt(updated, updatedStep),
+		Model:     resolvePlanStepModel(a.cfg, updatedStep),
+		SessionID: sessionID,
+		PlanID:    item.ID,
+		StepID:    step.ID,
+	})
+	if err != nil {
+		_, _ = a.plans.UpdateStep(item.ID, step.ID, func(_ *plan.Plan, currentStep *plan.Step) error {
+			if currentStep.Status == plan.StepStatusQueued && currentStep.TaskID == "" {
+				currentStep.Status = plan.StepStatusPlanned
+				currentStep.SessionID = ""
+			}
+			return nil
+		})
+		return planStepExecutionItem{}, err
+	}
+	updated, err = a.plans.UpdateStep(item.ID, step.ID, func(current *plan.Plan, currentStep *plan.Step) error {
+		if currentStep.Status != plan.StepStatusQueued {
+			return fmt.Errorf("step %q changed to %s while queue task %s was being created", step.ID, currentStep.Status, task.ID)
+		}
+		currentStep.TaskID = task.ID
+		currentStep.SessionID = sessionID
+		currentStep.ReviewStatus = pendingCheckStatus(current, *currentStep, true)
+		currentStep.VerifyStatus = pendingCheckStatus(current, *currentStep, false)
+		return nil
+	})
+	if err != nil {
+		return planStepExecutionItem{}, err
+	}
+	updatedStep, _ = plan.FindStep(updated, step.ID)
 	a.logAudit(ctx, "queue_plan_step", "ok", item.ID+":"+step.ID, map[string]any{
 		"task_id": task.ID,
 		"mode":    "queued",
@@ -911,6 +960,15 @@ func pendingCheckStatus(item *plan.Plan, step plan.Step, review bool) plan.Check
 
 func (a *appRuntime) markPlanStepAttemptStart(planID string, stepID string, sessionID string, taskID string, attempt int) (plan.Plan, plan.Step, error) {
 	updated, err := a.plans.UpdateStep(planID, stepID, func(current *plan.Plan, currentStep *plan.Step) error {
+		switch currentStep.Status {
+		case plan.StepStatusPlanned:
+		case plan.StepStatusQueued:
+			if taskID == "" || (currentStep.TaskID != "" && currentStep.TaskID != taskID) {
+				return fmt.Errorf("step %q is already queued as %s", stepID, currentStep.TaskID)
+			}
+		default:
+			return fmt.Errorf("step %q is %s, expected planned or queued", stepID, currentStep.Status)
+		}
 		currentStep.Status = plan.StepStatusRunning
 		currentStep.SessionID = sessionID
 		currentStep.TaskID = taskID
@@ -1416,6 +1474,22 @@ func planStepSessionID(planID string, stepID string) string {
 
 func subAgentSessionID(name string) string {
 	return fmt.Sprintf("subagent-%s-%d", sanitize(name), time.Now().UTC().UnixNano())
+}
+
+func buildSubAgentPrompt(name string, prompt string) string {
+	var b strings.Builder
+	b.WriteString("You are a focused child agent inside Qorvexus.\n")
+	b.WriteString("Task name: ")
+	b.WriteString(strings.TrimSpace(name))
+	b.WriteString("\n\n")
+	b.WriteString("Boundaries:\n")
+	b.WriteString("- Work only on the delegated objective below.\n")
+	b.WriteString("- Do not spawn another subagent from this task.\n")
+	b.WriteString("- Use tools only when they directly advance this objective.\n")
+	b.WriteString("- Return one concise final result with files changed, commands run, blockers, or verification evidence when relevant.\n\n")
+	b.WriteString("Delegated objective:\n")
+	b.WriteString(strings.TrimSpace(prompt))
+	return strings.TrimSpace(b.String())
 }
 
 func truncateText(value string, limit int) string {

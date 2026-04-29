@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,9 +30,13 @@ type Connector struct {
 
 const telegramMaxMessageChars = 4096
 
-var telegramParseModes = []string{"MarkdownV2", "Markdown", ""}
+var telegramParseModes = []string{"HTML", "MarkdownV2", "Markdown", ""}
 
 var (
+	telegramBoldStarRE        = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+	telegramBoldUSRE          = regexp.MustCompile(`__([^_\n]+)__`)
+	telegramItalicRE          = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
+	telegramStrikeRE          = regexp.MustCompile(`~~([^~\n]+)~~`)
 	telegramMarkdownV2Escaper = strings.NewReplacer(
 		`\\`, `\\\\`,
 		"_", `\_`,
@@ -193,8 +199,7 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 func (c *Connector) sendWithFallback(ctx context.Context, chatID string, text string) error {
 	var lastErr error
 	for idx, parseMode := range telegramParseModes {
-		prepared := prepareTelegramText(text, parseMode)
-		chunks := splitTelegramMessage(prepared, telegramMaxMessageChars)
+		chunks := prepareTelegramChunks(text, parseMode)
 		retryNextMode := false
 		for chunkIdx, chunk := range chunks {
 			err := c.sendChunk(ctx, chatID, chunk, parseMode)
@@ -331,6 +336,8 @@ func (e *telegramSendError) markdownParseFailure() bool {
 
 func prepareTelegramText(text string, parseMode string) string {
 	switch strings.TrimSpace(parseMode) {
+	case "HTML":
+		return telegramMarkdownToHTML(text)
 	case "MarkdownV2":
 		return telegramMarkdownV2Escaper.Replace(text)
 	case "Markdown":
@@ -338,6 +345,185 @@ func prepareTelegramText(text string, parseMode string) string {
 	default:
 		return text
 	}
+}
+
+func prepareTelegramChunks(text string, parseMode string) []string {
+	rawLimit := telegramMaxMessageChars
+	if strings.TrimSpace(parseMode) == "HTML" {
+		rawLimit = 3000
+	}
+	rawChunks := splitTelegramMessage(text, rawLimit)
+	out := make([]string, 0, len(rawChunks))
+	for _, rawChunk := range rawChunks {
+		prepared := prepareTelegramText(rawChunk, parseMode)
+		out = append(out, splitTelegramMessage(prepared, telegramMaxMessageChars)...)
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func telegramMarkdownToHTML(text string) string {
+	lines := strings.Split(text, "\n")
+	var b strings.Builder
+	var codeLines []string
+	inCode := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inCode {
+				b.WriteString("<pre>")
+				b.WriteString(html.EscapeString(strings.Join(codeLines, "\n")))
+				b.WriteString("</pre>")
+				codeLines = nil
+				inCode = false
+			} else {
+				inCode = true
+				codeLines = nil
+			}
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
+			continue
+		}
+		if inCode {
+			codeLines = append(codeLines, line)
+			continue
+		}
+		b.WriteString(renderTelegramMarkdownLine(line))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	if inCode {
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("<pre>")
+		b.WriteString(html.EscapeString(strings.Join(codeLines, "\n")))
+		b.WriteString("</pre>")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderTelegramMarkdownLine(line string) string {
+	trimmedLeft := strings.TrimLeft(line, " \t")
+	switch {
+	case strings.HasPrefix(trimmedLeft, "### "):
+		return "<b>" + renderTelegramInlineMarkdown(strings.TrimSpace(trimmedLeft[4:])) + "</b>"
+	case strings.HasPrefix(trimmedLeft, "## "):
+		return "<b>" + renderTelegramInlineMarkdown(strings.TrimSpace(trimmedLeft[3:])) + "</b>"
+	case strings.HasPrefix(trimmedLeft, "# "):
+		return "<b>" + renderTelegramInlineMarkdown(strings.TrimSpace(trimmedLeft[2:])) + "</b>"
+	case strings.HasPrefix(trimmedLeft, "- "):
+		return "- " + renderTelegramInlineMarkdown(strings.TrimSpace(trimmedLeft[2:]))
+	case strings.HasPrefix(trimmedLeft, "* "):
+		return "- " + renderTelegramInlineMarkdown(strings.TrimSpace(trimmedLeft[2:]))
+	default:
+		return renderTelegramInlineMarkdown(line)
+	}
+}
+
+func renderTelegramInlineMarkdown(text string) string {
+	var b strings.Builder
+	for text != "" {
+		codeIndex := strings.Index(text, "`")
+		linkIndex := strings.Index(text, "[")
+		next := nearestNonNegative(codeIndex, linkIndex)
+		if next == -1 {
+			b.WriteString(renderTelegramBasicMarkdown(text))
+			break
+		}
+		if next > 0 {
+			b.WriteString(renderTelegramBasicMarkdown(text[:next]))
+			text = text[next:]
+			continue
+		}
+		switch text[0] {
+		case '`':
+			end := strings.Index(text[1:], "`")
+			if end == -1 {
+				b.WriteString(renderTelegramBasicMarkdown(text[:1]))
+				text = text[1:]
+				continue
+			}
+			code := text[1 : end+1]
+			b.WriteString("<code>")
+			b.WriteString(html.EscapeString(code))
+			b.WriteString("</code>")
+			text = text[end+2:]
+		case '[':
+			label, target, rest, ok := consumeTelegramMarkdownLink(text)
+			if !ok {
+				b.WriteString(renderTelegramBasicMarkdown(text[:1]))
+				text = text[1:]
+				continue
+			}
+			b.WriteString(`<a href="`)
+			b.WriteString(html.EscapeString(target))
+			b.WriteString(`">`)
+			b.WriteString(renderTelegramBasicMarkdown(label))
+			b.WriteString("</a>")
+			text = rest
+		default:
+			b.WriteString(renderTelegramBasicMarkdown(text[:1]))
+			text = text[1:]
+		}
+	}
+	return b.String()
+}
+
+func renderTelegramBasicMarkdown(text string) string {
+	escaped := html.EscapeString(text)
+	escaped = telegramStrikeRE.ReplaceAllString(escaped, "<s>$1</s>")
+	escaped = telegramBoldStarRE.ReplaceAllString(escaped, "<b>$1</b>")
+	escaped = telegramBoldUSRE.ReplaceAllString(escaped, "<b>$1</b>")
+	escaped = telegramItalicRE.ReplaceAllString(escaped, "${1}<i>${2}</i>")
+	return escaped
+}
+
+func consumeTelegramMarkdownLink(text string) (label string, target string, rest string, ok bool) {
+	closeLabel := strings.Index(text, "](")
+	if closeLabel <= 1 {
+		return "", "", text, false
+	}
+	closeTarget := strings.Index(text[closeLabel+2:], ")")
+	if closeTarget < 1 {
+		return "", "", text, false
+	}
+	label = text[1:closeLabel]
+	target = text[closeLabel+2 : closeLabel+2+closeTarget]
+	if !safeTelegramLink(target) {
+		return "", "", text, false
+	}
+	return label, target, text[closeLabel+3+closeTarget:], true
+}
+
+func safeTelegramLink(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "mailto", "tg":
+		return true
+	default:
+		return false
+	}
+}
+
+func nearestNonNegative(values ...int) int {
+	best := -1
+	for _, value := range values {
+		if value < 0 {
+			continue
+		}
+		if best == -1 || value < best {
+			best = value
+		}
+	}
+	return best
 }
 
 func splitTelegramMessage(text string, limit int) []string {

@@ -293,7 +293,7 @@ func (c *Config) setDefaults(path string) error {
 		c.Tools.CommandShell = "bash"
 	}
 	if strings.TrimSpace(c.Tools.PlaywrightCommand) == "" {
-		c.Tools.PlaywrightCommand = fmt.Sprintf("node %q", filepath.Join(base, "scripts", "playwright_runner.js"))
+		c.Tools.PlaywrightCommand = fmt.Sprintf("node %q", resolveBundledFile(base, filepath.Join("scripts", "playwright_runner.js")))
 	}
 	if strings.TrimSpace(c.Tools.PlaywrightBrowser) == "" {
 		c.Tools.PlaywrightBrowser = "chromium"
@@ -506,6 +506,33 @@ func expandPath(base string, value string) string {
 		return value
 	}
 	return filepath.Join(base, value)
+}
+
+func resolveBundledFile(base string, relativePath string) string {
+	candidates := []string{
+		filepath.Join(base, relativePath),
+		filepath.Join(strings.TrimSpace(os.Getenv("QORVEXUS_SOURCE_ROOT")), relativePath),
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, relativePath))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), relativePath))
+		candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(exe)), relativePath))
+	}
+	candidates = append(candidates,
+		filepath.Join("/workspace/qorvexus", relativePath),
+		filepath.Join("/app", relativePath),
+	)
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return filepath.Join(base, relativePath)
 }
 
 func boolPtr(value bool) *bool {

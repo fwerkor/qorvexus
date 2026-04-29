@@ -8,6 +8,7 @@ import (
 
 type conversationContextKey struct{}
 type sessionIDKey struct{}
+type subAgentDepthKey struct{}
 
 func WithConversationContext(ctx context.Context, convo types.ConversationContext) context.Context {
 	return context.WithValue(ctx, conversationContextKey{}, convo)
@@ -25,4 +26,16 @@ func WithSessionID(ctx context.Context, sessionID string) context.Context {
 func SessionIDFrom(ctx context.Context) (string, bool) {
 	sessionID, ok := ctx.Value(sessionIDKey{}).(string)
 	return sessionID, ok
+}
+
+func WithSubAgentDepth(ctx context.Context, depth int) context.Context {
+	return context.WithValue(ctx, subAgentDepthKey{}, depth)
+}
+
+func SubAgentDepthFrom(ctx context.Context) int {
+	depth, ok := ctx.Value(subAgentDepthKey{}).(int)
+	if !ok || depth < 0 {
+		return 0
+	}
+	return depth
 }

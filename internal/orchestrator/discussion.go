@@ -33,7 +33,7 @@ func (d *Discussion) Run(ctx context.Context, prompt string, panel []string, syn
 				return
 			}
 			resp, err := client.Complete(ctx, model.CompletionRequest{
-				Model: modelName,
+				Model: cfg.Model,
 				Messages: []types.Message{
 					{Role: types.RoleSystem, Content: "Answer as an expert collaborator. Be concise but useful."},
 					{Role: types.RoleUser, Content: prompt},
@@ -67,7 +67,7 @@ func (d *Discussion) Run(ctx context.Context, prompt string, panel []string, syn
 		return strings.TrimSpace(debate.String()), nil
 	}
 	resp, err := client.Complete(ctx, model.CompletionRequest{
-		Model: synthesisModel,
+		Model: cfg.Model,
 		Messages: []types.Message{
 			{Role: types.RoleSystem, Content: "Synthesize the multi-model discussion into a practical answer. Note disagreements and recommend a path."},
 			{Role: types.RoleUser, Content: debate.String()},

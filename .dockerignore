@@ -6,3 +6,6 @@ dist
 tmp
 *.log
 *.out
+config.yaml
+docker-data
+data

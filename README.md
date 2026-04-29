@@ -92,6 +92,7 @@ http://127.0.0.1:7788
 ```
 
 Qorvexus fills in many internal defaults automatically, but model connection settings remain explicit because they are part of the deployment contract.
+The `model` value is the provider-facing model ID sent to the OpenAI-compatible endpoint; the map key such as `primary` is only Qorvexus' local alias.
 
 ## Community
 
@@ -212,6 +213,8 @@ curl -X POST http://127.0.0.1:7788/api/social/inbound \
 ```
 
 ## Docker
+
+The Docker image includes the Go toolchain, Node.js, Playwright, Chromium dependencies, and the source tree under `/workspace/qorvexus`. This keeps browser automation and supervised self-update builds consistent across hosts.
 
 Build the image:
 

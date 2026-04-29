@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"qorvexus/internal/types"
@@ -40,5 +41,21 @@ func TestRegistryExecuteKeepsToolOutputOnError(t *testing.T) {
 	}
 	if got := result.Content; got != "command failed: exit status 1\n\n[stderr]\npermission denied" {
 		t.Fatalf("unexpected tool error content: %q", got)
+	}
+}
+
+type subAgentRuntimeStub struct {
+	Runtime
+}
+
+func (subAgentRuntimeStub) RunSubAgent(context.Context, string, string, string) (string, error) {
+	return "ran", nil
+}
+
+func TestSubAgentToolRejectsNestedSubAgents(t *testing.T) {
+	tool := NewSubAgentTool(subAgentRuntimeStub{})
+	_, err := tool.Invoke(WithSubAgentDepth(context.Background(), 1), json.RawMessage(`{"name":"nested","prompt":"do work"}`))
+	if err == nil || !strings.Contains(err.Error(), "nested subagents are disabled") {
+		t.Fatalf("expected nested subagent rejection, got %v", err)
 	}
 }

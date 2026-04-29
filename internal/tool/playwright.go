@@ -400,7 +400,7 @@ func writePlaywrightRuntimePackage(runtimeDir string) error {
   "name": "qorvexus-playwright-runtime",
   "private": true,
   "dependencies": {
-    "playwright": "latest"
+    "playwright": "1.48.2"
   }
 }
 `

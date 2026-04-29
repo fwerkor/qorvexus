@@ -47,7 +47,7 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 		fmt.Fprintf(&transcript, "%s: %s\n", msg.Role, msg.Content)
 	}
 	req := model.CompletionRequest{
-		Model: modelName,
+		Model: cfg.Model,
 		Messages: []types.Message{
 			{Role: types.RoleSystem, Content: "Summarize the conversation state for future reasoning. Preserve goals, constraints, decisions, unfinished work, and important facts."},
 			{Role: types.RoleUser, Content: transcript.String()},

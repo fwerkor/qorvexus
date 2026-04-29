@@ -204,6 +204,40 @@ func TestRunnerInjectsSkillInstructionsIntoSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestRunnerSendsConfiguredProviderModelID(t *testing.T) {
+	tempDir := t.TempDir()
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "Done."}
+	registry.Register("primary", config.ModelConfig{Model: "provider-model-id"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   session.NewStore(tempDir),
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-model-id",
+		Prompt:    "hello",
+		Context: &types.ConversationContext{
+			IsOwner: true,
+			Trust:   types.TrustOwner,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.lastRequest.Model != "provider-model-id" {
+		t.Fatalf("expected provider model id, got %q", client.lastRequest.Model)
+	}
+}
+
 func TestRunnerInjectsCurrentContactMemoryIntoPrompt(t *testing.T) {
 	tempDir := t.TempDir()
 	mem := memory.NewStore(filepath.Join(tempDir, "memory.jsonl"))
