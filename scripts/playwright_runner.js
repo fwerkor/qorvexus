@@ -4,6 +4,10 @@
 
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
+const childProcess = require("child_process");
+
+const DAEMON_PROTOCOL_VERSION = 1;
 
 function loadPlaywright() {
   const runtimeDir = process.env.QORVEXUS_PLAYWRIGHT_RUNTIME_DIR || "";
@@ -1299,12 +1303,15 @@ async function runAction(context, action, state) {
   });
 }
 
-async function runActionsMode(page, context, qorvexus) {
-  const inputPath = process.env.QORVEXUS_PLAYWRIGHT_ACTIONS_FILE;
-  if (!inputPath) {
-    throw new Error("QORVEXUS_PLAYWRIGHT_ACTIONS_FILE is required in actions mode");
+async function runActionsMode(page, context, qorvexus, inputOverride) {
+  let input = inputOverride;
+  if (!input) {
+    const inputPath = process.env.QORVEXUS_PLAYWRIGHT_ACTIONS_FILE;
+    if (!inputPath) {
+      throw new Error("QORVEXUS_PLAYWRIGHT_ACTIONS_FILE is required in actions mode");
+    }
+    input = JSON.parse(fs.readFileSync(inputPath, "utf8"));
   }
-  const input = JSON.parse(fs.readFileSync(inputPath, "utf8"));
   const actions = Array.isArray(input.actions) ? input.actions : [];
   if (actions.length === 0) {
     throw new Error("browser workflow requires at least one action");
@@ -1349,12 +1356,15 @@ async function runActionsMode(page, context, qorvexus) {
   };
 }
 
-async function runScriptMode(page, context, playwright, browserType, browser, qorvexus) {
-  const scriptPath = process.env.QORVEXUS_PLAYWRIGHT_SCRIPT_FILE;
-  if (!scriptPath) {
-    throw new Error("QORVEXUS_PLAYWRIGHT_SCRIPT_FILE is required in script mode");
+async function runScriptMode(page, context, playwright, browserType, browser, qorvexus, scriptOverride) {
+  let script = scriptOverride;
+  if (script === undefined || script === null) {
+    const scriptPath = process.env.QORVEXUS_PLAYWRIGHT_SCRIPT_FILE;
+    if (!scriptPath) {
+      throw new Error("QORVEXUS_PLAYWRIGHT_SCRIPT_FILE is required in script mode");
+    }
+    script = fs.readFileSync(scriptPath, "utf8");
   }
-  const script = fs.readFileSync(scriptPath, "utf8");
   const browserForScript = browser || {
     async newContext() {
       return context;
@@ -1383,7 +1393,319 @@ async function runScriptMode(page, context, playwright, browserType, browser, qo
   return wrapped();
 }
 
+function daemonSocketPath(artifactsDir) {
+  return path.join(artifactsDir, "browser-session.sock");
+}
+
+function daemonLogPath(artifactsDir) {
+  return path.join(artifactsDir, "browser-session.log");
+}
+
+function payloadContentForMode(mode) {
+  const filePath = mode === "actions"
+    ? process.env.QORVEXUS_PLAYWRIGHT_ACTIONS_FILE
+    : process.env.QORVEXUS_PLAYWRIGHT_SCRIPT_FILE;
+  if (!filePath) {
+    throw new Error("Playwright payload file is required");
+  }
+  return fs.readFileSync(filePath, "utf8");
+}
+
+function sendDaemonRequest(socketPath, request) {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(socketPath);
+    let data = "";
+    client.setEncoding("utf8");
+    client.on("connect", () => {
+      client.write(`${JSON.stringify(request)}\n`);
+    });
+    client.on("data", (chunk) => {
+      data += chunk;
+    });
+    client.on("error", reject);
+    client.on("end", () => {
+      try {
+        const response = JSON.parse(data.trim());
+        if (!response.ok) {
+          reject(new Error(response.error || "browser daemon request failed"));
+          return;
+        }
+        resolve(response.text || "");
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+async function waitForDaemon(socketPath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      await sendDaemonRequest(socketPath, { ping: true, version: DAEMON_PROTOCOL_VERSION });
+      return;
+    } catch (err) {
+      lastError = err;
+      await sleep(150);
+    }
+  }
+  throw lastError || new Error("browser daemon did not become ready");
+}
+
+async function runViaDaemon(cfg, payload) {
+  const socketPath = daemonSocketPath(cfg.artifactsDir);
+  const request = {
+    version: DAEMON_PROTOCOL_VERSION,
+    mode: cfg.mode,
+    payload,
+    timeoutSeconds: cfg.timeoutSeconds,
+    actionTimeoutSeconds: cfg.actionTimeoutSeconds,
+    saveStorageState: cfg.saveStorageState,
+  };
+  try {
+    return await sendDaemonRequest(socketPath, request);
+  } catch (_err) {
+  }
+
+  ensureDir(cfg.artifactsDir);
+  const logPath = daemonLogPath(cfg.artifactsDir);
+  const logFd = fs.openSync(logPath, "a");
+  const child = childProcess.spawn(process.execPath, [__filename], {
+    env: {
+      ...process.env,
+      QORVEXUS_PLAYWRIGHT_DAEMON_PROCESS: "1",
+    },
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+  });
+  child.unref();
+  await waitForDaemon(socketPath, 8000);
+  return sendDaemonRequest(socketPath, request);
+}
+
+function makeQorvexusRuntime(cfg, stateRef, sessionState) {
+  return {
+    browserName: cfg.browserName,
+    profileDir: cfg.profileDir,
+    storageStatePath: cfg.storageStatePath,
+    artifactsDir: cfg.artifactsDir,
+    sessionStatePath: cfg.sessionStatePath,
+    lastURL: sessionState.last_url || "",
+    lastInteractive: Array.isArray(sessionState.last_interactive) ? sessionState.last_interactive : [],
+    lastObservedURL: sessionState.last_observed_url || "",
+    timeoutSeconds: cfg.timeoutSeconds,
+    actionTimeoutSeconds: cfg.actionTimeoutSeconds,
+    log(value) {
+      process.stdout.write(`${String(value)}\n`);
+    },
+    artifactPath(name, fallbackExt) {
+      return resolveArtifactPath(cfg.artifactsDir, name, fallbackExt || "");
+    },
+    async ensurePage() {
+      if (stateRef.page && !stateRef.page.isClosed()) {
+        return stateRef.page;
+      }
+      const pages = stateRef.context.pages();
+      if (pages.length > 0) {
+        stateRef.page = pages[0];
+        return stateRef.page;
+      }
+      stateRef.page = await stateRef.context.newPage();
+      return stateRef.page;
+    },
+    async saveStorageState() {
+      if (cfg.storageStatePath) {
+        await stateRef.context.storageState({ path: cfg.storageStatePath });
+      }
+    },
+    saveSessionState(extra) {
+      const currentPage = stateRef.page || (stateRef.context && stateRef.context.pages()[0]);
+      const currentURL = currentPage && typeof currentPage.url === "function" ? currentPage.url() : "";
+      const next = {
+        ...sessionState,
+        ...(extra || {}),
+        last_url: isBlankURL(currentURL) ? (sessionState.last_url || "") : currentURL,
+        last_interactive: Array.isArray(this.lastInteractive) ? this.lastInteractive : (sessionState.last_interactive || []),
+        last_observed_url: this.lastObservedURL || sessionState.last_observed_url || "",
+        updated_at: new Date().toISOString(),
+      };
+      writeJSONFile(cfg.sessionStatePath, next);
+      Object.assign(sessionState, next);
+    },
+    async observe(options) {
+      return observePage(await this.ensurePage(), options || {});
+    },
+    async click(target, options) {
+      const pageForAction = await this.ensurePage();
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, text: target, ...(options || {}) } : (target || {}), this);
+      if (!locator) {
+        throw new Error("click helper could not find target");
+      }
+      await locator.click({ timeout: this.actionTimeoutSeconds * 1000 });
+    },
+    async fill(target, value, options) {
+      const pageForAction = await this.ensurePage();
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, label: target, placeholder: target, ...(options || {}) } : (target || {}), this);
+      if (!locator) {
+        throw new Error("fill helper could not find target");
+      }
+      await locator.fill(String(value || ""), { timeout: this.actionTimeoutSeconds * 1000 });
+    },
+    withRetry,
+  };
+}
+
+async function daemonMain() {
+  const cfg = readRuntimeConfigFromEnv();
+  ensureDir(cfg.artifactsDir);
+  if (cfg.profileDir) {
+    ensureDir(cfg.profileDir);
+  }
+  if (cfg.storageStatePath) {
+    ensureDir(path.dirname(cfg.storageStatePath));
+  }
+  const socketPath = daemonSocketPath(cfg.artifactsDir);
+  try {
+    fs.unlinkSync(socketPath);
+  } catch (_err) {
+  }
+
+  const playwright = loadPlaywright();
+  const browserType = playwright[cfg.browserName];
+  if (!browserType) {
+    throw new Error(`unsupported browser type: ${cfg.browserName}`);
+  }
+  const context = await browserType.launchPersistentContext(cfg.profileDir, {
+    headless: cfg.headless,
+    acceptDownloads: true,
+    downloadsPath: cfg.artifactsDir || undefined,
+  });
+  context.setDefaultTimeout(cfg.actionTimeoutSeconds * 1000);
+  const stateRef = {
+    browser: null,
+    context,
+    page: context.pages()[0] || await context.newPage(),
+  };
+  const sessionState = readJSONFile(cfg.sessionStatePath) || {};
+  const qorvexus = makeQorvexusRuntime(cfg, stateRef, sessionState);
+  let chain = Promise.resolve();
+  let idleTimer = null;
+  const idleMs = envInt("QORVEXUS_PLAYWRIGHT_DAEMON_IDLE_SECONDS", 900) * 1000;
+
+  const shutdown = async () => {
+    clearTimeout(idleTimer);
+    await qorvexus.saveStorageState().catch(() => {});
+    try {
+      qorvexus.saveSessionState();
+    } catch (_err) {
+    }
+    await context.close().catch(() => {});
+    try {
+      fs.unlinkSync(socketPath);
+    } catch (_err) {
+    }
+    process.exit(0);
+  };
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      shutdown();
+    }, idleMs);
+  };
+  resetIdle();
+
+  const server = net.createServer((socket) => {
+    let data = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      data += chunk;
+      if (!data.includes("\n")) {
+        return;
+      }
+      const line = data.split("\n")[0];
+      data = "";
+      chain = chain.then(async () => {
+        resetIdle();
+        const request = JSON.parse(line);
+        if (request.version !== DAEMON_PROTOCOL_VERSION) {
+          return { ok: false, error: "browser daemon protocol version mismatch" };
+        }
+        if (request.ping) {
+          return { ok: true, text: "pong" };
+        }
+        cfg.timeoutSeconds = request.timeoutSeconds || cfg.timeoutSeconds;
+        cfg.actionTimeoutSeconds = request.actionTimeoutSeconds || cfg.actionTimeoutSeconds;
+        qorvexus.timeoutSeconds = cfg.timeoutSeconds;
+        qorvexus.actionTimeoutSeconds = cfg.actionTimeoutSeconds;
+        context.setDefaultTimeout(cfg.actionTimeoutSeconds * 1000);
+        stateRef.page = await qorvexus.ensurePage();
+        let result;
+        if (request.mode === "actions") {
+          result = await withOverallTimeout(
+            runActionsMode(stateRef.page, context, qorvexus, JSON.parse(request.payload || "{}")),
+            cfg.timeoutSeconds * 1000,
+            "Playwright run"
+          );
+        } else {
+          result = await withOverallTimeout(
+            runScriptMode(stateRef.page, context, playwright, browserType, null, qorvexus, request.payload || ""),
+            cfg.timeoutSeconds * 1000,
+            "Playwright run"
+          );
+          if (result === undefined) {
+            result = { mode: "script", snapshot: await observePage(stateRef.page, { max_items: 40, text_limit: 1200 }) };
+          }
+        }
+        if (cfg.saveStorageState) {
+          await qorvexus.saveStorageState();
+        }
+        qorvexus.saveSessionState();
+        return { ok: true, text: stringifyResult(result) };
+      }).then((response) => {
+        socket.end(`${JSON.stringify(response)}\n`);
+      }).catch((err) => {
+        socket.end(`${JSON.stringify({ ok: false, error: err && err.stack ? err.stack : String(err) })}\n`);
+      });
+    });
+  });
+  server.listen(socketPath);
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+function readRuntimeConfigFromEnv() {
+  const mode = (process.env.QORVEXUS_PLAYWRIGHT_MODE || "script").trim().toLowerCase();
+  const browserName = String(process.env.QORVEXUS_PLAYWRIGHT_BROWSER || "chromium").trim().toLowerCase() || "chromium";
+  const profileDir = process.env.QORVEXUS_PLAYWRIGHT_PROFILE_DIR || "";
+  const storageStatePath = process.env.QORVEXUS_PLAYWRIGHT_STORAGE_STATE_FILE || "";
+  const artifactsDir = process.env.QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR || "";
+  const sessionStatePath = artifactsDir ? path.join(artifactsDir, "session-state.json") : "";
+  const persistProfile = envBool("QORVEXUS_PLAYWRIGHT_PERSIST_PROFILE", true);
+  const saveStorageState = envBool("QORVEXUS_PLAYWRIGHT_SAVE_STORAGE_STATE", true);
+  const headless = envBool("QORVEXUS_PLAYWRIGHT_HEADLESS", true);
+  const timeoutSeconds = envInt("QORVEXUS_PLAYWRIGHT_TIMEOUT_SECONDS", 120);
+  const actionTimeoutSeconds = envInt("QORVEXUS_PLAYWRIGHT_ACTION_TIMEOUT_SECONDS", Math.min(timeoutSeconds, 10));
+  return {
+    mode,
+    browserName,
+    profileDir,
+    storageStatePath,
+    artifactsDir,
+    sessionStatePath,
+    persistProfile,
+    saveStorageState,
+    headless,
+    timeoutSeconds,
+    actionTimeoutSeconds,
+  };
+}
+
 async function main() {
+  if (process.env.QORVEXUS_PLAYWRIGHT_DAEMON_PROCESS === "1") {
+    await daemonMain();
+    return;
+  }
   const mode = (process.env.QORVEXUS_PLAYWRIGHT_MODE || "script").trim().toLowerCase();
   const browserName = String(process.env.QORVEXUS_PLAYWRIGHT_BROWSER || "chromium").trim().toLowerCase() || "chromium";
   const profileDir = process.env.QORVEXUS_PLAYWRIGHT_PROFILE_DIR || "";
@@ -1402,6 +1724,22 @@ async function main() {
   }
   if (storageStatePath) {
     ensureDir(path.dirname(storageStatePath));
+  }
+
+  const useDaemon = persistProfile && envBool("QORVEXUS_PLAYWRIGHT_DAEMON", true);
+  if (useDaemon) {
+    try {
+      const text = await runViaDaemon(readRuntimeConfigFromEnv(), payloadContentForMode(mode));
+      if (text) {
+        process.stdout.write(text);
+        if (!text.endsWith("\n")) {
+          process.stdout.write("\n");
+        }
+      }
+      return;
+    } catch (err) {
+      console.error(`[browser-daemon fallback] ${err && err.message ? err.message : String(err)}`);
+    }
   }
 
   const playwright = loadPlaywright();
