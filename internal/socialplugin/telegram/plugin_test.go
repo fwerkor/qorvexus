@@ -421,6 +421,42 @@ func TestConnectorSendFallsBackToPlainTextAfterMarkupModesFail(t *testing.T) {
 	}
 }
 
+func TestConnectorSendFallsBackWhenLaterChunkMarkupFails(t *testing.T) {
+	var payloads []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		if payload["parse_mode"] == "HTML" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"Bad Request: can't parse entities"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":3}}`))
+	}))
+	defer srv.Close()
+
+	conn := NewConnector("abc")
+	conn.apiBaseURL = srv.URL
+	_, err := conn.Send(context.Background(), social.OutboundMessage{
+		ThreadID: "123",
+		Text:     "short reply",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected HTML attempt and MarkdownV2 fallback, got %d payloads", len(payloads))
+	}
+	if got := payloads[1]["parse_mode"]; got != "MarkdownV2" {
+		t.Fatalf("expected fallback parse mode MarkdownV2, got %#v", got)
+	}
+}
+
 func TestConnectorSendSplitsLongMessages(t *testing.T) {
 	var payloads []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -452,9 +488,55 @@ func TestConnectorSendSplitsLongMessages(t *testing.T) {
 		if got := len([]rune(text)); got > telegramMaxMessageChars {
 			t.Fatalf("payload %d exceeded telegram limit: %d", i, got)
 		}
+		if got := payload["parse_mode"]; got != "HTML" {
+			t.Fatalf("expected long message chunks to try HTML first, got %#v", got)
+		}
 		if got := payload["chat_id"]; got != "123" {
 			t.Fatalf("payload %d expected chat id 123, got %#v", i, got)
 		}
+	}
+}
+
+func TestConnectorSendFallsBackPerLongMessageChunk(t *testing.T) {
+	var payloads []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		text, _ := payload["text"].(string)
+		if strings.Contains(text, "second") && payload["parse_mode"] == "HTML" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"Bad Request: can't parse entities"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+	}))
+	defer srv.Close()
+
+	conn := NewConnector("abc")
+	conn.apiBaseURL = srv.URL
+	_, err := conn.Send(context.Background(), social.OutboundMessage{
+		ThreadID: "123",
+		Text:     strings.Repeat("first ", 430) + "second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 3 {
+		t.Fatalf("expected first chunk HTML, second chunk HTML, second chunk fallback, got %d payloads", len(payloads))
+	}
+	if got := payloads[0]["parse_mode"]; got != "HTML" {
+		t.Fatalf("expected first chunk to use HTML, got %#v", got)
+	}
+	if got := payloads[1]["parse_mode"]; got != "HTML" {
+		t.Fatalf("expected second chunk to try HTML, got %#v", got)
+	}
+	if got := payloads[2]["parse_mode"]; got != "MarkdownV2" {
+		t.Fatalf("expected second chunk to fall back to MarkdownV2, got %#v", got)
 	}
 }
 

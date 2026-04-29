@@ -197,18 +197,31 @@ func (c *Connector) Send(ctx context.Context, msg social.OutboundMessage) (strin
 }
 
 func (c *Connector) sendWithFallback(ctx context.Context, chatID string, text string) error {
+	rawChunks := splitTelegramMessage(text, 2500)
+	if len(rawChunks) == 0 {
+		rawChunks = []string{""}
+	}
+	for _, rawChunk := range rawChunks {
+		if err := c.sendChunkWithFallback(ctx, chatID, rawChunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Connector) sendChunkWithFallback(ctx context.Context, chatID string, text string) error {
 	var lastErr error
 	for idx, parseMode := range telegramParseModes {
 		chunks := prepareTelegramChunks(text, parseMode)
 		retryNextMode := false
-		for chunkIdx, chunk := range chunks {
+		for _, chunk := range chunks {
 			err := c.sendChunk(ctx, chatID, chunk, parseMode)
 			if err == nil {
 				continue
 			}
 			lastErr = err
 			var sendErr *telegramSendError
-			if chunkIdx == 0 && errors.As(err, &sendErr) && sendErr.markdownParseFailure() && idx < len(telegramParseModes)-1 {
+			if errors.As(err, &sendErr) && sendErr.markdownParseFailure() && idx < len(telegramParseModes)-1 {
 				retryNextMode = true
 				break
 			}
