@@ -125,7 +125,7 @@ func newRuntime(cfg *config.Config, configPath string) (*appRuntime, error) {
 		default:
 			return nil, fmt.Errorf("unsupported provider %q for model %s", modelCfg.Provider, name)
 		}
-		registry.Register(name, modelCfg, recorder.Wrap(client))
+		registry.Register(name, modelCfg, model.NewAliasMappedClient(modelCfg, recorder.Wrap(client)))
 	}
 
 	skills, err := skill.NewLoader().LoadDirs(cfg.Skills.Dirs)

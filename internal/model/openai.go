@@ -409,21 +409,7 @@ func (c *OpenAIClient) pick(primary, fallback string) string {
 }
 
 func (c *OpenAIClient) providerModel(requested string) string {
-	configured := strings.TrimSpace(c.cfg.Model)
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
-		return configured
-	}
-	if configured == "" {
-		return requested
-	}
-	if strings.EqualFold(requested, strings.TrimSpace(c.cfg.RuntimeName)) {
-		return configured
-	}
-	if strings.EqualFold(requested, "primary") && !strings.EqualFold(configured, "primary") {
-		return configured
-	}
-	return requested
+	return providerModel(c.cfg, requested)
 }
 
 func (c *OpenAIClient) pickInt(primary, fallback int) int {

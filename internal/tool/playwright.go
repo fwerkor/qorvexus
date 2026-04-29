@@ -86,8 +86,8 @@ func (m *PlaywrightManager) EnsureInstalled(ctx context.Context, browser string)
 		if !autoInstall {
 			return status, fmt.Errorf("Playwright runtime is not installed and auto-install is disabled")
 		}
-		if _, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, npmPath, "install", "--no-fund", "--no-audit", "playwright"); err != nil {
-			return status, fmt.Errorf("install Playwright package: %w", err)
+		if out, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, npmPath, "install", "--no-fund", "--no-audit", "playwright"); err != nil {
+			return status, fmt.Errorf("install Playwright package: %w%s", err, commandOutputDetail(out))
 		}
 	}
 	if pathExists(moduleDir) {
@@ -109,8 +109,8 @@ func (m *PlaywrightManager) EnsureInstalled(ctx context.Context, browser string)
 		if !pathExists(cliPath) {
 			return status, fmt.Errorf("Playwright CLI not found after install in %s", cliPath)
 		}
-		if _, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, nodePath, cliPath, "install", name); err != nil {
-			return status, fmt.Errorf("install Playwright browser %q: %w", name, err)
+		if out, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, nodePath, cliPath, "install", name); err != nil {
+			return status, fmt.Errorf("install Playwright browser %q: %w%s", name, err, commandOutputDetail(out))
 		}
 		if err := os.WriteFile(readyPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644); err != nil {
 			return status, err
@@ -434,6 +434,14 @@ func runCommandInDir(ctx context.Context, dir string, env []string, name string,
 		return out, err
 	}
 	return out, nil
+}
+
+func commandOutputDetail(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	return "\n" + out
 }
 
 func pathExists(path string) bool {

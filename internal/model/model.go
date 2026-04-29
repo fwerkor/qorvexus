@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"strings"
 
 	"qorvexus/internal/config"
 	"qorvexus/internal/types"
@@ -39,6 +40,32 @@ type Client interface {
 
 type EmbeddingClient interface {
 	Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error)
+}
+
+type AliasMappedClient struct {
+	inner Client
+	cfg   config.ModelConfig
+}
+
+func NewAliasMappedClient(cfg config.ModelConfig, inner Client) Client {
+	if inner == nil {
+		return nil
+	}
+	return &AliasMappedClient{inner: inner, cfg: cfg}
+}
+
+func (c *AliasMappedClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	req.Model = providerModel(c.cfg, req.Model)
+	return c.inner.Complete(ctx, req)
+}
+
+func (c *AliasMappedClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
+	embedder, ok := c.inner.(EmbeddingClient)
+	if !ok {
+		return nil, nil
+	}
+	req.Model = providerModel(c.cfg, req.Model)
+	return embedder.Embed(ctx, req)
 }
 
 type Registry struct {
@@ -83,4 +110,22 @@ func (r *Registry) Embed(ctx context.Context, name string, inputs []string) (*Em
 		resp.Model = cfg.Model
 	}
 	return resp, true, err
+}
+
+func providerModel(cfg config.ModelConfig, requested string) string {
+	configured := strings.TrimSpace(cfg.Model)
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return configured
+	}
+	if configured == "" {
+		return requested
+	}
+	if strings.EqualFold(requested, strings.TrimSpace(cfg.RuntimeName)) {
+		return configured
+	}
+	if strings.EqualFold(requested, "primary") && !strings.EqualFold(configured, "primary") {
+		return configured
+	}
+	return requested
 }
