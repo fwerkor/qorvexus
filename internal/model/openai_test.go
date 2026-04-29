@@ -194,6 +194,18 @@ func TestCompleteRetriesWithLegacyFunctionsOnToolTemplateFailure(t *testing.T) {
 		Model: "demo",
 		Messages: []types.Message{
 			{Role: types.RoleUser, Content: "hello"},
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "demo_tool", Arguments: `{"value":"one"}`},
+				},
+			},
+			{
+				Role:       types.RoleTool,
+				Name:       "demo_tool",
+				ToolCallID: "call-1",
+				Content:    "tool output",
+			},
 		},
 		Tools: []types.ToolDefinition{
 			{
@@ -272,6 +284,25 @@ func TestCompleteRetriesWithoutToolsWhenLegacyFunctionsAlsoFail(t *testing.T) {
 	}
 	if _, ok := payloads[2]["functions"]; ok {
 		t.Fatalf("expected final retry request to omit functions, got %#v", payloads[2]["functions"])
+	}
+	finalMessages, ok := payloads[2]["messages"].([]any)
+	if !ok {
+		t.Fatalf("expected final payload messages, got %#v", payloads[2]["messages"])
+	}
+	for _, raw := range finalMessages {
+		message, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected final message shape: %#v", raw)
+		}
+		if message["role"] == "tool" {
+			t.Fatalf("expected final retry to convert tool-role messages to text-compatible messages: %#v", finalMessages)
+		}
+		if _, ok := message["tool_calls"]; ok {
+			t.Fatalf("expected final retry to omit historical tool_calls: %#v", finalMessages)
+		}
+		if _, ok := message["tool_call_id"]; ok {
+			t.Fatalf("expected final retry to omit historical tool_call_id: %#v", finalMessages)
+		}
 	}
 }
 

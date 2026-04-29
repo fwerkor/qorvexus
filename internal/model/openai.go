@@ -143,6 +143,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 }
 
 func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat string) openAIRequest {
+	toolFormat = normalizeToolFormat(toolFormat)
 	payload := openAIRequest{
 		Model:       c.providerModel(req.Model),
 		Messages:    make([]openAIMessage, 0, len(req.Messages)),
@@ -150,10 +151,7 @@ func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat 
 		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
 	}
 	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, mapMessage(msg))
-	}
-	if strings.TrimSpace(toolFormat) == "" {
-		toolFormat = "openai"
+		payload.Messages = append(payload.Messages, mapMessageForToolFormat(msg, toolFormat))
 	}
 	for _, tool := range req.Tools {
 		def := openAIFunctionDef{
@@ -161,10 +159,10 @@ func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat 
 			Description: tool.Description,
 			Parameters:  tool.Parameters,
 		}
-		switch strings.ToLower(strings.TrimSpace(toolFormat)) {
-		case "none", "disabled", "off", "no_tools":
+		switch toolFormat {
+		case "none":
 			continue
-		case "legacy_functions", "legacy", "functions":
+		case "legacy_functions":
 			payload.Functions = append(payload.Functions, def)
 		default:
 			payload.Tools = append(payload.Tools, openAITool{
@@ -225,13 +223,26 @@ func payloadHasTools(payload openAIRequest) bool {
 }
 
 func fallbackToolFormats(current string) []string {
-	switch strings.ToLower(strings.TrimSpace(current)) {
-	case "legacy_functions", "legacy", "functions":
+	switch normalizeToolFormat(current) {
+	case "legacy_functions":
 		return []string{"none"}
-	case "none", "disabled", "off", "no_tools":
+	case "none":
 		return nil
 	default:
 		return []string{"legacy_functions", "none"}
+	}
+}
+
+func normalizeToolFormat(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "openai", "tools":
+		return "openai"
+	case "legacy_functions", "legacy", "functions":
+		return "legacy_functions"
+	case "none", "disabled", "off", "no_tools":
+		return "none"
+	default:
+		return "openai"
 	}
 }
 
@@ -335,6 +346,81 @@ func mapMessage(msg types.Message) openAIMessage {
 		})
 	}
 	return out
+}
+
+func mapMessageForToolFormat(msg types.Message, toolFormat string) openAIMessage {
+	if normalizeToolFormat(toolFormat) == "openai" {
+		return mapMessage(msg)
+	}
+	return mapMessageAsTextCompatible(msg)
+}
+
+func mapMessageAsTextCompatible(msg types.Message) openAIMessage {
+	if msg.Role == types.RoleTool {
+		name := strings.TrimSpace(msg.Name)
+		if name == "" {
+			name = "tool"
+		}
+		return openAIMessage{
+			Role:    string(types.RoleUser),
+			Content: strings.TrimSpace("Tool result from " + name + ":\n" + msg.Content),
+		}
+	}
+
+	out := mapMessage(msg)
+	out.ToolCallID = ""
+	out.ToolCalls = nil
+	if len(msg.ToolCalls) == 0 {
+		return out
+	}
+
+	content := messageTextContent(msg)
+	callSummary := renderToolCallsAsText(msg.ToolCalls)
+	if content == "" {
+		out.Content = "Assistant requested tool calls:\n" + callSummary
+	} else {
+		out.Content = content + "\n\nAssistant requested tool calls:\n" + callSummary
+	}
+	return out
+}
+
+func messageTextContent(msg types.Message) string {
+	if strings.TrimSpace(msg.Content) != "" {
+		return strings.TrimSpace(msg.Content)
+	}
+	if len(msg.Parts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch strings.ToLower(strings.TrimSpace(part.Type)) {
+		case "image_url":
+			if strings.TrimSpace(part.ImageURL) != "" {
+				parts = append(parts, "[image: "+strings.TrimSpace(part.ImageURL)+"]")
+			}
+		default:
+			if strings.TrimSpace(part.Text) != "" {
+				parts = append(parts, strings.TrimSpace(part.Text))
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func renderToolCallsAsText(calls []types.ToolCall) string {
+	lines := make([]string, 0, len(calls))
+	for _, call := range calls {
+		name := strings.TrimSpace(call.Name)
+		if name == "" {
+			name = "tool"
+		}
+		args := strings.TrimSpace(call.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		lines = append(lines, "- "+name+"("+args+")")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func fromOpenAIMessage(msg openAIResponseMessage) types.Message {
