@@ -400,13 +400,22 @@ const controlPanelHTML = `<!doctype html>
         {label:"Messages", html:r => escapeHTML((r.messages || []).length)},
       ]);
     }
-    async function loadChatSessions(keepScroll = false) {
+    async function loadChatSessions(options = {}) {
+      if (typeof options === "boolean") options = { keepScroll: options };
+      const keepScroll = Boolean(options.keepScroll);
+      const passive = Boolean(options.passive);
       const stream = document.getElementById("chat-stream");
       const nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
+      const shouldHoldTranscript = passive && shouldPreserveChatDOM();
       chatSessions = await api("/api/sessions");
       renderChatSessions();
-      renderChatTranscript();
-      if (!keepScroll || nearBottom) scrollChatBottom();
+      if (!shouldHoldTranscript) {
+        renderChatTranscript();
+        restoreOpenToolDetails();
+        if (!keepScroll || nearBottom) scrollChatBottom();
+      } else {
+        updateChatHeader();
+      }
     }
     function openChatSession(id) {
       showView("chats");
@@ -450,43 +459,77 @@ const controlPanelHTML = `<!doctype html>
     function totalMessageCount(sessions) {
       return sessions.reduce((sum, s) => sum + ((s.messages || []).length), 0);
     }
-    function renderChatTranscript() {
-      const sessions = selectedSessionID === "__all__" ? chatSessions : chatSessions.filter(s => s.id === selectedSessionID);
+    function visibleChatSessions() {
+      return selectedSessionID === "__all__" ? chatSessions : chatSessions.filter(s => s.id === selectedSessionID);
+    }
+    function updateChatHeader() {
+      const sessions = visibleChatSessions();
       const heading = selectedSessionID === "__all__" ? "All sessions" : selectedSessionID;
       document.getElementById("chat-heading").textContent = heading;
       document.getElementById("chat-subtitle").textContent = sessions.length + " session(s), " + totalMessageCount(sessions) + " message(s)";
       updateChatActions();
+    }
+    function shouldPreserveChatDOM() {
+      const stream = document.getElementById("chat-stream");
+      const active = document.activeElement;
+      const focusedInsideChat = active && stream && stream.contains(active);
+      const openDetails = stream && stream.querySelector("details[open]");
+      const nearBottom = !stream || stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
+      return focusedInsideChat || openDetails || !nearBottom;
+    }
+    function captureOpenToolDetails() {
+      return new Set(Array.from(document.querySelectorAll("#chat-stream details.tool-detail[open]")).map(el => el.dataset.detailId).filter(Boolean));
+    }
+    function restoreOpenToolDetails(openIDs) {
+      const ids = openIDs || captureOpenToolDetails();
+      ids.forEach(id => {
+        const el = document.querySelector("#chat-stream details.tool-detail[data-detail-id='" + cssEscape(id) + "']");
+        if (el) el.open = true;
+      });
+    }
+    function cssEscape(value) {
+      if (window.CSS && CSS.escape) return CSS.escape(value);
+      return String(value).replace(/['\\]/g, "\\$&");
+    }
+    function renderChatTranscript() {
+      const openIDs = captureOpenToolDetails();
+      const sessions = selectedSessionID === "__all__" ? chatSessions : chatSessions.filter(s => s.id === selectedSessionID);
+      updateChatHeader();
       if (!sessions.length) {
         document.getElementById("chat-stream").innerHTML = "<div class='empty'>No session selected.</div>";
         return;
       }
       document.getElementById("chat-stream").innerHTML = sessions.map(renderSessionTranscript).join("");
+      restoreOpenToolDetails(openIDs);
     }
     function renderSessionTranscript(session) {
       const messages = session.messages || [];
       const head = "<div class='chat-group-head'><strong>" + escapeHTML(session.id) + "</strong><span>" + escapeHTML([session.model, session.context?.channel, fmtTime(session.updated_at)].filter(Boolean).join(" | ")) + "</span></div>";
-      const body = messages.length ? messages.map(renderMessage).join("") : "<div class='empty'>No messages.</div>";
+      const body = messages.length ? messages.map((msg, index) => renderMessage(msg, session.id, index)).join("") : "<div class='empty'>No messages.</div>";
       return "<div class='chat-group'>" + head + body + "</div>";
     }
-    function renderMessage(msg) {
+    function renderMessage(msg, sessionID, index) {
       const role = String(msg.role || "message");
       const content = messageText(msg) || "(empty)";
-      const callHTML = renderToolCallDetails(msg.tool_calls || []);
-      const toolHTML = msg.tool_call_id || role === "tool" ? renderToolResultDetail(msg) : "";
+      const detailPrefix = sessionID + ":" + index;
+      const callHTML = renderToolCallDetails(msg.tool_calls || [], detailPrefix);
+      const toolHTML = msg.tool_call_id || role === "tool" ? renderToolResultDetail(msg, detailPrefix) : "";
       return "<div class='message " + escapeHTML(role) + "'><div class='message-role'>" + escapeHTML(role) + "</div><div class='message-body'>" + escapeHTML(content) + callHTML + toolHTML + "</div></div>";
     }
-    function renderToolCallDetails(calls) {
+    function renderToolCallDetails(calls, detailPrefix) {
       if (!calls.length) return "";
       return calls.map((call, index) => {
         const name = call.name || call.id || "tool";
         const args = prettyJSON(call.arguments || "{}");
-        return "<details class='tool-detail'><summary>Tool call " + escapeHTML(index + 1) + ": " + escapeHTML(name) + "</summary><div class='tool-json'>" + escapeHTML(args) + "</div></details>";
+        const id = detailPrefix + ":call:" + index;
+        return "<details class='tool-detail' data-detail-id='" + escapeHTML(id) + "'><summary>Tool call " + escapeHTML(index + 1) + ": " + escapeHTML(name) + "</summary><div class='tool-json'>" + escapeHTML(args) + "</div></details>";
       }).join("");
     }
-    function renderToolResultDetail(msg) {
+    function renderToolResultDetail(msg, detailPrefix) {
       const label = msg.name || msg.tool_call_id || "tool";
       const body = msg.content || "";
-      return "<details class='tool-detail'><summary>Tool result: " + escapeHTML(label) + "</summary><div class='tool-json'>" + escapeHTML(prettyJSON(body)) + "</div></details>";
+      const id = detailPrefix + ":result";
+      return "<details class='tool-detail' data-detail-id='" + escapeHTML(id) + "'><summary>Tool result: " + escapeHTML(label) + "</summary><div class='tool-json'>" + escapeHTML(prettyJSON(body)) + "</div></details>";
     }
     function prettyJSON(value) {
       if (typeof value !== "string") return JSON.stringify(value, null, 2);
@@ -531,7 +574,7 @@ const controlPanelHTML = `<!doctype html>
         const data = await api("/api/run", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(payload) });
         input.value = "";
         status.textContent = "Sent.";
-        await loadChatSessions(false);
+        await loadChatSessions({ keepScroll: false });
       } catch (err) {
         status.textContent = err.message || String(err);
       }
@@ -545,7 +588,7 @@ const controlPanelHTML = `<!doctype html>
         await api("/api/sessions/delete", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ id: selectedSessionID }) });
         selectedSessionID = "__all__";
         status.textContent = "Deleted.";
-        await Promise.all([loadSessions(), loadChatSessions(false)]);
+        await Promise.all([loadSessions(), loadChatSessions({ keepScroll: false })]);
       } catch (err) {
         status.textContent = err.message || String(err);
       }
@@ -605,11 +648,11 @@ const controlPanelHTML = `<!doctype html>
     async function loadSocial() { text("social", await api("/api/social/recent")); }
     async function loadConnectors() { text("connectors", await api("/api/social/connectors")); }
     async function refreshAll() {
-      await Promise.allSettled([loadStatus(), loadSessions(), loadChatSessions(true), loadQueue(), loadPlans(), loadAudit(), loadSocial(), loadConnectors()]);
+      await Promise.allSettled([loadStatus(), loadSessions(), loadChatSessions({ keepScroll: true }), loadQueue(), loadPlans(), loadAudit(), loadSocial(), loadConnectors()]);
     }
     setInterval(() => {
       const checkbox = document.getElementById("session-auto");
-      if (checkbox && checkbox.checked) loadChatSessions(true).catch(() => {});
+      if (checkbox && checkbox.checked) loadChatSessions({ keepScroll: true, passive: true }).catch(() => {});
     }, 3000);
     refreshAll();
     loadConfig();
