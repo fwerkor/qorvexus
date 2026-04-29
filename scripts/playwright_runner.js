@@ -338,11 +338,15 @@ async function firstVisibleLocator(candidates) {
   return null;
 }
 
-async function locateBySelectorOrText(page, action) {
+async function locateBySelectorOrText(page, action, state) {
   const candidates = [];
   if (Number.isInteger(action.index)) {
-    const snapshot = await observePage(page, { max_items: Math.max(action.index + 1, 80), text_limit: 200 });
-    const item = snapshot.interactive.find((candidate) => candidate.index === action.index);
+    const observed = state && Array.isArray(state.observedInteractive) ? state.observedInteractive : [];
+    let item = observed.find((candidate) => candidate.index === action.index);
+    if (!item) {
+      const snapshot = await observePage(page, { max_items: Math.max(action.index + 1, 80), text_limit: 200 });
+      item = snapshot.interactive.find((candidate) => candidate.index === action.index);
+    }
     if (item && item.selector) {
       candidates.push(page.locator(item.selector));
     }
@@ -842,14 +846,17 @@ async function runAction(context, action, state) {
         };
       }
       case "observe": {
-        return { type, snapshot: await observePage(page, action), tab_index: state.currentTabIndex };
+        const snapshot = await observePage(page, action);
+        state.observedInteractive = snapshot.interactive;
+        state.observedURL = snapshot.url;
+        return { type, snapshot, tab_index: state.currentTabIndex };
       }
       case "wait_for": {
         const waited = await waitForAction(page, action, timeoutMs);
         return { type, waited, tab_index: state.currentTabIndex };
       }
       case "click": {
-        const locator = await locateBySelectorOrText(page, action);
+        const locator = await locateBySelectorOrText(page, action, state);
         if (!locator) {
           const snapshot = await observePage(page, { max_items: 12, text_limit: 200 });
           throw new Error(`click target not found on ${snapshot.url || "blank page"}; provide index/selector/text from observe. Visible targets: ${JSON.stringify(snapshot.interactive)}`);
@@ -875,7 +882,7 @@ async function runAction(context, action, state) {
         return { type, selector: action.selector || "", text: action.text || "", url: page.url(), tab_index: state.currentTabIndex };
       }
       case "type": {
-        const locator = await locateBySelectorOrText(page, action);
+        const locator = await locateBySelectorOrText(page, action, state);
         if (!locator) {
           throw new Error("type action requires selector, text, label, placeholder, or role/name");
         }
@@ -888,7 +895,7 @@ async function runAction(context, action, state) {
         return { type, selector: action.selector, text_length: String(action.text || "").length, tab_index: state.currentTabIndex };
       }
       case "press": {
-        const locator = await locateBySelectorOrText(page, action);
+        const locator = await locateBySelectorOrText(page, action, state);
         if (!locator) {
           throw new Error("press action requires selector, text, label, placeholder, or role/name");
         }
@@ -898,14 +905,14 @@ async function runAction(context, action, state) {
       }
       case "login_form": {
         const usernameField = action.username_selector
-          ? await locateBySelectorOrText(page, { selector: action.username_selector })
+          ? await locateBySelectorOrText(page, { selector: action.username_selector }, state)
           : await firstVisibleLocator([
             page.locator("input[type='text'],input[type='email'],input[name*='user' i],input[name*='login' i],input[name*='email' i]"),
             page.getByLabel(/user|login|email|账号|用户名|邮箱/i),
             page.getByPlaceholder(/user|login|email|账号|用户名|邮箱/i),
           ]);
         const passwordField = action.password_selector
-          ? await locateBySelectorOrText(page, { selector: action.password_selector })
+          ? await locateBySelectorOrText(page, { selector: action.password_selector }, state)
           : await firstVisibleLocator([
             page.locator("input[type='password']"),
             page.getByLabel(/password|密码/i),
@@ -1016,7 +1023,7 @@ async function runAction(context, action, state) {
             });
           }
         } else if (action.selector || action.text) {
-          const trigger = await locateBySelectorOrText(page, action);
+          const trigger = await locateBySelectorOrText(page, action, state);
           if (!trigger) {
             throw new Error("open_tab requires url, selector, or text");
           }
@@ -1241,6 +1248,8 @@ async function runActionsMode(page, context, qorvexus) {
     currentPage: page,
     pages: context.pages(),
     currentTabIndex: 0,
+    observedInteractive: Array.isArray(qorvexus.lastInteractive) ? qorvexus.lastInteractive : [],
+    observedURL: qorvexus.lastObservedURL || "",
   };
   refreshTabState(context, state);
   const results = [];
@@ -1254,13 +1263,18 @@ async function runActionsMode(page, context, qorvexus) {
   }
   const currentPage = await ensureCurrentPage(context, state);
   const lastResult = results.length > 0 ? results[results.length - 1] : null;
+  const finalSnapshot = lastResult && lastResult.type === "observe" ? lastResult.snapshot : await observePage(currentPage, { max_items: 30, text_limit: 900 });
+  if (finalSnapshot && Array.isArray(finalSnapshot.interactive)) {
+    qorvexus.lastInteractive = finalSnapshot.interactive;
+    qorvexus.lastObservedURL = finalSnapshot.url || currentPage.url();
+  }
   return {
     mode: "actions",
     current_url: currentPage.url(),
     current_tab_index: state.currentTabIndex,
     tabs: await collectTabsInfo(context, state),
     downloads: listDownloadedFiles(qorvexus.artifactsDir),
-    snapshot: lastResult && lastResult.type === "observe" ? undefined : await observePage(currentPage, { max_items: 30, text_limit: 900 }),
+    snapshot: lastResult && lastResult.type === "observe" ? undefined : finalSnapshot,
     results,
   };
 }
@@ -1337,6 +1351,8 @@ async function main() {
     artifactsDir,
     sessionStatePath,
     lastURL: sessionState.last_url || "",
+    lastInteractive: Array.isArray(sessionState.last_interactive) ? sessionState.last_interactive : [],
+    lastObservedURL: sessionState.last_observed_url || "",
     timeoutSeconds,
     actionTimeoutSeconds,
     log(value) {
@@ -1368,6 +1384,8 @@ async function main() {
         ...sessionState,
         ...(extra || {}),
         last_url: isBlankURL(currentURL) ? (sessionState.last_url || "") : currentURL,
+        last_interactive: Array.isArray(this.lastInteractive) ? this.lastInteractive : (sessionState.last_interactive || []),
+        last_observed_url: this.lastObservedURL || sessionState.last_observed_url || "",
         updated_at: new Date().toISOString(),
       };
       writeJSONFile(sessionStatePath, next);
@@ -1377,7 +1395,7 @@ async function main() {
     },
     async click(target, options) {
       const pageForAction = await this.ensurePage();
-      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, text: target, ...(options || {}) } : (target || {}));
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, text: target, ...(options || {}) } : (target || {}), this);
       if (!locator) {
         throw new Error("click helper could not find target");
       }
@@ -1385,7 +1403,7 @@ async function main() {
     },
     async fill(target, value, options) {
       const pageForAction = await this.ensurePage();
-      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, label: target, placeholder: target, ...(options || {}) } : (target || {}));
+      const locator = await locateBySelectorOrText(pageForAction, typeof target === "string" ? { selector: target, label: target, placeholder: target, ...(options || {}) } : (target || {}), this);
       if (!locator) {
         throw new Error("fill helper could not find target");
       }
