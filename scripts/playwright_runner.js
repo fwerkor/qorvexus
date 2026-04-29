@@ -177,6 +177,11 @@ async function maybeWaitForLoadState(page, loadState, timeoutMs) {
 
 async function waitForAction(page, action, defaultTimeoutMs) {
   const timeout = action.timeout_seconds ? action.timeout_seconds * 1000 : defaultTimeoutMs;
+  const waitMs = Number.isFinite(action.milliseconds) && action.milliseconds > 0
+    ? action.milliseconds
+    : Number.isFinite(action.delay_ms) && action.delay_ms > 0
+      ? action.delay_ms
+      : timeout;
   if (action.url_contains) {
     await page.waitForURL(`**${action.url_contains}**`, { timeout });
     return { url_contains: action.url_contains };
@@ -195,7 +200,46 @@ async function waitForAction(page, action, defaultTimeoutMs) {
     });
     return { text: action.text, state: action.state || "visible" };
   }
-  throw new Error("wait_for action requires selector, text, or url_contains");
+  await maybeWaitForLoadState(page, action.load_state || "domcontentloaded", Math.min(timeout, 2000));
+  await sleep(waitMs);
+  return { duration_ms: waitMs, load_state: action.load_state || "domcontentloaded" };
+}
+
+async function describeLocator(locator) {
+  try {
+    return await locator.evaluate((element) => ({
+      tag: String(element.tagName || "").toLowerCase(),
+      type: String(element.getAttribute("type") || "").toLowerCase(),
+      text: String(element.innerText || element.textContent || element.getAttribute("aria-label") || "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim(),
+    }));
+  } catch (_err) {
+    return {};
+  }
+}
+
+async function settleAfterAction(page, action, timeoutMs, beforeURL, targetInfo) {
+  if (action.settle === false) {
+    return null;
+  }
+  const explicitMs = Number.isFinite(action.wait_after_ms) && action.wait_after_ms >= 0
+    ? action.wait_after_ms
+    : Number.isFinite(action.wait_after_seconds) && action.wait_after_seconds >= 0
+      ? action.wait_after_seconds * 1000
+      : null;
+  const looksSubmitLike = targetInfo && (
+    targetInfo.type === "submit" ||
+    targetInfo.tag === "button" ||
+    /登录|login|submit|提交|保存|发送|确认|continue|sign in/i.test(String(targetInfo.text || ""))
+  );
+  const settleMs = explicitMs !== null ? explicitMs : looksSubmitLike ? Math.min(timeoutMs, 3000) : 300;
+  await maybeWaitForLoadState(page, action.load_state || "domcontentloaded", Math.min(timeoutMs, 2000));
+  if (beforeURL && typeof page.url === "function" && page.url() === beforeURL && looksSubmitLike) {
+    await page.waitForURL((url) => String(url) !== beforeURL, { timeout: Math.min(timeoutMs, settleMs) }).catch(() => {});
+  }
+  if (settleMs > 0) {
+    await sleep(settleMs);
+  }
+  return { duration_ms: settleMs, submit_like: Boolean(looksSubmitLike) };
 }
 
 async function extractTable(page, selector) {
@@ -862,6 +906,9 @@ async function runAction(context, action, state) {
           throw new Error(`click target not found on ${snapshot.url || "blank page"}; provide index/selector/text from observe. Visible targets: ${JSON.stringify(snapshot.interactive)}`);
         }
         await locator.waitFor({ state: "visible", timeout: timeoutMs });
+        const beforeURL = page.url();
+        const targetInfo = await describeLocator(locator);
+        let settled = null;
         if (action.wait_for_navigation) {
           await Promise.all([
             maybeWaitForLoadState(page, action.load_state || "domcontentloaded", timeoutMs),
@@ -877,9 +924,10 @@ async function runAction(context, action, state) {
             clickCount: action.click_count || 1,
             timeout: timeoutMs,
           });
+          settled = await settleAfterAction(page, action, timeoutMs, beforeURL, targetInfo);
         }
         refreshTabState(context, state);
-        return { type, selector: action.selector || "", text: action.text || "", url: page.url(), tab_index: state.currentTabIndex };
+        return { type, selector: action.selector || "", text: action.text || "", url: page.url(), settled, tab_index: state.currentTabIndex };
       }
       case "type": {
         const locator = await locateBySelectorOrText(page, action, state);
