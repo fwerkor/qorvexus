@@ -148,6 +148,61 @@ func TestRunnerInjectsRelevantMemoryIntoPrompt(t *testing.T) {
 	if !found {
 		t.Fatalf("expected relevant memory to be injected into system prompt, got %#v", client.lastRequest.Messages)
 	}
+	if len(client.lastRequest.Messages) < 2 || client.lastRequest.Messages[0].Role != types.RoleSystem {
+		t.Fatalf("expected system prompt to be first, got %#v", client.lastRequest.Messages)
+	}
+	for i, msg := range client.lastRequest.Messages[1:] {
+		if msg.Role == types.RoleSystem {
+			t.Fatalf("expected no system messages after the first, found one at %d in %#v", i+1, client.lastRequest.Messages)
+		}
+	}
+}
+
+func TestRunnerNormalizesPersistedSystemMessagesBeforeModelCall(t *testing.T) {
+	tempDir := t.TempDir()
+	store := session.NewStore(tempDir)
+	if err := store.Save(&session.State{
+		ID:    "sess-system-after-user",
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "old user"},
+			{Role: types.RoleSystem, Content: "late system"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := model.NewRegistry()
+	client := &stubClient{reply: "ok"}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				DefaultModel: "primary",
+				MaxTurns:     1,
+			},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	_, _, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-system-after-user",
+		Prompt:    "new user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.lastRequest.Messages) == 0 || client.lastRequest.Messages[0].Role != types.RoleSystem {
+		t.Fatalf("expected late system message to be moved to the beginning, got %#v", client.lastRequest.Messages)
+	}
+	for i, msg := range client.lastRequest.Messages[1:] {
+		if msg.Role == types.RoleSystem {
+			t.Fatalf("expected no late system messages after normalization, found one at %d in %#v", i+1, client.lastRequest.Messages)
+		}
+	}
 }
 
 func TestRunnerInjectsSkillInstructionsIntoSystemPrompt(t *testing.T) {

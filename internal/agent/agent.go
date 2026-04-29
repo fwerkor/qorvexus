@@ -53,6 +53,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		return nil, "", err
 	}
 	st.Messages = types.SanitizeConversation(st.Messages)
+	st.Messages = normalizeSystemMessages(st.Messages, nil)
 	if req.Prompt != "" || len(req.Parts) > 0 {
 		msg := types.Message{Role: types.RoleUser, Content: req.Prompt}
 		if len(req.Parts) > 0 {
@@ -64,11 +65,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		}
 		st.Messages = append(st.Messages, msg)
 	}
+	transientSystemPrompts := []string{}
 	if prompt := r.buildRelevantMemoryPrompt(req.SessionID, req.Prompt, st.Context); prompt != "" {
-		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
+		transientSystemPrompts = append(transientSystemPrompts, prompt)
 	}
 	if prompt := r.buildActivePlanPrompt(st.ID); prompt != "" {
-		st.Messages = append(st.Messages, types.Message{Role: types.RoleSystem, Content: prompt})
+		transientSystemPrompts = append(transientSystemPrompts, prompt)
 	}
 	persist := func() error {
 		if r.Sessions == nil {
@@ -86,9 +88,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 	}
 	for turn := 0; turn < maxTurns; turn++ {
 		st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
+		messagesForModel := normalizeSystemMessages(st.Messages, transientSystemPrompts)
 		response, err := client.Complete(ctx, model.CompletionRequest{
 			Model:       cfg.Model,
-			Messages:    st.Messages,
+			Messages:    messagesForModel,
 			Tools:       r.Tools.Definitions(),
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
@@ -165,6 +168,33 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 
 func isZeroContext(ctx types.ConversationContext) bool {
 	return ctx.Channel == "" && ctx.ThreadID == "" && ctx.SenderID == "" && ctx.SenderName == "" && ctx.Trust == ""
+}
+
+func normalizeSystemMessages(messages []types.Message, extras []string) []types.Message {
+	if len(messages) == 0 && len(extras) == 0 {
+		return nil
+	}
+	systemParts := []string{}
+	out := make([]types.Message, 0, len(messages)+1)
+	for _, msg := range messages {
+		if msg.Role == types.RoleSystem {
+			if content := strings.TrimSpace(msg.Content); content != "" {
+				systemParts = append(systemParts, content)
+			}
+			continue
+		}
+		out = append(out, msg)
+	}
+	for _, extra := range extras {
+		if content := strings.TrimSpace(extra); content != "" {
+			systemParts = append(systemParts, content)
+		}
+	}
+	if len(systemParts) == 0 {
+		return out
+	}
+	combined := strings.Join(systemParts, "\n\n")
+	return append([]types.Message{{Role: types.RoleSystem, Content: combined}}, out...)
 }
 
 func (r *Runner) pickModel(req Request) string {

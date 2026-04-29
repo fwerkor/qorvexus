@@ -111,9 +111,11 @@ func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	toolFallback := true
 	client := NewOpenAIClient(config.ModelConfig{
-		BaseURL: srv.URL,
-		Model:   "demo",
+		BaseURL:      srv.URL,
+		Model:        "demo",
+		ToolFallback: &toolFallback,
 	})
 	resp, err := client.Complete(context.Background(), CompletionRequest{
 		Model: "demo",
@@ -135,6 +137,42 @@ func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	}
 	if got := resp.Usage["completion_tokens_details.reasoning_tokens"]; got != 0 {
 		t.Fatalf("expected nested reasoning token count to flatten, got %d", got)
+	}
+}
+
+func TestCompleteParsesStreamingResponses(t *testing.T) {
+	var payload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"你\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	stream := true
+	client := NewOpenAIClient(config.ModelConfig{
+		BaseURL: srv.URL,
+		Model:   "demo",
+		Stream:  &stream,
+	})
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "demo",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["stream"]; got != true {
+		t.Fatalf("expected stream=true payload, got %#v", got)
+	}
+	if resp.Message.Content != "你好" {
+		t.Fatalf("unexpected streamed content: %#v", resp.Message)
 	}
 }
 
@@ -236,9 +274,11 @@ func TestCompleteRetriesWithLegacyFunctionsOnToolTemplateFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	toolFallback := true
 	client := NewOpenAIClient(config.ModelConfig{
-		BaseURL: srv.URL,
-		Model:   "demo",
+		BaseURL:      srv.URL,
+		Model:        "demo",
+		ToolFallback: &toolFallback,
 	})
 	resp, err := client.Complete(context.Background(), CompletionRequest{
 		Model: "demo",
@@ -303,9 +343,11 @@ func TestCompleteRetriesWithoutToolsWhenLegacyFunctionsAlsoFail(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	toolFallback := true
 	client := NewOpenAIClient(config.ModelConfig{
-		BaseURL: srv.URL,
-		Model:   "demo",
+		BaseURL:      srv.URL,
+		Model:        "demo",
+		ToolFallback: &toolFallback,
 	})
 	resp, err := client.Complete(context.Background(), CompletionRequest{
 		Model: "demo",

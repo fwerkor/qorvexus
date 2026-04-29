@@ -30,27 +30,34 @@ type SkillsConfig struct {
 }
 
 type ModelConfig struct {
-	RuntimeName string            `yaml:"-"`
-	Provider    string            `yaml:"provider"`
-	BaseURL     string            `yaml:"base_url"`
-	APIKey      string            `yaml:"api_key"`
-	Model       string            `yaml:"model"`
-	MaxTokens   int               `yaml:"max_tokens"`
-	Temperature float64           `yaml:"temperature"`
-	Headers     map[string]string `yaml:"headers"`
-	ToolFormat  string            `yaml:"tool_format"`
-	Vision      bool              `yaml:"vision"`
+	RuntimeName      string            `yaml:"-"`
+	Provider         string            `yaml:"provider"`
+	BaseURL          string            `yaml:"base_url"`
+	APIKey           string            `yaml:"api_key"`
+	Model            string            `yaml:"model"`
+	Group            string            `yaml:"group"`
+	MaxTokens        int               `yaml:"max_tokens"`
+	Temperature      float64           `yaml:"temperature"`
+	TopP             *float64          `yaml:"top_p"`
+	FrequencyPenalty *float64          `yaml:"frequency_penalty"`
+	PresencePenalty  *float64          `yaml:"presence_penalty"`
+	Stream           *bool             `yaml:"stream"`
+	Headers          map[string]string `yaml:"headers"`
+	ToolFormat       string            `yaml:"tool_format"`
+	ToolFallback     *bool             `yaml:"tool_fallback"`
+	Vision           bool              `yaml:"vision"`
 }
 
 type AgentConfig struct {
-	DefaultModel         string           `yaml:"default_model"`
-	SummarizerModel      string           `yaml:"summarizer_model"`
-	VisionFallbackModel  string           `yaml:"vision_fallback_model"`
-	MaxTurns             int              `yaml:"max_turns"`
-	ContextWindowChars   int              `yaml:"context_window_chars"`
-	CompressionThreshold float64          `yaml:"compression_threshold"`
-	SystemPrompt         string           `yaml:"system_prompt"`
-	Discussion           DiscussionConfig `yaml:"discussion"`
+	DefaultModel           string           `yaml:"default_model"`
+	SummarizerModel        string           `yaml:"summarizer_model"`
+	VisionFallbackModel    string           `yaml:"vision_fallback_model"`
+	MaxTurns               int              `yaml:"max_turns"`
+	ContextWindowChars     int              `yaml:"context_window_chars"`
+	CompressionThreshold   float64          `yaml:"compression_threshold"`
+	SystemPrompt           string           `yaml:"system_prompt"`
+	UseDefaultSystemPrompt *bool            `yaml:"use_default_system_prompt"`
+	Discussion             DiscussionConfig `yaml:"discussion"`
 }
 
 type DiscussionConfig struct {
@@ -278,7 +285,10 @@ func (c *Config) setDefaults(path string) error {
 	if c.Agent.CompressionThreshold <= 0 || c.Agent.CompressionThreshold >= 1 {
 		c.Agent.CompressionThreshold = 0.75
 	}
-	if strings.TrimSpace(c.Agent.SystemPrompt) == "" {
+	if c.Agent.UseDefaultSystemPrompt == nil {
+		c.Agent.UseDefaultSystemPrompt = boolPtr(true)
+	}
+	if strings.TrimSpace(c.Agent.SystemPrompt) == "" && *c.Agent.UseDefaultSystemPrompt {
 		c.Agent.SystemPrompt = defaultSystemPrompt()
 	}
 	if len(c.Agent.Discussion.DefaultPanel) == 0 {

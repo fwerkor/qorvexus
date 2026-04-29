@@ -29,12 +29,17 @@ func NewOpenAIClient(cfg config.ModelConfig) *OpenAIClient {
 }
 
 type openAIRequest struct {
-	Model       string              `json:"model"`
-	Messages    []openAIMessage     `json:"messages"`
-	Tools       []openAITool        `json:"tools,omitempty"`
-	Functions   []openAIFunctionDef `json:"functions,omitempty"`
-	MaxTokens   int                 `json:"max_tokens,omitempty"`
-	Temperature float64             `json:"temperature,omitempty"`
+	Model            string              `json:"model"`
+	Group            string              `json:"group,omitempty"`
+	Messages         []openAIMessage     `json:"messages"`
+	Tools            []openAITool        `json:"tools,omitempty"`
+	Functions        []openAIFunctionDef `json:"functions,omitempty"`
+	MaxTokens        int                 `json:"max_tokens,omitempty"`
+	Temperature      float64             `json:"temperature,omitempty"`
+	TopP             *float64            `json:"top_p,omitempty"`
+	FrequencyPenalty *float64            `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64            `json:"presence_penalty,omitempty"`
+	Stream           *bool               `json:"stream,omitempty"`
 }
 
 type openAIMessage struct {
@@ -83,6 +88,16 @@ type openAIResponseMessage struct {
 	ToolCalls []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
+type openAIStreamChunk struct {
+	Choices []struct {
+		Delta openAIResponseMessage `json:"delta"`
+	} `json:"choices"`
+	Usage map[string]any `json:"usage,omitempty"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
 type openAIEmbeddingRequest struct {
 	Model string   `json:"model"`
 	Input []string `json:"input"`
@@ -108,7 +123,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode >= 300 && looksLikeToolTemplateFailure(resp.StatusCode, raw) {
+	if c.toolFallbackEnabled() && resp.StatusCode >= 300 && looksLikeToolTemplateFailure(resp.StatusCode, raw) {
 		for _, fallbackFormat := range fallbackToolFormats(toolFormat) {
 			toolFormat = fallbackFormat
 			payload = c.buildCompletionPayload(req, toolFormat)
@@ -125,8 +140,14 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 		return nil, fmt.Errorf("model returned %s: %s (%s)", resp.Status, strings.TrimSpace(string(raw)), payloadSummary(payload, toolFormat))
 	}
 
-	parsed := &openAIResponse{}
-	if err := json.Unmarshal(raw, parsed); err != nil {
+	var parsed *openAIResponse
+	if payload.Stream != nil && *payload.Stream {
+		parsed, err = parseOpenAIStream(raw)
+	} else {
+		parsed = &openAIResponse{}
+		err = json.Unmarshal(raw, parsed)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	if parsed.Error != nil {
@@ -147,10 +168,15 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 func (c *OpenAIClient) buildCompletionPayload(req CompletionRequest, toolFormat string) openAIRequest {
 	toolFormat = normalizeToolFormat(toolFormat)
 	payload := openAIRequest{
-		Model:       c.providerModel(req.Model),
-		Messages:    make([]openAIMessage, 0, len(req.Messages)),
-		MaxTokens:   c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
-		Temperature: c.pickFloat(req.Temperature, c.cfg.Temperature),
+		Model:            c.providerModel(req.Model),
+		Group:            c.cfg.Group,
+		Messages:         make([]openAIMessage, 0, len(req.Messages)),
+		MaxTokens:        c.pickInt(req.MaxTokens, c.cfg.MaxTokens),
+		Temperature:      c.pickFloat(req.Temperature, c.cfg.Temperature),
+		TopP:             c.cfg.TopP,
+		FrequencyPenalty: c.cfg.FrequencyPenalty,
+		PresencePenalty:  c.cfg.PresencePenalty,
+		Stream:           c.cfg.Stream,
 	}
 	if toolFormat == "plain_text" {
 		payload.Messages = []openAIMessage{{
@@ -259,6 +285,10 @@ func normalizeToolFormat(value string) string {
 	}
 }
 
+func (c *OpenAIClient) toolFallbackEnabled() bool {
+	return c.cfg.ToolFallback != nil && *c.cfg.ToolFallback
+}
+
 func payloadSummary(payload openAIRequest, toolFormat string) string {
 	roles := make([]string, 0, len(payload.Messages))
 	for _, msg := range payload.Messages {
@@ -284,6 +314,61 @@ func payloadSummary(payload openAIRequest, toolFormat string) string {
 		len(payload.Tools),
 		len(payload.Functions),
 	)
+}
+
+func parseOpenAIStream(raw []byte) (*openAIResponse, error) {
+	out := &openAIResponse{}
+	var content strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		chunk := openAIStreamChunk{}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return nil, err
+		}
+		if chunk.Error != nil {
+			return &openAIResponse{Error: chunk.Error}, nil
+		}
+		if chunk.Usage != nil {
+			out.Usage = chunk.Usage
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta
+		switch v := delta.Content.(type) {
+		case string:
+			content.WriteString(v)
+		case []any:
+			for _, item := range v {
+				partMap, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if text := toString(partMap["text"]); text != "" {
+					content.WriteString(text)
+				}
+			}
+		}
+	}
+	out.Choices = append(out.Choices, struct {
+		Message openAIResponseMessage `json:"message"`
+	}{
+		Message: openAIResponseMessage{
+			Role:    "assistant",
+			Content: content.String(),
+		},
+	})
+	return out, nil
 }
 
 func (c *OpenAIClient) Embed(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {

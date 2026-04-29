@@ -38,6 +38,9 @@ agent:
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
 	}
+	if cfg.Agent.UseDefaultSystemPrompt == nil || !*cfg.Agent.UseDefaultSystemPrompt {
+		t.Fatalf("expected default system prompt switch to be enabled, got %#v", cfg.Agent.UseDefaultSystemPrompt)
+	}
 	for _, needle := range []string{"restart_runtime", "apply_self_update", "list_sessions", "get_session", "grant_owner_identity", "manage_process", "run_command", "Keep responses as concise as possible"} {
 		if !strings.Contains(cfg.Agent.SystemPrompt, needle) {
 			t.Fatalf("expected default system prompt to mention %q, got %q", needle, cfg.Agent.SystemPrompt)
@@ -105,6 +108,32 @@ agent:
 	}
 	if cfg.Self.AllowRuntimeApply == nil || !*cfg.Self.AllowRuntimeApply {
 		t.Fatalf("expected runtime apply enabled by default, got %#v", cfg.Self.AllowRuntimeApply)
+	}
+}
+
+func TestLoadCanDisableDefaultSystemPrompt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+models:
+  primary:
+    api_key: ""
+agent:
+  use_default_system_prompt: false
+  system_prompt: ""
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.UseDefaultSystemPrompt == nil || *cfg.Agent.UseDefaultSystemPrompt {
+		t.Fatalf("expected default system prompt switch to be disabled, got %#v", cfg.Agent.UseDefaultSystemPrompt)
+	}
+	if cfg.Agent.SystemPrompt != "" {
+		t.Fatalf("expected empty system prompt to be preserved, got %q", cfg.Agent.SystemPrompt)
 	}
 }
 
