@@ -389,7 +389,9 @@ async function firstVisibleLocator(candidates) {
 async function locateBySelectorOrText(page, action, state) {
   const candidates = [];
   if (Number.isInteger(action.index)) {
-    const observed = state && Array.isArray(state.observedInteractive) ? state.observedInteractive : [];
+    const currentURL = typeof page.url === "function" ? page.url() : "";
+    const observedURL = state && typeof state.observedURL === "string" ? state.observedURL : "";
+    const observed = state && observedURL === currentURL && Array.isArray(state.observedInteractive) ? state.observedInteractive : [];
     let item = observed.find((candidate) => candidate.index === action.index);
     if (!item) {
       const snapshot = await observePage(page, { max_items: Math.max(action.index + 1, 80), text_limit: 200 });
@@ -1325,8 +1327,8 @@ async function runActionsMode(page, context, qorvexus, inputOverride) {
     currentPage: page,
     pages: context.pages(),
     currentTabIndex: 0,
-    observedInteractive: Array.isArray(qorvexus.lastInteractive) ? qorvexus.lastInteractive : [],
-    observedURL: qorvexus.lastObservedURL || "",
+    observedInteractive: [],
+    observedURL: "",
   };
   refreshTabState(context, state);
   const results = [];
@@ -1341,10 +1343,6 @@ async function runActionsMode(page, context, qorvexus, inputOverride) {
   const currentPage = await ensureCurrentPage(context, state);
   const lastResult = results.length > 0 ? results[results.length - 1] : null;
   const finalSnapshot = lastResult && lastResult.type === "observe" ? lastResult.snapshot : await observePage(currentPage, { max_items: 30, text_limit: 900 });
-  if (finalSnapshot && Array.isArray(finalSnapshot.interactive)) {
-    qorvexus.lastInteractive = finalSnapshot.interactive;
-    qorvexus.lastObservedURL = finalSnapshot.url || currentPage.url();
-  }
   return {
     mode: "actions",
     current_url: currentPage.url(),
@@ -1492,8 +1490,6 @@ function makeQorvexusRuntime(cfg, stateRef, sessionState) {
     artifactsDir: cfg.artifactsDir,
     sessionStatePath: cfg.sessionStatePath,
     lastURL: sessionState.last_url || "",
-    lastInteractive: Array.isArray(sessionState.last_interactive) ? sessionState.last_interactive : [],
-    lastObservedURL: sessionState.last_observed_url || "",
     timeoutSeconds: cfg.timeoutSeconds,
     actionTimeoutSeconds: cfg.actionTimeoutSeconds,
     log(value) {
@@ -1522,12 +1518,11 @@ function makeQorvexusRuntime(cfg, stateRef, sessionState) {
     saveSessionState(extra) {
       const currentPage = stateRef.page || (stateRef.context && stateRef.context.pages()[0]);
       const currentURL = currentPage && typeof currentPage.url === "function" ? currentPage.url() : "";
+      const { last_interactive: _lastInteractive, last_observed_url: _lastObservedURL, ...sessionStateWithoutElementMap } = sessionState;
       const next = {
-        ...sessionState,
+        ...sessionStateWithoutElementMap,
         ...(extra || {}),
         last_url: isBlankURL(currentURL) ? (sessionState.last_url || "") : currentURL,
-        last_interactive: Array.isArray(this.lastInteractive) ? this.lastInteractive : (sessionState.last_interactive || []),
-        last_observed_url: this.lastObservedURL || sessionState.last_observed_url || "",
         updated_at: new Date().toISOString(),
       };
       writeJSONFile(cfg.sessionStatePath, next);
@@ -1759,8 +1754,6 @@ async function main() {
     artifactsDir,
     sessionStatePath,
     lastURL: sessionState.last_url || "",
-    lastInteractive: Array.isArray(sessionState.last_interactive) ? sessionState.last_interactive : [],
-    lastObservedURL: sessionState.last_observed_url || "",
     timeoutSeconds,
     actionTimeoutSeconds,
     log(value) {
@@ -1788,12 +1781,11 @@ async function main() {
     saveSessionState(extra) {
       const currentPage = page || (context && context.pages()[0]);
       const currentURL = currentPage && typeof currentPage.url === "function" ? currentPage.url() : "";
+      const { last_interactive: _lastInteractive, last_observed_url: _lastObservedURL, ...sessionStateWithoutElementMap } = sessionState;
       const next = {
-        ...sessionState,
+        ...sessionStateWithoutElementMap,
         ...(extra || {}),
         last_url: isBlankURL(currentURL) ? (sessionState.last_url || "") : currentURL,
-        last_interactive: Array.isArray(this.lastInteractive) ? this.lastInteractive : (sessionState.last_interactive || []),
-        last_observed_url: this.lastObservedURL || sessionState.last_observed_url || "",
         updated_at: new Date().toISOString(),
       };
       writeJSONFile(sessionStatePath, next);
