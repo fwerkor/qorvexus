@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -472,9 +471,7 @@ func (t *ProcessTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 		}
 		cmd.Stdout = stdoutFile
 		cmd.Stderr = stderrFile
-		if runtime.GOOS != "windows" {
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		}
+		configureBackgroundProcess(cmd)
 		if err := cmd.Start(); err != nil {
 			return "", err
 		}
@@ -691,29 +688,6 @@ func listNetworkInterfaces() (map[string][]string, error) {
 	return out, nil
 }
 
-func statDisk(path string) (systemDiskStat, error) {
-	var fs syscall.Statfs_t
-	if err := syscall.Statfs(path, &fs); err != nil {
-		return systemDiskStat{}, err
-	}
-	total := fs.Blocks * uint64(fs.Bsize)
-	free := fs.Bfree * uint64(fs.Bsize)
-	avail := fs.Bavail * uint64(fs.Bsize)
-	used := total - free
-	usage := ""
-	if total > 0 {
-		usage = fmt.Sprintf("%.2f", float64(used)*100/float64(total))
-	}
-	return systemDiskStat{
-		Path:       path,
-		TotalBytes: total,
-		FreeBytes:  free,
-		AvailBytes: avail,
-		UsedBytes:  used,
-		UsagePct:   usage,
-	}, nil
-}
-
 func listProcesses(ctx context.Context, limit int, filter string) ([]listedProcess, error) {
 	cmd, err := commandenv.CommandContext(ctx, "ps", "-eo", "pid=,ppid=,pgid=,stat=,%cpu=,%mem=,etime=,command=", "--sort=-%cpu")
 	if err != nil {
@@ -825,44 +799,6 @@ func parseProcStatus(raw string) map[string]string {
 		out[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 	}
 	return out
-}
-
-func parseSignal(value string) (syscall.Signal, error) {
-	switch strings.TrimSpace(strings.ToUpper(value)) {
-	case "", "TERM", "SIGTERM":
-		return syscall.SIGTERM, nil
-	case "KILL", "SIGKILL":
-		return syscall.SIGKILL, nil
-	case "INT", "SIGINT":
-		return syscall.SIGINT, nil
-	case "HUP", "SIGHUP":
-		return syscall.SIGHUP, nil
-	case "STOP", "SIGSTOP":
-		return syscall.SIGSTOP, nil
-	case "CONT", "SIGCONT":
-		return syscall.SIGCONT, nil
-	default:
-		return 0, fmt.Errorf("unsupported signal %q", value)
-	}
-}
-
-func signalName(sig syscall.Signal) string {
-	switch sig {
-	case syscall.SIGTERM:
-		return "SIGTERM"
-	case syscall.SIGKILL:
-		return "SIGKILL"
-	case syscall.SIGINT:
-		return "SIGINT"
-	case syscall.SIGHUP:
-		return "SIGHUP"
-	case syscall.SIGSTOP:
-		return "SIGSTOP"
-	case syscall.SIGCONT:
-		return "SIGCONT"
-	default:
-		return fmt.Sprintf("SIGNAL(%d)", sig)
-	}
 }
 
 func minInt(a int, b int) int {

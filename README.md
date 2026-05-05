@@ -126,6 +126,16 @@ make docker-build
 make ci
 ```
 
+## Releases
+
+GitHub Actions can publish a release from the **Release** workflow.
+
+1. Open **Actions** -> **Release** -> **Run workflow**.
+2. Enter a tag such as `v0.1.0`.
+3. Optionally set a release title, draft mode, or prerelease mode.
+
+The workflow builds release archives for Linux, macOS, and Windows across amd64/arm64 targets, plus Linux armv7, then uploads a `checksums.txt` file with SHA-256 hashes.
+
 ## Social Plugins
 
 Social channels are plugin-based, not core-runtime special cases.

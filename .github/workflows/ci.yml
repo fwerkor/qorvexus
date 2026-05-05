@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -8,11 +9,46 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Verify generated social plugin imports
+        run: |
+          tmp="$(mktemp)"
+          cp internal/socialpluginautoload/imports_gen.go "$tmp"
+          go generate ./internal/socialpluginautoload
+          diff -u "$tmp" internal/socialpluginautoload/imports_gen.go
+
+      - name: Verify formatting
+        run: |
+          test -z "$(gofmt -l $(find . -name '*.go' -not -path './.git/*'))"
+
+      - name: Verify go.mod and go.sum
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
   test:
     name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
@@ -51,30 +87,6 @@ jobs:
       - name: Run race tests
         run: go test -race -count=1 ./...
 
-  fmt:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache: true
-
-      - name: Verify generated social plugin imports
-        run: |
-          tmp="$(mktemp)"
-          cp internal/socialpluginautoload/imports_gen.go "$tmp"
-          go generate ./internal/socialpluginautoload
-          diff -u "$tmp" internal/socialpluginautoload/imports_gen.go
-
-      - name: Verify formatting
-        run: |
-          test -z "$(gofmt -l $(find . -name '*.go' -not -path './.git/*'))"
-
   build:
     name: Build Binary
     runs-on: ubuntu-latest
@@ -90,6 +102,56 @@ jobs:
 
       - name: Build
         run: go build -trimpath ./...
+
+  cross-build:
+    name: Cross Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: '7'
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+          - target: windows-arm64
+            goos: windows
+            goarch: arm64
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build target
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          ext=""
+          if [ "${GOOS}" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath -o "bin/qorvexus-${{ matrix.target }}${ext}" ./cmd/qorvexus
 
   docker:
     name: Build Docker Image
