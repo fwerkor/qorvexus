@@ -118,6 +118,36 @@ func TestFilesystemToolRejectsNonOwnerWrite(t *testing.T) {
 	}
 }
 
+func TestFilesystemToolWarnsInsteadOfReadingBinary(t *testing.T) {
+	tempDir := t.TempDir()
+	tool := NewFilesystemTool(config.ToolsConfig{MaxCommandBytes: 4096})
+	filePath := filepath.Join(tempDir, "image.bin")
+	if err := os.WriteFile(filePath, []byte{0x89, 'P', 'N', 'G', 0x00, 0xff, 0x10}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := invokeTool(t, tool, context.Background(), map[string]any{
+		"action": "read",
+		"path":   filePath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["encoding"] != "binary" {
+		t.Fatalf("expected binary encoding, got %s", out)
+	}
+	if !strings.Contains(payload["warning"].(string), "refusing to read") {
+		t.Fatalf("expected binary read warning, got %s", out)
+	}
+	if _, ok := payload["content"]; ok {
+		t.Fatalf("binary read should not include content, got %s", out)
+	}
+}
+
 func TestProcessToolCanStartInspectAndSignal(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.ToolsConfig{

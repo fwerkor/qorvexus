@@ -3,9 +3,9 @@ package tool
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
@@ -220,21 +219,33 @@ func (t *FilesystemTool) Invoke(ctx context.Context, raw json.RawMessage) (strin
 		if info.IsDir() {
 			return "", fmt.Errorf("%s is a directory", path)
 		}
-		rawData, err := os.ReadFile(path)
+		f, err := os.Open(path)
 		if err != nil {
 			return "", err
+		}
+		defer f.Close()
+		rawData, err := io.ReadAll(io.LimitReader(f, int64(input.MaxBytes)+1))
+		if err != nil {
+			return "", err
+		}
+		if !looksLikeText(rawData) {
+			return marshalToolJSON(map[string]any{
+				"path":       path,
+				"size_bytes": info.Size(),
+				"encoding":   "binary",
+				"warning":    "refusing to read non-text binary file content; use stat/list or a binary-aware inspection tool instead",
+			}), nil
 		}
 		truncated := false
 		if len(rawData) > input.MaxBytes {
 			rawData = rawData[:input.MaxBytes]
 			truncated = true
 		}
+		if info.Size() > int64(len(rawData)) {
+			truncated = true
+		}
 		content := string(rawData)
 		encoding := "text"
-		if !utf8.Valid(rawData) {
-			content = base64.StdEncoding.EncodeToString(rawData)
-			encoding = "base64"
-		}
 		return marshalToolJSON(map[string]any{
 			"path":       path,
 			"size_bytes": info.Size(),
