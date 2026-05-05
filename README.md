@@ -230,19 +230,66 @@ curl -X POST http://127.0.0.1:7788/api/social/inbound \
 
 The Docker image includes the Go toolchain, Node.js, Playwright, Chromium dependencies, and the source tree under `/workspace/qorvexus`. This keeps browser automation and supervised self-update builds consistent across hosts.
 
-Build the image:
+Run the published image:
+
+```bash
+mkdir -p docker-data
+docker run -d \
+  --name qorvexus \
+  -p 7788:7788 \
+  -v "$(pwd)/docker-data:/data" \
+  --restart unless-stopped \
+  fwerkor/qorvexus:latest
+```
+
+On first boot the container will generate `/data/config.yaml`. Edit that file on the host, add your model and channel credentials, then restart the container:
+
+```bash
+docker restart qorvexus
+```
+
+Open the control panel:
+
+```text
+http://127.0.0.1:7788
+```
+
+Upgrade to the latest published image:
+
+```bash
+docker pull fwerkor/qorvexus:latest
+docker stop qorvexus
+docker rm qorvexus
+docker run -d \
+  --name qorvexus \
+  -p 7788:7788 \
+  -v "$(pwd)/docker-data:/data" \
+  --restart unless-stopped \
+  fwerkor/qorvexus:latest
+```
+
+Docker Compose example:
+
+```yaml
+services:
+  qorvexus:
+    image: fwerkor/qorvexus:latest
+    container_name: qorvexus
+    restart: unless-stopped
+    ports:
+      - "7788:7788"
+    volumes:
+      - ./docker-data:/data
+```
+
+For a fixed version, replace `latest` with a release tag such as `v0.1.0`.
+
+Build the image locally for development:
 
 ```bash
 docker build -t qorvexus:local .
-```
-
-Run it with a persistent config and data volume:
-
-```bash
 docker run --rm -p 7788:7788 -v "$(pwd)/docker-data:/data" qorvexus:local
 ```
-
-On first boot the container will generate `/data/config.yaml`. Edit that file on the host, add your credentials, then restart the container.
 
 ## CI And Release
 
