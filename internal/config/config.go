@@ -326,7 +326,11 @@ func (c *Config) setDefaults(path string) error {
 		c.Tools.PlaywrightArtifactsDir = filepath.Join(c.DataDir, "browser", "artifacts")
 	}
 	if c.Tools.PlaywrightRuntimeDir == "" {
-		c.Tools.PlaywrightRuntimeDir = filepath.Join(c.DataDir, "browser", "runtime")
+		if runtimeDir := strings.TrimSpace(os.Getenv("QORVEXUS_PLAYWRIGHT_RUNTIME_DIR")); runtimeDir != "" {
+			c.Tools.PlaywrightRuntimeDir = runtimeDir
+		} else {
+			c.Tools.PlaywrightRuntimeDir = filepath.Join(c.DataDir, "browser", "runtime")
+		}
 	}
 	if len(c.Tools.PlaywrightInstallBrowser) == 0 {
 		c.Tools.PlaywrightInstallBrowser = []string{c.Tools.PlaywrightBrowser}

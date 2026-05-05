@@ -134,7 +134,9 @@ GitHub Actions can publish a release from the **Release** workflow.
 2. Enter a tag such as `v0.1.0`.
 3. Optionally set a release title, draft mode, or prerelease mode.
 
-The workflow builds release archives for Linux, macOS, and Windows across amd64/arm64 targets, plus Linux armv7, then uploads a `checksums.txt` file with SHA-256 hashes.
+The workflow builds portable release archives for Linux, macOS, and Windows across amd64/arm64 targets, then uploads a `checksums.txt` file with SHA-256 hashes.
+
+Each portable archive includes the Qorvexus binary, the full source tree, a Go toolchain, Node.js/npm, Playwright, and a Chromium browser cache. Start it with `./run.sh` on Linux/macOS or `.\run.ps1` on Windows. The launcher sets `QORVEXUS_SOURCE_ROOT`, `QORVEXUS_PLAYWRIGHT_RUNTIME_DIR`, `PLAYWRIGHT_BROWSERS_PATH`, `GOROOT`, and `PATH` so runtime self-update builds use the bundled source tree and toolchain.
 
 ## Social Plugins
 

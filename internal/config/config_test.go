@@ -117,6 +117,30 @@ agent:
 	}
 }
 
+func TestLoadUsesBundledPlaywrightRuntimeEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	runtimeDir := filepath.Join(dir, "portable", "playwright")
+	t.Setenv("QORVEXUS_PLAYWRIGHT_RUNTIME_DIR", runtimeDir)
+	content := `
+models:
+  primary:
+    provider: openai-compatible
+    base_url: https://api.openai.com/v1
+    model: gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tools.PlaywrightRuntimeDir != runtimeDir {
+		t.Fatalf("expected env playwright runtime dir %q, got %q", runtimeDir, cfg.Tools.PlaywrightRuntimeDir)
+	}
+}
+
 func TestLoadCanDisableDefaultSystemPrompt(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
