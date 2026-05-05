@@ -466,11 +466,33 @@ func mapMessage(msg types.Message) openAIMessage {
 			Type: "function",
 			Function: openAIFunctionCallRef{
 				Name:      call.Name,
-				Arguments: call.Arguments,
+				Arguments: safeToolCallArguments(call.Arguments),
 			},
 		})
 	}
 	return out
+}
+
+func safeToolCallArguments(arguments string) string {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	const maxInvalidArgumentEcho = 2000
+	invalid := trimmed
+	if len([]rune(invalid)) > maxInvalidArgumentEcho {
+		invalid = string([]rune(invalid)[:maxInvalidArgumentEcho]) + "...[truncated]"
+	}
+	repaired, err := json.Marshal(map[string]string{
+		"_invalid_arguments": invalid,
+	})
+	if err != nil {
+		return "{}"
+	}
+	return string(repaired)
 }
 
 func mapMessagesForToolFormat(messages []types.Message, toolFormat string) []openAIMessage {

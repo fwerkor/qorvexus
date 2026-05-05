@@ -140,6 +140,73 @@ func TestCompleteAcceptsNestedUsageObjects(t *testing.T) {
 	}
 }
 
+func TestCompleteRepairsInvalidHistoricalToolCallArguments(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"recovered"}}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient(config.ModelConfig{
+		BaseURL: srv.URL,
+		Model:   "demo",
+	})
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model: "demo",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: "run tool"},
+			{
+				Role: types.RoleAssistant,
+				ToolCalls: []types.ToolCall{
+					{ID: "call-1", Name: "demo_tool", Arguments: `{"text":"unterminated`},
+				},
+			},
+			{Role: types.RoleTool, Name: "demo_tool", ToolCallID: "call-1", Content: "ERROR: unexpected end of JSON input"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(resp.Message.Content) != "recovered" {
+		t.Fatalf("unexpected message content: %+v", resp.Message)
+	}
+
+	messages, ok := captured["messages"].([]any)
+	if !ok || len(messages) < 2 {
+		t.Fatalf("expected captured messages, got %#v", captured["messages"])
+	}
+	assistant, ok := messages[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected assistant message, got %#v", messages[1])
+	}
+	toolCalls, ok := assistant["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", assistant["tool_calls"])
+	}
+	toolCall, ok := toolCalls[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tool call object, got %#v", toolCalls[0])
+	}
+	function, ok := toolCall["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected function object, got %#v", toolCall["function"])
+	}
+	arguments, ok := function["arguments"].(string)
+	if !ok {
+		t.Fatalf("expected string arguments, got %#v", function["arguments"])
+	}
+	if !json.Valid([]byte(arguments)) {
+		t.Fatalf("expected repaired arguments to be valid JSON, got %q", arguments)
+	}
+	if !strings.Contains(arguments, "_invalid_arguments") {
+		t.Fatalf("expected repaired arguments to preserve invalid input context, got %q", arguments)
+	}
+}
+
 func TestCompleteParsesStreamingResponses(t *testing.T) {
 	var payload map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
