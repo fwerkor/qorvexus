@@ -32,6 +32,8 @@ jobs:
   binaries:
     name: Build Portable Bundle (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +92,8 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs: binaries
+    permissions:
+      contents: write
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v7
@@ -142,6 +146,8 @@ jobs:
     name: Publish Docker Image
     runs-on: ubuntu-latest
     needs: binaries
+    permissions:
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@v5
