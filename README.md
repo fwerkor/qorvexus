@@ -138,6 +138,8 @@ The workflow builds portable release archives for Linux, macOS, and Windows acro
 
 Each portable archive includes the Qorvexus binary, the full source tree, a Go toolchain, Node.js/npm, Playwright, and a Chromium browser cache. Start it with `./run.sh` on Linux/macOS or `.\run.ps1` on Windows. The launcher sets `QORVEXUS_SOURCE_ROOT`, `QORVEXUS_PLAYWRIGHT_RUNTIME_DIR`, `PLAYWRIGHT_BROWSERS_PATH`, `GOROOT`, and `PATH` so runtime self-update builds use the bundled source tree and toolchain.
 
+To publish Docker images from the same workflow, add repository secrets named `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. The workflow always publishes a multi-architecture Linux image named `${DOCKERHUB_USERNAME}/qorvexus` for amd64 and arm64 with tags like `v0.1.0`, `0.1.0`, and `latest` for non-prerelease builds.
+
 ## Social Plugins
 
 Social channels are plugin-based, not core-runtime special cases.
