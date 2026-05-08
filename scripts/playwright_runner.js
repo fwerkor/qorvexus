@@ -1419,6 +1419,10 @@ function daemonLogPath(artifactsDir) {
   return path.join(artifactsDir, "browser-session.log");
 }
 
+function daemonPidPath(artifactsDir) {
+  return path.join(artifactsDir, "browser-session.pid");
+}
+
 function payloadContentForMode(mode) {
   const filePath = mode === "actions"
     ? process.env.QORVEXUS_PLAYWRIGHT_ACTIONS_FILE
@@ -1427,6 +1431,31 @@ function payloadContentForMode(mode) {
     throw new Error("Playwright payload file is required");
   }
   return fs.readFileSync(filePath, "utf8");
+}
+
+async function stopStaleDaemon(artifactsDir) {
+  const socketPath = daemonSocketPath(artifactsDir);
+  const pidPath = daemonPidPath(artifactsDir);
+  const rawPID = fs.existsSync(pidPath) ? String(fs.readFileSync(pidPath, "utf8")).trim() : "";
+  const pid = Number.parseInt(rawPID, 10);
+  if (Number.isFinite(pid) && pid > 1) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (_err) {
+    }
+    await sleep(500);
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch (_err) {
+    }
+  }
+  for (const target of [socketPath, pidPath]) {
+    try {
+      fs.unlinkSync(target);
+    } catch (_err) {
+    }
+  }
 }
 
 function sendDaemonRequest(socketPath, request) {
@@ -1473,6 +1502,7 @@ async function waitForDaemon(socketPath, timeoutMs) {
 
 async function runViaDaemon(cfg, payload) {
   const socketPath = daemonSocketPath(cfg.artifactsDir);
+  const logPath = daemonLogPath(cfg.artifactsDir);
   const request = {
     version: DAEMON_PROTOCOL_VERSION,
     mode: cfg.mode,
@@ -1483,23 +1513,27 @@ async function runViaDaemon(cfg, payload) {
   };
   try {
     return await sendDaemonRequest(socketPath, request);
-  } catch (_err) {
+  } catch (firstErr) {
+    await stopStaleDaemon(cfg.artifactsDir);
+    try {
+      ensureDir(cfg.artifactsDir);
+      const logFd = fs.openSync(logPath, "a");
+      const child = childProcess.spawn(process.execPath, [__filename], {
+        env: {
+          ...process.env,
+          QORVEXUS_PLAYWRIGHT_DAEMON_PROCESS: "1",
+        },
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+      });
+      fs.writeFileSync(daemonPidPath(cfg.artifactsDir), String(child.pid));
+      child.unref();
+      await waitForDaemon(socketPath, 8000);
+      return await sendDaemonRequest(socketPath, request);
+    } catch (startErr) {
+      throw new Error(`browser daemon unavailable; refused to start another persistent Chromium for the same profile. First error: ${firstErr && firstErr.message ? firstErr.message : String(firstErr)}. Start error: ${startErr && startErr.message ? startErr.message : String(startErr)}. See ${logPath}`);
+    }
   }
-
-  ensureDir(cfg.artifactsDir);
-  const logPath = daemonLogPath(cfg.artifactsDir);
-  const logFd = fs.openSync(logPath, "a");
-  const child = childProcess.spawn(process.execPath, [__filename], {
-    env: {
-      ...process.env,
-      QORVEXUS_PLAYWRIGHT_DAEMON_PROCESS: "1",
-    },
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-  });
-  child.unref();
-  await waitForDaemon(socketPath, 8000);
-  return sendDaemonRequest(socketPath, request);
 }
 
 function makeQorvexusRuntime(cfg, stateRef, sessionState) {
@@ -1581,6 +1615,7 @@ async function daemonMain() {
     ensureDir(path.dirname(cfg.storageStatePath));
   }
   const socketPath = daemonSocketPath(cfg.artifactsDir);
+  fs.writeFileSync(daemonPidPath(cfg.artifactsDir), String(process.pid));
   try {
     fs.unlinkSync(socketPath);
   } catch (_err) {
@@ -1619,6 +1654,10 @@ async function daemonMain() {
     await context.close().catch(() => {});
     try {
       fs.unlinkSync(socketPath);
+    } catch (_err) {
+    }
+    try {
+      fs.unlinkSync(daemonPidPath(cfg.artifactsDir));
     } catch (_err) {
     }
     process.exit(0);
@@ -1755,7 +1794,10 @@ async function main() {
       }
       return;
     } catch (err) {
-      console.error(`[browser-daemon fallback] ${err && err.message ? err.message : String(err)}`);
+      if (!envBool("QORVEXUS_PLAYWRIGHT_DAEMON_FALLBACK", false)) {
+        throw err;
+      }
+      console.error(`[browser-daemon fallback enabled] ${err && err.message ? err.message : String(err)}`);
     }
   }
 
