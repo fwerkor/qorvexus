@@ -108,6 +108,8 @@ func TestMaybeCompressUsesSizeWithoutTurnCountGate(t *testing.T) {
 		{Role: types.RoleSystem, Content: "Base rules."},
 		{Role: types.RoleUser, Content: strings.Repeat("a", 20)},
 		{Role: types.RoleAssistant, Content: strings.Repeat("b", 20)},
+		{Role: types.RoleUser, Content: "latest raw request"},
+		{Role: types.RoleAssistant, Content: strings.Repeat("c", 20)},
 	}
 
 	out, err := compressor.MaybeCompress(context.Background(), "primary", messages)
@@ -122,4 +124,53 @@ func TestMaybeCompressUsesSizeWithoutTurnCountGate(t *testing.T) {
 			t.Fatalf("expected oldest oversized message to be summarized away, got %#v", out)
 		}
 	}
+	foundLatest := false
+	for _, msg := range out {
+		if msg.Content == "latest raw request" {
+			foundLatest = true
+		}
+	}
+	if !foundLatest {
+		t.Fatalf("expected latest user message to remain raw, got %#v", out)
+	}
+}
+
+func TestMaybeCompressPreservesLatestOriginalUserMessage(t *testing.T) {
+	registry := model.NewRegistry()
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, summaryClient{})
+	compressor := &Compressor{
+		Registry:  registry,
+		MaxChars:  10,
+		Threshold: 0.5,
+	}
+	messages := []types.Message{
+		{Role: types.RoleSystem, Content: "Base rules."},
+		{Role: types.RoleUser, Content: "请把论坛登录保持住，不要每次重开浏览器。"},
+		{Role: types.RoleAssistant, Content: "我会处理。"},
+		{Role: types.RoleUser, Content: "压缩后记得保留用户原始输入。"},
+		{Role: types.RoleAssistant, Content: "收到。"},
+	}
+
+	out, err := compressor.MaybeCompress(context.Background(), "primary", messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 2 {
+		t.Fatalf("expected compressed output, got %#v", out)
+	}
+	summary := out[1].Content
+	for _, needle := range []string{
+		"Latest original user message:",
+		"压缩后记得保留用户原始输入。",
+	} {
+		if !strings.Contains(summary, needle) {
+			t.Fatalf("expected compressed summary to preserve %q, got %q", needle, summary)
+		}
+	}
+	for _, msg := range out {
+		if msg.Role == types.RoleUser && msg.Content == "压缩后记得保留用户原始输入。" {
+			return
+		}
+	}
+	t.Fatalf("expected latest user message to remain as its own raw message, got %#v", out)
 }
