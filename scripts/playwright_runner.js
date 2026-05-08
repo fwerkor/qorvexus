@@ -51,6 +51,26 @@ function envInt(name, defaultValue) {
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
+function currentUID() {
+  if (typeof process.getuid !== "function") {
+    return -1;
+  }
+  return process.getuid();
+}
+
+function playwrightLaunchArgs(cfg) {
+  const args = [];
+  const noSandbox = envBool("QORVEXUS_PLAYWRIGHT_NO_SANDBOX", currentUID() === 0);
+  if (noSandbox && cfg.browserName === "chromium") {
+    args.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
+  const extraArgs = String(process.env.QORVEXUS_PLAYWRIGHT_ARGS || "").trim();
+  if (extraArgs) {
+    args.push(...extraArgs.split(/\s+/).filter(Boolean));
+  }
+  return args;
+}
+
 function stringifyResult(value) {
   if (value === undefined) {
     return "";
@@ -1575,6 +1595,7 @@ async function daemonMain() {
     headless: cfg.headless,
     acceptDownloads: true,
     downloadsPath: cfg.artifactsDir || undefined,
+    args: playwrightLaunchArgs(cfg),
   });
   context.setDefaultTimeout(cfg.actionTimeoutSeconds * 1000);
   const stateRef = {
@@ -1693,6 +1714,7 @@ function readRuntimeConfigFromEnv() {
     headless,
     timeoutSeconds,
     actionTimeoutSeconds,
+    launchArgs: playwrightLaunchArgs({ browserName }),
   };
 }
 
@@ -1818,11 +1840,13 @@ async function main() {
         headless,
         acceptDownloads: true,
         downloadsPath: artifactsDir || undefined,
+        args: playwrightLaunchArgs({ browserName }),
       });
     } else {
       browser = await browserType.launch({
         headless,
         downloadsPath: artifactsDir || undefined,
+        args: playwrightLaunchArgs({ browserName }),
       });
       const contextOptions = { acceptDownloads: true };
       if (storageStatePath && fs.existsSync(storageStatePath)) {
