@@ -58,6 +58,9 @@ agent:
 	if cfg.Agent.CompressionThreshold != 0.9 {
 		t.Fatalf("expected default compression threshold 0.9, got %v", cfg.Agent.CompressionThreshold)
 	}
+	if cfg.Agent.ContextWindowChars != 120000 {
+		t.Fatalf("expected default context window chars 120000, got %d", cfg.Agent.ContextWindowChars)
+	}
 	if got := cfg.Models["primary"].Provider; got != "openai-compatible" {
 		t.Fatalf("expected default provider, got %q", got)
 	}

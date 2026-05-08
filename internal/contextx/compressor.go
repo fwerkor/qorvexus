@@ -16,6 +16,8 @@ type Compressor struct {
 	Threshold       float64
 }
 
+const compressedSummaryPrefix = "Compressed conversation summary:"
+
 func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, messages []types.Message) ([]types.Message, error) {
 	if c.MaxChars <= 0 {
 		return messages, nil
@@ -28,6 +30,9 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 		}
 	}
 	if float64(total) < float64(c.MaxChars)*c.Threshold {
+		return messages, nil
+	}
+	if recentlyCompressed(messages) && total < int(float64(c.MaxChars)*1.2) {
 		return messages, nil
 	}
 
@@ -84,8 +89,27 @@ func (c *Compressor) MaybeCompress(ctx context.Context, sessionModel string, mes
 	}
 	compressed = append(compressed, types.Message{
 		Role:    types.RoleUser,
-		Content: "Compressed conversation summary:\n" + strings.TrimSpace(resp.Message.Content),
+		Content: compressedSummaryPrefix + "\n" + strings.TrimSpace(resp.Message.Content),
 	})
 	compressed = append(compressed, nonSystem[slicePoint:]...)
 	return compressed, nil
+}
+
+func recentlyCompressed(messages []types.Message) bool {
+	nonSystemAfterSummary := 0
+	found := false
+	for _, msg := range messages {
+		if msg.Role == types.RoleSystem {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), compressedSummaryPrefix) {
+			found = true
+			nonSystemAfterSummary = 0
+			continue
+		}
+		if found {
+			nonSystemAfterSummary++
+		}
+	}
+	return found && nonSystemAfterSummary < 8
 }

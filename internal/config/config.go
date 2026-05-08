@@ -281,7 +281,7 @@ func (c *Config) setDefaults(path string) error {
 		c.Agent.MaxTurns = 0
 	}
 	if c.Agent.ContextWindowChars <= 0 {
-		c.Agent.ContextWindowChars = 24000
+		c.Agent.ContextWindowChars = 120000
 	}
 	if c.Agent.CompressionThreshold <= 0 || c.Agent.CompressionThreshold >= 1 {
 		c.Agent.CompressionThreshold = 0.9

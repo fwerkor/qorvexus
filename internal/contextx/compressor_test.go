@@ -18,6 +18,17 @@ func (summaryClient) Complete(context.Context, model.CompletionRequest) (*model.
 	}, nil
 }
 
+type countingSummaryClient struct {
+	calls int
+}
+
+func (c *countingSummaryClient) Complete(context.Context, model.CompletionRequest) (*model.CompletionResponse, error) {
+	c.calls++
+	return &model.CompletionResponse{
+		Message: types.Message{Role: types.RoleAssistant, Content: "New summary."},
+	}, nil
+}
+
 func TestMaybeCompressPreservesSystemPrompt(t *testing.T) {
 	registry := model.NewRegistry()
 	registry.Register("primary", config.ModelConfig{Model: "stub"}, summaryClient{})
@@ -54,6 +65,34 @@ func TestMaybeCompressPreservesSystemPrompt(t *testing.T) {
 		if msg.Role == types.RoleSystem {
 			t.Fatalf("expected no system message after the first, found one at %d in %#v", i+1, out)
 		}
+	}
+}
+
+func TestMaybeCompressSkipsRecentSummaryUntilWindowReallyExceeded(t *testing.T) {
+	registry := model.NewRegistry()
+	client := &countingSummaryClient{}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	compressor := &Compressor{
+		Registry:  registry,
+		MaxChars:  200,
+		Threshold: 0.5,
+	}
+	messages := []types.Message{
+		{Role: types.RoleSystem, Content: "Base rules."},
+		{Role: types.RoleUser, Content: "Compressed conversation summary:\nEarlier work."},
+		{Role: types.RoleUser, Content: strings.Repeat("a", 95)},
+		{Role: types.RoleAssistant, Content: "ok"},
+	}
+
+	out, err := compressor.MaybeCompress(context.Background(), "primary", messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected recent summary guard to skip compression, got %d calls", client.calls)
+	}
+	if len(out) != len(messages) {
+		t.Fatalf("expected messages unchanged, got %#v", out)
 	}
 }
 
