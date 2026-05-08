@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -100,20 +101,31 @@ func (r *Runner) Run(ctx context.Context, req Request) (*session.State, string, 
 		if r.Compressor != nil {
 			st.Messages, _ = r.Compressor.MaybeCompress(ctx, modelName, st.Messages)
 		}
-		messagesForModel := withTransientContext(normalizeSystemMessages(st.Messages, nil), transientContextPrompts)
 		tools := r.toolsForRequest(req)
-		response, err := client.Complete(ctx, model.CompletionRequest{
-			Model:       cfg.Model,
-			Messages:    messagesForModel,
-			Tools:       tools,
-			MaxTokens:   cfg.MaxTokens,
-			Temperature: cfg.Temperature,
-		})
-		if err != nil {
+		var response *model.CompletionResponse
+		for recoverAttempt := 0; ; recoverAttempt++ {
+			messagesForModel := withTransientContext(normalizeSystemMessages(st.Messages, nil), transientContextPrompts)
+			response, err = client.Complete(ctx, model.CompletionRequest{
+				Model:       cfg.Model,
+				Messages:    messagesForModel,
+				Tools:       tools,
+				MaxTokens:   cfg.MaxTokens,
+				Temperature: cfg.Temperature,
+			})
+			if err == nil {
+				break
+			}
 			if isContextOverflowError(err) {
 				st.Messages = dropLatestRoundMessages(st.Messages)
 				_ = persist()
 				return nil, "", fmt.Errorf("model context overflow; discarded latest conversation round to avoid retry loop: %w", err)
+			}
+			if isRecoverableModelDeadlineError(ctx, err) && recoverAttempt < 2 {
+				if recovered, next := dropOldestContextRound(st.Messages); recovered {
+					st.Messages = next
+					_ = persist()
+					continue
+				}
 			}
 			return nil, "", err
 		}
@@ -307,6 +319,48 @@ func isContextOverflowError(err error) bool {
 		}
 	}
 	return false
+}
+
+func isRecoverableModelDeadlineError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded")
+}
+
+func dropOldestContextRound(messages []types.Message) (bool, []types.Message) {
+	first := -1
+	for i, msg := range messages {
+		if msg.Role != types.RoleSystem {
+			first = i
+			break
+		}
+	}
+	if first < 0 || first >= len(messages)-1 {
+		return false, messages
+	}
+	end := first + 1
+	if messages[first].Role == types.RoleUser {
+		for end < len(messages) {
+			if end > first && messages[end].Role == types.RoleUser {
+				break
+			}
+			end++
+		}
+	}
+	if end >= len(messages) {
+		return false, messages
+	}
+	out := make([]types.Message, 0, len(messages)-(end-first))
+	out = append(out, messages[:first]...)
+	out = append(out, messages[end:]...)
+	return true, out
 }
 
 func dropLatestRoundMessages(messages []types.Message) []types.Message {

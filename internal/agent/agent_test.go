@@ -963,6 +963,22 @@ func (contextOverflowClient) Complete(_ context.Context, _ model.CompletionReque
 	return nil, errors.New("exceeds the available context size")
 }
 
+type deadlineThenSuccessClient struct {
+	calls    int
+	requests []model.CompletionRequest
+}
+
+func (c *deadlineThenSuccessClient) Complete(_ context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
+	c.requests = append(c.requests, req)
+	c.calls++
+	if c.calls == 1 {
+		return nil, errors.New("upstream model error: context deadline exceeded")
+	}
+	return &model.CompletionResponse{
+		Message: types.Message{Role: types.RoleAssistant, Content: "recovered"},
+	}, nil
+}
+
 func TestRunnerTruncatesLargeUserPromptAndSavesArtifact(t *testing.T) {
 	tempDir := t.TempDir()
 	registry := model.NewRegistry()
@@ -1005,6 +1021,74 @@ func TestRunnerTruncatesLargeUserPromptAndSavesArtifact(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected truncated user message in request, got %#v", client.lastRequest.Messages)
+	}
+}
+
+func TestRunnerDropsOldestContextAndRetriesOnModelDeadline(t *testing.T) {
+	tempDir := t.TempDir()
+	store := session.NewStore(tempDir)
+	err := store.Save(&session.State{
+		ID:    "sess-deadline",
+		Model: "primary",
+		Messages: []types.Message{
+			{Role: types.RoleSystem, Content: "system"},
+			{Role: types.RoleUser, Content: "old question"},
+			{Role: types.RoleAssistant, Content: "old answer"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := model.NewRegistry()
+	client := &deadlineThenSuccessClient{}
+	registry.Register("primary", config.ModelConfig{Model: "stub"}, client)
+	runner := &Runner{
+		Config: &config.Config{
+			DataDir: tempDir,
+			Agent:   config.AgentConfig{DefaultModel: "primary", MaxTurns: 1},
+		},
+		Models:     registry,
+		Sessions:   store,
+		Tools:      tool.NewRegistry(),
+		Compressor: &contextx.Compressor{MaxChars: 1_000_000, Threshold: 0.9},
+	}
+
+	state, out, err := runner.Run(context.Background(), Request{
+		SessionID: "sess-deadline",
+		Prompt:    "new question",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "recovered" || state == nil {
+		t.Fatalf("expected recovered answer, got state=%#v out=%q", state, out)
+	}
+	if client.calls != 2 {
+		t.Fatalf("expected one recovery retry, got %d calls", client.calls)
+	}
+	second := client.requests[1]
+	for _, msg := range second.Messages {
+		if strings.Contains(msg.Content, "old question") || strings.Contains(msg.Content, "old answer") {
+			t.Fatalf("expected oldest context to be removed before retry, got %#v", second.Messages)
+		}
+	}
+	foundNew := false
+	for _, msg := range second.Messages {
+		if strings.Contains(msg.Content, "new question") {
+			foundNew = true
+		}
+	}
+	if !foundNew {
+		t.Fatalf("expected latest user prompt to remain, got %#v", second.Messages)
+	}
+	persisted, err := store.Load("sess-deadline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range persisted.Messages {
+		if strings.Contains(msg.Content, "old question") || strings.Contains(msg.Content, "old answer") {
+			t.Fatalf("expected persisted state to drop oldest context, got %#v", persisted.Messages)
+		}
 	}
 }
 
