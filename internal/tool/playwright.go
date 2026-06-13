@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/types"
 )
@@ -86,7 +84,7 @@ func (m *PlaywrightManager) EnsureInstalled(ctx context.Context, browser string)
 		if !autoInstall {
 			return status, fmt.Errorf("Playwright runtime is not installed and auto-install is disabled")
 		}
-		if out, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, npmPath, "install", "--no-fund", "--no-audit", "playwright"); err != nil {
+		if out, err := runCommandInDir(ctx, m.cfg, m.cfg.PlaywrightRuntimeDir, nil, npmPath, "install", "--no-fund", "--no-audit", "playwright"); err != nil {
 			return status, fmt.Errorf("install Playwright package: %w%s", err, commandOutputDetail(out))
 		}
 	}
@@ -109,7 +107,7 @@ func (m *PlaywrightManager) EnsureInstalled(ctx context.Context, browser string)
 		if !pathExists(cliPath) {
 			return status, fmt.Errorf("Playwright CLI not found after install in %s", cliPath)
 		}
-		if out, err := runCommandInDir(ctx, m.cfg.PlaywrightRuntimeDir, nil, nodePath, cliPath, "install", name); err != nil {
+		if out, err := runCommandInDir(ctx, m.cfg, m.cfg.PlaywrightRuntimeDir, nil, nodePath, cliPath, "install", name); err != nil {
 			return status, fmt.Errorf("install Playwright browser %q: %w%s", name, err, commandOutputDetail(out))
 		}
 		if err := os.WriteFile(readyPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644); err != nil {
@@ -294,42 +292,46 @@ func runPlaywrightExecution(ctx context.Context, cfg config.ToolsConfig, manager
 	}
 	defer os.Remove(payloadPath)
 
-	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds+15)*time.Second)
-	defer cancel()
-	cmd, err := commandenv.ShellCommandContext(cmdCtx, cfg.CommandShell, cfg.PlaywrightCommand)
-	if err != nil {
-		return "", err
+	env := []string{
+		"QORVEXUS_PLAYWRIGHT_MODE=" + req.Mode,
+		"QORVEXUS_PLAYWRIGHT_SCRIPT_FILE=" + payloadPath,
+		"QORVEXUS_PLAYWRIGHT_ACTIONS_FILE=" + payloadPath,
+		"QORVEXUS_PLAYWRIGHT_PROFILE_NAME=" + profileName,
+		"QORVEXUS_PLAYWRIGHT_PROFILE_DIR=" + profileDir,
+		"QORVEXUS_PLAYWRIGHT_STORAGE_STATE_NAME=" + storageName,
+		"QORVEXUS_PLAYWRIGHT_STORAGE_STATE_FILE=" + statePath,
+		"QORVEXUS_PLAYWRIGHT_PERSIST_PROFILE=" + strconv.FormatBool(persistProfile),
+		"QORVEXUS_PLAYWRIGHT_SAVE_STORAGE_STATE=" + strconv.FormatBool(saveStorageState),
+		"QORVEXUS_PLAYWRIGHT_BROWSER=" + browser,
+		"QORVEXUS_PLAYWRIGHT_HEADLESS=" + strconv.FormatBool(headless),
+		"QORVEXUS_PLAYWRIGHT_TIMEOUT_SECONDS=" + strconv.Itoa(req.TimeoutSeconds),
+		"QORVEXUS_PLAYWRIGHT_ACTION_TIMEOUT_SECONDS=" + strconv.Itoa(minPlaywrightInt(req.TimeoutSeconds, 10)),
+		"QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR=" + artifactsDir,
+		"QORVEXUS_PLAYWRIGHT_RUNTIME_DIR=" + runtimeStatus.RuntimeDir,
 	}
-	cmd.Env = append(cmd.Env,
-		"QORVEXUS_PLAYWRIGHT_MODE="+req.Mode,
-		"QORVEXUS_PLAYWRIGHT_SCRIPT_FILE="+payloadPath,
-		"QORVEXUS_PLAYWRIGHT_ACTIONS_FILE="+payloadPath,
-		"QORVEXUS_PLAYWRIGHT_PROFILE_NAME="+profileName,
-		"QORVEXUS_PLAYWRIGHT_PROFILE_DIR="+profileDir,
-		"QORVEXUS_PLAYWRIGHT_STORAGE_STATE_NAME="+storageName,
-		"QORVEXUS_PLAYWRIGHT_STORAGE_STATE_FILE="+statePath,
-		"QORVEXUS_PLAYWRIGHT_PERSIST_PROFILE="+strconv.FormatBool(persistProfile),
-		"QORVEXUS_PLAYWRIGHT_SAVE_STORAGE_STATE="+strconv.FormatBool(saveStorageState),
-		"QORVEXUS_PLAYWRIGHT_BROWSER="+browser,
-		"QORVEXUS_PLAYWRIGHT_HEADLESS="+strconv.FormatBool(headless),
-		"QORVEXUS_PLAYWRIGHT_TIMEOUT_SECONDS="+strconv.Itoa(req.TimeoutSeconds),
-		"QORVEXUS_PLAYWRIGHT_ACTION_TIMEOUT_SECONDS="+strconv.Itoa(minPlaywrightInt(req.TimeoutSeconds, 10)),
-		"QORVEXUS_PLAYWRIGHT_ARTIFACTS_DIR="+artifactsDir,
-		"QORVEXUS_PLAYWRIGHT_RUNTIME_DIR="+runtimeStatus.RuntimeDir,
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	out := compactPlaywrightOutput(strings.TrimSpace(stdout.String()), cfg.MaxCommandBytes)
-	if serr := compactPlaywrightOutput(strings.TrimSpace(stderr.String()), cfg.MaxCommandBytes/2); serr != "" {
+	commandResult, err := runShellCommand(ctx, cfg, cfg.PlaywrightCommand, commandRunOptions{
+		Env:            env,
+		TimeoutSeconds: req.TimeoutSeconds + 15,
+		MaxOutputBytes: cfg.MaxCommandBytes,
+	})
+	out := compactPlaywrightOutput(strings.TrimSpace(commandResult.Stdout), cfg.MaxCommandBytes)
+	if serr := compactPlaywrightOutput(strings.TrimSpace(commandResult.Stderr), cfg.MaxCommandBytes/2); serr != "" {
 		if out != "" {
 			out += "\n"
 		}
 		out += "[stderr]\n" + serr
 	}
-	if len(out) > cfg.MaxCommandBytes {
-		out = out[:cfg.MaxCommandBytes] + "\n[truncated]"
+	if commandResult.Truncated {
+		if out != "" {
+			out += "\n"
+		}
+		out += "[truncated output; showing tail]"
+	}
+	if commandResult.TerminationError != "" {
+		if out != "" {
+			out += "\n"
+		}
+		out += "[termination]\n" + commandResult.TerminationError
 	}
 	if err != nil {
 		return out, fmt.Errorf("playwright failed: %w", err)
@@ -411,26 +413,14 @@ func writePlaywrightRuntimePackage(runtimeDir string) error {
 	return os.WriteFile(packagePath, []byte(content), 0o644)
 }
 
-func runCommandInDir(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
-	cmd, err := commandenv.CommandContext(ctx, name, args...)
-	if err != nil {
-		return "", err
-	}
-	cmd.Dir = dir
-	if len(env) > 0 {
-		cmd.Env = append(cmd.Env, env...)
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	out := strings.TrimSpace(stdout.String())
-	if serr := strings.TrimSpace(stderr.String()); serr != "" {
-		if out != "" {
-			out += "\n"
-		}
-		out += "[stderr]\n" + serr
-	}
+func runCommandInDir(ctx context.Context, cfg config.ToolsConfig, dir string, env []string, name string, args ...string) (string, error) {
+	result, err := runExecutableCommand(ctx, name, args, commandRunOptions{
+		Dir:            dir,
+		Env:            env,
+		TimeoutSeconds: cfg.PlaywrightTimeoutSeconds,
+		MaxOutputBytes: cfg.MaxCommandBytes,
+	})
+	out := result.CombinedOutput()
 	if err != nil {
 		return out, err
 	}

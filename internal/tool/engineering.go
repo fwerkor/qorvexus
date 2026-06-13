@@ -8,16 +8,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
@@ -243,15 +240,8 @@ func (t *ApplyDiffTool) Invoke(ctx context.Context, raw json.RawMessage) (string
 		args = append(args, "--reverse")
 	}
 	args = append(args, tempPatchPath)
-	cmd, err := commandenv.CommandContext(ctx, "git", args...)
-	if err != nil {
-		return "", err
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	output := strings.TrimSpace(strings.TrimSpace(stdout.String()) + "\n" + strings.TrimSpace(stderr.String()))
+	result, runErr := runExecutableCommand(ctx, "git", args, commandRunOptions{MaxOutputBytes: t.cfg.MaxCommandBytes})
+	output := strings.TrimSpace(result.CombinedOutput())
 	if runErr != nil {
 		if output == "" {
 			output = runErr.Error()
@@ -380,36 +370,16 @@ func (t *TestFailureLocatorTool) Invoke(ctx context.Context, raw json.RawMessage
 				return "", fmt.Errorf("test command denied by policy: %s (risk=%s)", result.Reason, result.Risk)
 			}
 		}
-		runCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
-		defer cancel()
-		cmd, err := commandenv.ShellCommandContext(runCtx, t.cfg.CommandShell, input.Command)
-		if err != nil {
+		result, err := runShellCommand(ctx, t.cfg, input.Command, commandRunOptions{
+			Dir:            workdir,
+			TimeoutSeconds: input.TimeoutSeconds,
+			MaxOutputBytes: input.MaxOutputBytes,
+		})
+		output = result.CombinedOutput()
+		exitCode = result.ExitCode
+		commandTimedOut = result.TimedOut
+		if err != nil && !result.TimedOut && result.ExitCode < 0 {
 			return "", err
-		}
-		cmd.Dir = workdir
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		err = cmd.Run()
-		output = stdout.String()
-		if serr := strings.TrimSpace(stderr.String()); serr != "" {
-			if output != "" {
-				output += "\n"
-			}
-			output += serr
-		}
-		if len(output) > input.MaxOutputBytes {
-			output = output[:input.MaxOutputBytes] + "\n[truncated]"
-		}
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			} else if errors.Is(err, context.DeadlineExceeded) || runCtx.Err() == context.DeadlineExceeded {
-				commandTimedOut = true
-				exitCode = -1
-			} else {
-				return "", err
-			}
 		}
 	}
 	report, err := localizeTestFailure(workdir, output, input.ContextLines)
@@ -1210,21 +1180,15 @@ func gitRevParse(repoRoot string, args ...string) (string, error) {
 }
 
 func gitOutput(ctx context.Context, repoRoot string, args ...string) (string, error) {
-	cmd, err := commandenv.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
+	result, err := runExecutableCommand(ctx, "git", append([]string{"-C", repoRoot}, args...), commandRunOptions{MaxOutputBytes: 64 * 1024})
 	if err != nil {
-		return "", err
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
+		message := strings.TrimSpace(result.CombinedOutput())
 		if message == "" {
 			message = err.Error()
 		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), message)
 	}
-	return stdout.String(), nil
+	return result.Stdout, nil
 }
 
 func resolveRepoPath(path string) (string, error) {

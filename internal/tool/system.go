@@ -9,9 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
-	"qorvexus/internal/commandenv"
 	"qorvexus/internal/config"
 	"qorvexus/internal/policy"
 	"qorvexus/internal/types"
@@ -59,27 +57,11 @@ func (t *CommandTool) Invoke(ctx context.Context, raw json.RawMessage) (string, 
 			return "", fmt.Errorf("command denied by policy: %s (risk=%s)", policyResult.Reason, policyResult.Risk)
 		}
 	}
-	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
-	defer cancel()
-
-	cmd, err := commandenv.ShellCommandContext(cmdCtx, t.cfg.CommandShell, input.Command)
-	if err != nil {
-		return "", err
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	out := stdout.String()
-	if serr := strings.TrimSpace(stderr.String()); serr != "" {
-		if out != "" {
-			out += "\n"
-		}
-		out += "[stderr]\n" + serr
-	}
-	if len(out) > t.cfg.MaxCommandBytes {
-		out = out[:t.cfg.MaxCommandBytes] + "\n[truncated]"
-	}
+	result, err := runShellCommand(ctx, t.cfg, input.Command, commandRunOptions{
+		TimeoutSeconds: input.TimeoutSeconds,
+		MaxOutputBytes: t.cfg.MaxCommandBytes,
+	})
+	out := result.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("command failed: %w", err)
 	}
